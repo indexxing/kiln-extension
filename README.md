@@ -8,12 +8,12 @@
 
 Kiln, previously Poly+, is a quality-of-life browser extension for the Polytoria website. The extension provides tons of improvements to improve your experience on Polytoria! Visit the website [here](https://kiln.indexx.dev/)!
 
-![image](https://img.shields.io/badge/Google_chrome-4285F4?style=for-the-badge&logo=Google-chrome&logoColor=white)
-![image](https://img.shields.io/badge/Microsoft_Edge-0078D7?style=for-the-badge&logo=Microsoft-edge&logoColor=white)
-![image](https://img.shields.io/badge/Opera-FF1B2D?style=for-the-badge&logo=Opera&logoColor=white)
-![image](https://img.shields.io/badge/Brave-FF1B2D?style=for-the-badge&logo=Brave&logoColor=white)
-![image](https://img.shields.io/badge/Vivaldi-EF3939?style=for-the-badge&logo=Vivaldi&logoColor=white)
-![image](https://img.shields.io/badge/Firefox-000?style=for-the-badge&logo=Firefox&logoColor=white)
+[![Google Chrome](https://img.shields.io/badge/Google_chrome-4285F4?style=for-the-badge&logo=Google-chrome&logoColor=white)](https://chromewebstore.google.com/detail/kiln-for-polytoria/feafepokhecfmimpepbpccmcnjbcbklg)
+[![Microsoft Edge](https://img.shields.io/badge/Microsoft_Edge-0078D7?style=for-the-badge&logo=Microsoft-edge&logoColor=white)](https://chromewebstore.google.com/detail/kiln-for-polytoria/feafepokhecfmimpepbpccmcnjbcbklg)
+[![Opera](https://img.shields.io/badge/Opera-FF1B2D?style=for-the-badge&logo=Opera&logoColor=white)](https://chromewebstore.google.com/detail/kiln-for-polytoria/feafepokhecfmimpepbpccmcnjbcbklg)
+[![Brave](https://img.shields.io/badge/Brave-FF1B2D?style=for-the-badge&logo=Brave&logoColor=white)](https://chromewebstore.google.com/detail/kiln-for-polytoria/feafepokhecfmimpepbpccmcnjbcbklg)
+[![Vivaldi](https://img.shields.io/badge/Vivaldi-EF3939?style=for-the-badge&logo=Vivaldi&logoColor=white)](https://chromewebstore.google.com/detail/kiln-for-polytoria/feafepokhecfmimpepbpccmcnjbcbklg)
+[![Firefox](https://img.shields.io/badge/Firefox-000?style=for-the-badge&logo=Firefox&logoColor=white)](https://addons.mozilla.org/en-US/firefox/addon/polytoriaplus/)
 
 # Supported Browsers
 
