@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import { runFeature } from "@/utils/runFeature";
 import { _showKilnDisclosures, preferences } from "@/utils/storage";
 import * as discovery from "./discovery";
 import * as models from "./models";
@@ -48,21 +49,28 @@ export default defineContentScript({
 
 				if (window.location.pathname.includes("library")) {
 					if (values.enabled.includes("audioToolboxPreviews")) {
-						discovery.audioPreviews(showDisclosures);
+						runFeature("audioToolboxPreviews", () =>
+							discovery.audioPreviews(showDisclosures),
+						);
 					}
 				} else if (window.location.pathname.includes("models")) {
 					if (values.enabled.includes("modelTreeInspector")) {
-						models.modelTreeInspector(showDisclosures);
+						runFeature("modelTreeInspector", () =>
+							models.modelTreeInspector(showDisclosures),
+						);
 					}
 				} else {
 					if (values.enabled.includes("v2WorldLabels")) {
-						worlds.v2WorldLabels(showDisclosures);
+						runFeature("v2WorldLabels", () =>
+							worlds.v2WorldLabels(showDisclosures),
+						);
 					}
 
 					if (values.enabled.includes("favoredDevelopmentGuild")) {
-						console.log("aa");
-						favoredDevelopmentGuild(
-							values.config.favoredDevelopmentGuild.guildId,
+						runFeature("favoredDevelopmentGuild", () =>
+							favoredDevelopmentGuild(
+								values.config.favoredDevelopmentGuild.guildId,
+							),
 						);
 					}
 
@@ -72,7 +80,9 @@ export default defineContentScript({
 							window.location.pathname.startsWith(path),
 						)
 					) {
-						uploads.trackPendingAssetApprovals();
+						runFeature("assetApprovedNotifications", () =>
+							uploads.trackPendingAssetApprovals(),
+						);
 					}
 				}
 			});

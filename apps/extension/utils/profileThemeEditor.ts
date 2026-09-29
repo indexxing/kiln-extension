@@ -14,17 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import type { Extension } from "@kiln/schemas";
 import { POLYTORIA_CDN_URL, resolveDecalUrl } from "@/utils/decal";
+import { escapeHtml, safeHttpUrl } from "@/utils/escapeHtml";
 import { sendMessage } from "@/utils/messaging";
 import {
-	AMBIENT_TYPES,
 	applyProfileExtras,
-	CARD_PRESET_OPACITY,
 	clearProfileExtras,
 	extrasFromTheme,
 	MAX_NOTES,
 	MAX_STICKERS,
-	NO_POINTER_EFFECTS_ATTR,
 	PROFILE_SECTIONS,
 	type ProfileAmbientType,
 	type ProfileCardStyle,
@@ -48,8 +47,10 @@ import {
 	parseAssetVolume,
 } from "@/utils/theme";
 import {
+	confirmPublishRulesSeen,
 	formatEffectValue,
 	friendlyApiError,
+	publishRulesModalBody,
 	readEffectValue,
 	renderEffectValueInput,
 	renderSelectorReference,
@@ -57,6 +58,11 @@ import {
 import type { EffectType, ThemeEffect } from "@/utils/types";
 import { getApiSession } from "@/utils/utilities";
 import { createVisualCssEditor } from "@/utils/visualCssEditor";
+import {
+	AMBIENT_TYPES,
+	CARD_PRESET_OPACITY,
+	NO_POINTER_EFFECTS_ATTR,
+} from "@/utils/visualEffects";
 
 const SIDEBAR_ID = "kiln-pte-sidebar";
 const DEFAULT_ACCENT = "#3bafff";
@@ -81,32 +87,216 @@ type ServerTheme = ProfileThemeValues & {
 	approvalStatus: string;
 };
 
+type ServerThemeSource = NonNullable<Extension.ProfileThemeApi["data"]>;
+
+function mapServerTheme(t: ServerThemeSource): ServerTheme {
+	return {
+		accentColor: t.accentColor,
+		navbarColor: t.navbarColor,
+		fontFamily: t.fontFamily ?? undefined,
+		customCss: t.customCss ?? undefined,
+		backgroundImage: t.backgroundImage ?? undefined,
+		backgroundOverlayColor: t.backgroundOverlayColor ?? undefined,
+		backgroundOverlayOpacity: t.backgroundOverlayOpacity ?? undefined,
+		effects: t.effects ?? undefined,
+		navbarIconColor: t.navbarIconColor ?? undefined,
+		cursorUrl: t.cursorUrl ?? undefined,
+		colorTokens: t.colorTokens ?? undefined,
+		...extrasFromTheme(t),
+		enabled: t.enabled,
+		approvalStatus: t.approvalStatus,
+	};
+}
+
 let openPromise: Promise<void> | null = null;
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.min(max, Math.max(min, value));
+}
+
+const CARD_STYLE_PRESETS = ["solid", "glass", "outline", "gradient"];
+const CARD_STYLE_HOVER = ["none", "lift", "glow", "tilt"];
+const POINTER_CLICK_OPTIONS = ["sparkles", "hearts", "ripples", "confetti"];
+const POINTER_TRAIL_OPTIONS = ["sparkles", "dots", "hearts", "glow"];
+const AMBIENT_TYPE_KEYS = AMBIENT_TYPES.map((t) => t.key) as string[];
 
 function sanitizeImportedExtras(data: Record<string, any>): ProfileThemeExtras {
 	const isObject = (v: unknown): v is Record<string, any> =>
 		!!v && typeof v === "object" && !Array.isArray(v);
+
+	const usernameStyle =
+		isObject(data.usernameStyle) &&
+		(data.usernameStyle.mode === "solid" ||
+			data.usernameStyle.mode === "gradient") &&
+		isValidHex(data.usernameStyle.color1)
+			? {
+					mode: data.usernameStyle.mode as "solid" | "gradient",
+					color1: data.usernameStyle.color1 as string,
+					color2: isValidHex(data.usernameStyle.color2)
+						? (data.usernameStyle.color2 as string)
+						: undefined,
+					animated: data.usernameStyle.animated === true,
+					glowColor: isValidHex(data.usernameStyle.glowColor)
+						? (data.usernameStyle.glowColor as string)
+						: undefined,
+					glowSize:
+						typeof data.usernameStyle.glowSize === "number"
+							? clamp(data.usernameStyle.glowSize, 0, 24)
+							: undefined,
+					fontFamily:
+						typeof data.usernameStyle.fontFamily === "string" &&
+						data.usernameStyle.fontFamily in FONTS
+							? (data.usernameStyle.fontFamily as string)
+							: undefined,
+				}
+			: undefined;
+
+	const banner =
+		isObject(data.banner) &&
+		typeof data.banner.url === "string" &&
+		POLYTORIA_CDN_URL.test(data.banner.url)
+			? {
+					url: data.banner.url as string,
+					height: clamp(
+						typeof data.banner.height === "number" ? data.banner.height : 180,
+						80,
+						400,
+					),
+					position: (["top", "center", "bottom"].includes(data.banner.position)
+						? data.banner.position
+						: "center") as "top" | "center" | "bottom",
+				}
+			: undefined;
+
+	const ambient =
+		isObject(data.ambient) && AMBIENT_TYPE_KEYS.includes(data.ambient.type)
+			? {
+					type: data.ambient.type as ProfileAmbientType,
+					density: clamp(
+						typeof data.ambient.density === "number"
+							? data.ambient.density
+							: 30,
+						1,
+						100,
+					),
+					color: isValidHex(data.ambient.color)
+						? (data.ambient.color as string)
+						: undefined,
+				}
+			: undefined;
+
+	const cardStyle: ProfileCardStyle | undefined =
+		isObject(data.cardStyle) &&
+		CARD_STYLE_PRESETS.includes(data.cardStyle.preset)
+			? {
+					preset: data.cardStyle.preset,
+					tint: isValidHex(data.cardStyle.tint)
+						? data.cardStyle.tint
+						: undefined,
+					opacity:
+						typeof data.cardStyle.opacity === "number"
+							? clamp(data.cardStyle.opacity, 0, 100)
+							: undefined,
+					radius:
+						typeof data.cardStyle.radius === "number"
+							? clamp(data.cardStyle.radius, 0, 32)
+							: undefined,
+					hover: CARD_STYLE_HOVER.includes(data.cardStyle.hover)
+						? data.cardStyle.hover
+						: undefined,
+					liquidGlass: data.cardStyle.liquidGlass === true || undefined,
+				}
+			: undefined;
+
+	const avatarBackdrop: ProfileThemeExtras["avatarBackdrop"] = isObject(
+		data.avatarBackdrop,
+	)
+		? data.avatarBackdrop.type === "gradient" &&
+			isValidHex(data.avatarBackdrop.color1) &&
+			isValidHex(data.avatarBackdrop.color2)
+			? {
+					type: "gradient",
+					color1: data.avatarBackdrop.color1,
+					color2: data.avatarBackdrop.color2,
+					angle: clamp(
+						typeof data.avatarBackdrop.angle === "number"
+							? data.avatarBackdrop.angle
+							: 135,
+						0,
+						360,
+					),
+					opacity:
+						typeof data.avatarBackdrop.opacity === "number"
+							? clamp(data.avatarBackdrop.opacity, 0, 100)
+							: undefined,
+				}
+			: data.avatarBackdrop.type === "image" &&
+					typeof data.avatarBackdrop.url === "string" &&
+					POLYTORIA_CDN_URL.test(data.avatarBackdrop.url)
+				? {
+						type: "image",
+						url: data.avatarBackdrop.url,
+						fit: data.avatarBackdrop.fit === "contain" ? "contain" : "cover",
+						opacity:
+							typeof data.avatarBackdrop.opacity === "number"
+								? clamp(data.avatarBackdrop.opacity, 0, 100)
+								: undefined,
+					}
+				: undefined
+		: undefined;
+
+	const pointerEffects: ProfilePointerEffects | undefined = isObject(
+		data.pointerEffects,
+	)
+		? {
+				click: POINTER_CLICK_OPTIONS.includes(data.pointerEffects.click)
+					? data.pointerEffects.click
+					: undefined,
+				trail: POINTER_TRAIL_OPTIONS.includes(data.pointerEffects.trail)
+					? data.pointerEffects.trail
+					: undefined,
+				color: isValidHex(data.pointerEffects.color)
+					? data.pointerEffects.color
+					: undefined,
+			}
+		: undefined;
+
 	return {
 		layout:
 			isObject(data.layout) &&
 			Array.isArray(data.layout.order) &&
 			Array.isArray(data.layout.hidden)
-				? { order: data.layout.order, hidden: data.layout.hidden }
+				? {
+						order: data.layout.order.filter(
+							(x: unknown) => typeof x === "string",
+						),
+						hidden: data.layout.hidden.filter(
+							(x: unknown) => typeof x === "string",
+						),
+					}
 				: undefined,
-		usernameStyle: isObject(data.usernameStyle)
-			? (data.usernameStyle as ProfileThemeExtras["usernameStyle"])
-			: undefined,
-		banner:
-			isObject(data.banner) && POLYTORIA_CDN_URL.test(data.banner.url)
-				? (data.banner as ProfileThemeExtras["banner"])
-				: undefined,
-		ambient: isObject(data.ambient)
-			? (data.ambient as ProfileThemeExtras["ambient"])
-			: undefined,
+		usernameStyle,
+		banner,
+		ambient,
 		stickers: Array.isArray(data.stickers)
-			? (data.stickers as ProfileSticker[])
+			? (data.stickers as Record<string, any>[])
 					.filter((s) => isObject(s) && POLYTORIA_CDN_URL.test(s.url))
 					.slice(0, MAX_STICKERS)
+					.map(
+						(s): ProfileSticker => ({
+							id: typeof s.id === "string" && s.id ? s.id : crypto.randomUUID(),
+							url: s.url,
+							anchor: /^[a-z-]{1,32}$/.test(s.anchor) ? s.anchor : "page",
+							x: typeof s.x === "number" ? s.x : 50,
+							y: typeof s.y === "number" ? s.y : 50,
+							size: clamp(typeof s.size === "number" ? s.size : 64, 16, 400),
+							rotation:
+								typeof s.rotation === "number"
+									? clamp(s.rotation, -180, 180)
+									: 0,
+							layer: s.layer === "back" ? "back" : "front",
+						}),
+					)
 			: undefined,
 		notes: Array.isArray(data.notes)
 			? (data.notes as ProfileNote[])
@@ -120,19 +310,87 @@ function sanitizeImportedExtras(data: Record<string, any>): ProfileThemeExtras {
 						anchor: /^[a-z-]{1,32}$/.test(n.anchor) ? n.anchor : "page",
 						x: typeof n.x === "number" ? n.x : 50,
 						y: typeof n.y === "number" ? n.y : 50,
-						size: typeof n.size === "number" ? n.size : 16,
-						rotation: typeof n.rotation === "number" ? n.rotation : 0,
+						size: clamp(typeof n.size === "number" ? n.size : 16, 10, 40),
+						rotation:
+							typeof n.rotation === "number" ? clamp(n.rotation, -180, 180) : 0,
 						color: isValidHex(n.color) ? n.color : "#1a1a1a",
 						background: isValidHex(n.background) ? n.background : "#fff9c4",
 						layer: n.layer === "back" ? "back" : "front",
 					}))
 			: undefined,
+		cardStyle,
+		avatarBackdrop,
+		pointerEffects,
 	};
+}
+
+function sanitizeImportedEffects(data: unknown): ThemeEffect[] | undefined {
+	if (!Array.isArray(data)) return undefined;
+	const result: ThemeEffect[] = [];
+	for (const raw of data) {
+		if (!raw || typeof raw !== "object") continue;
+		const r = raw as Record<string, unknown>;
+		if (typeof r.slot !== "string" || !(r.slot in EFFECT_SLOTS)) continue;
+		const slotConfig = EFFECT_SLOTS[r.slot as keyof typeof EFFECT_SLOTS];
+		if (
+			typeof r.type !== "string" ||
+			!(slotConfig.types as string[]).includes(r.type)
+		)
+			continue;
+		const config = EFFECT_TYPE_CONFIGS[r.type as EffectType];
+		let value: string | number;
+		switch (config.input.kind) {
+			case "slider":
+			case "number": {
+				const n = Number(r.value);
+				if (!Number.isFinite(n)) continue;
+				value = clamp(n, config.input.min, config.input.max);
+				break;
+			}
+			case "select": {
+				const options = config.input.options.map((o) => o.value);
+				value =
+					typeof r.value === "string" && options.includes(r.value)
+						? r.value
+						: config.input.default;
+				break;
+			}
+			case "color":
+				value =
+					typeof r.value === "string" && isValidHex(r.value)
+						? r.value
+						: config.input.default;
+				break;
+			case "color-alpha":
+				value =
+					typeof r.value === "string" &&
+					/^(#[0-9a-fA-F]{3,8}|rgba?\([\d.,\s%]+\))$/.test(r.value)
+						? r.value
+						: config.input.default;
+				break;
+			case "url":
+				value = safeHttpUrl(r.value) || config.input.default;
+				break;
+			case "audio-volume":
+				value = typeof r.value === "string" ? r.value : config.input.default;
+				break;
+			default:
+				continue;
+		}
+		result.push({
+			id: typeof r.id === "string" && r.id ? r.id : crypto.randomUUID(),
+			slot: r.slot as ThemeEffect["slot"],
+			type: r.type as EffectType,
+			value,
+		});
+	}
+	return result.length > 0 ? result : undefined;
 }
 
 export function openProfileThemeEditor(options: {
 	userId: number;
 	onRestore: () => void | Promise<void>;
+	onPreview?: () => void;
 }): Promise<void> {
 	if (document.getElementById(SIDEBAR_ID)) return Promise.resolve();
 	if (openPromise) return openPromise;
@@ -145,34 +403,23 @@ export function openProfileThemeEditor(options: {
 async function doOpenProfileThemeEditor({
 	userId,
 	onRestore,
+	onPreview,
 }: {
 	userId: number;
 	onRestore: () => void | Promise<void>;
+	onPreview?: () => void;
 }): Promise<void> {
 	const session = await getApiSession(userId);
-	const verified = session?.state === "verified";
+	let verified = session?.state === "verified";
 
 	let serverTheme: ServerTheme | null = null;
+	let themeLoadFailed = false;
 	if (verified) {
 		const result = await sendMessage("getMyProfileTheme", userId);
-		if (result.ok && result.data.data) {
-			const t = result.data.data;
-			serverTheme = {
-				accentColor: t.accentColor,
-				navbarColor: t.navbarColor,
-				fontFamily: t.fontFamily ?? undefined,
-				customCss: t.customCss ?? undefined,
-				backgroundImage: t.backgroundImage ?? undefined,
-				backgroundOverlayColor: t.backgroundOverlayColor ?? undefined,
-				backgroundOverlayOpacity: t.backgroundOverlayOpacity ?? undefined,
-				effects: t.effects ?? undefined,
-				navbarIconColor: t.navbarIconColor ?? undefined,
-				cursorUrl: t.cursorUrl ?? undefined,
-				colorTokens: t.colorTokens ?? undefined,
-				...extrasFromTheme(t),
-				enabled: t.enabled,
-				approvalStatus: t.approvalStatus,
-			};
+		if (result.ok) {
+			if (result.data.data) serverTheme = mapServerTheme(result.data.data);
+		} else {
+			themeLoadFailed = true;
 		}
 	}
 
@@ -188,6 +435,8 @@ async function doOpenProfileThemeEditor({
 		: [];
 	let workingIconColor = serverTheme?.navbarIconColor ?? "";
 	let workingCursor = serverTheme?.cursorUrl ?? "";
+	let workingCursorSrc = "";
+	let workingCursorScale = 32;
 	let workingColorTokens: Record<string, string> = serverTheme?.colorTokens
 		? { ...serverTheme.colorTokens }
 		: {};
@@ -266,9 +515,6 @@ async function doOpenProfileThemeEditor({
 			padding: 12px 14px;
 			border-top: 1px solid rgba(128,128,128,0.15);
 		}
-		body.kiln-pte-open {
-			margin-right: 380px !important;
-		}
 		#${SIDEBAR_ID} .kiln-te-color-picker {
 			width: 34px;
 			height: 28px;
@@ -302,6 +548,15 @@ async function doOpenProfileThemeEditor({
 		.kiln-pte-fields-disabled {
 			opacity: 0.5;
 		}
+		#${SIDEBAR_ID}.kiln-pte-floating {
+			right: auto;
+			bottom: auto;
+			border-radius: 10px;
+			box-shadow: 0 12px 48px rgba(0,0,0,0.8);
+		}
+		#${SIDEBAR_ID}.kiln-pte-floating #kiln-pte-header {
+			cursor: move;
+		}
 	`;
 	document.head.appendChild(styleEl);
 
@@ -311,13 +566,18 @@ async function doOpenProfileThemeEditor({
 	sidebar.innerHTML = `
 		<div id="kiln-pte-resize"></div>
 		<div id="kiln-pte-content">
-			<div class="d-flex justify-content-between align-items-center mb-2">
+			<div id="kiln-pte-header" class="d-flex justify-content-between align-items-center mb-2">
 				<div class="d-flex align-items-center gap-2">
 					<span class="fw-bold" style="font-size:1rem;">Profile Theme</span>
-					<span class="badge bg-success" style="font-size:0.6em;vertical-align:middle;">Live Preview</span>
 				</div>
-				<button id="kiln-pte-close" aria-label="Close"
-				        style="background:rgba(128,128,128,0.15);border:1px solid rgba(128,128,128,0.3);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:1rem;line-height:1.4;color:inherit;">✕</button>
+				<div class="d-flex align-items-center gap-1">
+					<button id="kiln-pte-float-btn" title="Float as window"
+					        style="background:rgba(128,128,128,0.15);border:1px solid rgba(128,128,128,0.3);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:0.75rem;line-height:1.4;color:inherit;">
+						<i class="fas fa-expand"></i>
+					</button>
+					<button id="kiln-pte-close" aria-label="Close"
+					        style="background:rgba(128,128,128,0.15);border:1px solid rgba(128,128,128,0.3);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:1rem;line-height:1.4;color:inherit;">✕</button>
+				</div>
 			</div>
 
 			<p class="small text-muted mb-2">Design how your profile looks to everyone else using Kiln.</p>
@@ -390,6 +650,11 @@ async function doOpenProfileThemeEditor({
 							<button class="btn btn-outline-danger btn-sm flex-shrink-0" id="kiln-pte-cursor-clear" style="display:none;">Clear</button>
 						</div>
 						<div id="kiln-pte-cursor-status" class="small text-muted mt-1" style="min-height:1.1em;"></div>
+						<div id="kiln-pte-cursor-scale-row" class="d-flex align-items-center gap-2 mt-1" style="display:none;">
+							<span class="small text-muted" style="min-width:3.2em;">Size</span>
+							<input type="range" id="kiln-pte-cursor-scale" min="16" max="128" step="4" value="32" class="flex-fill" style="min-width:0;" />
+							<span id="kiln-pte-cursor-scale-label" class="small text-muted" style="min-width:3em;text-align:right;">32px</span>
+						</div>
 					</div>
 					<div class="mt-2">
 						<div class="d-flex align-items-center mb-1">
@@ -617,6 +882,12 @@ async function doOpenProfileThemeEditor({
 								</select>
 							</div>
 						</div>
+						<div class="form-check form-switch mb-2" id="kiln-pte-cards-liquid-row" style="display:none;">
+							<input type="checkbox" id="kiln-pte-cards-liquid" class="form-check-input" />
+							<label for="kiln-pte-cards-liquid" class="form-check-label small">
+								Fancy liquid glass <span class="text-muted">(Chrome only)</span>
+							</label>
+						</div>
 						<label class="form-label small text-muted mb-1">Tint</label>
 						<div class="d-flex align-items-center gap-2 mb-2">
 							<input type="color" id="kiln-pte-cards-tint" class="kiln-te-color-picker" />
@@ -825,9 +1096,18 @@ async function doOpenProfileThemeEditor({
 				</div>
 			</div>
 		</div>
+
+		<div id="kiln-pte-publish-rules-overlay" style="display:none;position:absolute;inset:0;z-index:11;background:rgba(0,0,0,0.55);flex-direction:column;padding:16px;overflow-y:auto;">
+			<div style="background:var(--bs-body-bg,#212529);border:1px solid rgba(128,128,128,0.3);border-radius:8px;padding:16px;width:100%;margin:auto;">
+				${publishRulesModalBody()}
+				<div class="d-flex gap-2 justify-content-end mt-3">
+					<button class="btn btn-sm btn-secondary" id="kiln-pte-publish-rules-cancel">Cancel</button>
+					<button class="btn btn-sm btn-primary" id="kiln-pte-publish-rules-continue">I Understand, Publish</button>
+				</div>
+			</div>
+		</div>
 	`;
 
-	document.body.classList.add("kiln-pte-open");
 	document.body.appendChild(sidebar);
 
 	const el = <T extends HTMLElement>(id: string) =>
@@ -855,6 +1135,9 @@ async function doOpenProfileThemeEditor({
 	const cursorStatus = el("kiln-pte-cursor-status");
 	const cursorSetBtn = el<HTMLButtonElement>("kiln-pte-cursor-set");
 	const cursorClearBtn = el<HTMLButtonElement>("kiln-pte-cursor-clear");
+	const cursorScaleRow = el("kiln-pte-cursor-scale-row");
+	const cursorScaleInput = el<HTMLInputElement>("kiln-pte-cursor-scale");
+	const cursorScaleLabel = el("kiln-pte-cursor-scale-label");
 	const iconAutoCheck = el<HTMLInputElement>("kiln-pte-icon-auto");
 	const iconColorRow = el("kiln-pte-icon-color-row");
 	const iconPicker = el<HTMLInputElement>("kiln-pte-icon-picker");
@@ -877,6 +1160,13 @@ async function doOpenProfileThemeEditor({
 	const selRefBody = el("kiln-pte-selref-body");
 	const selRefSearch = el<HTMLInputElement>("kiln-pte-selref-search");
 	const deleteOverlay = el("kiln-pte-delete-overlay");
+	const publishRulesOverlay = el("kiln-pte-publish-rules-overlay");
+	const publishRulesContinueBtn = el<HTMLButtonElement>(
+		"kiln-pte-publish-rules-continue",
+	);
+	const publishRulesCancelBtn = el<HTMLButtonElement>(
+		"kiln-pte-publish-rules-cancel",
+	);
 
 	const visualCss = createVisualCssEditor({
 		mount: el("kiln-pte-vce-mount"),
@@ -888,10 +1178,22 @@ async function doOpenProfileThemeEditor({
 			cssTextarea.value = css;
 			refreshPreview();
 		},
+		onBlocked: (message) =>
+			setStatus(
+				message
+					? `<span class="text-warning"><i class="fas fa-eye-slash me-1"></i>${message}</span>`
+					: "",
+			),
 	});
 
 	function refreshPreview() {
-		applyKilnTheme(currentValues());
+		const values = currentValues();
+		applyKilnTheme({
+			...values,
+			ambient: undefined,
+			cardStyle: undefined,
+			pointerEffects: undefined,
+		});
 		applyProfileExtras(workingExtras, {
 			editing: {
 				ignoreWithin: sidebar,
@@ -911,6 +1213,7 @@ async function doOpenProfileThemeEditor({
 				},
 			},
 		});
+		onPreview?.();
 	}
 
 	function setRowVisible(row: HTMLElement, visible: boolean) {
@@ -955,6 +1258,47 @@ async function doOpenProfileThemeEditor({
 			: '<i class="fas fa-eye me-1"></i>Show';
 	}
 
+	async function recheckVerification() {
+		const freshSession = await getApiSession(userId);
+		verified = freshSession?.state === "verified";
+		verifyNotice.style.display = verified ? "none" : "";
+		return verified;
+	}
+
+	function showLoadError() {
+		themeLoadFailed = true;
+		saveBtn.disabled = true;
+		setStatus(
+			'<span class="text-danger">Couldn\'t load your current profile theme. Saving is disabled until this loads.</span> ' +
+				'<button type="button" class="btn btn-sm btn-outline-light mt-1" id="kiln-pte-retry-load">Retry</button>',
+		);
+		el<HTMLButtonElement>("kiln-pte-retry-load").addEventListener(
+			"click",
+			retryLoad,
+		);
+	}
+
+	async function retryLoad() {
+		setStatus(
+			'<span class="text-muted"><i class="fas fa-spinner fa-spin me-1"></i>Retrying…</span>',
+		);
+		const result = await sendMessage("getMyProfileTheme", userId);
+		if (!result.ok) {
+			showLoadError();
+			return;
+		}
+		themeLoadFailed = false;
+		saveBtn.disabled = false;
+		if (result.data.data) {
+			serverTheme = mapServerTheme(result.data.data);
+			loadFrom(serverTheme, extrasFromTheme(serverTheme));
+			syncInputs();
+			refreshPreview();
+		}
+		updateStateBadge();
+		setStatus("");
+	}
+
 	function loadFrom(
 		theme: SavedTheme | ProfileThemeValues | null,
 		extras?: ProfileThemeExtras,
@@ -970,6 +1314,8 @@ async function doOpenProfileThemeEditor({
 		workingEffects = theme?.effects ? [...theme.effects] : [];
 		workingIconColor = theme?.navbarIconColor ?? "";
 		workingCursor = theme?.cursorUrl ?? "";
+		workingCursorSrc = "";
+		workingCursorScale = 32;
 		workingColorTokens = theme?.colorTokens ? { ...theme.colorTokens } : {};
 	}
 
@@ -984,7 +1330,7 @@ async function doOpenProfileThemeEditor({
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<span class="badge bg-secondary" style="font-size:0.65em;flex-shrink:0;">${EFFECT_SLOTS[effect.slot].label}</span>
 					<span class="small flex-fill" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${EFFECT_TYPE_CONFIGS[effect.type].label}: <span class="text-muted">${formatEffectValue(effect)}</span></span>
-					<button class="kiln-pte-effect-remove" data-id="${effect.id}"
+					<button class="kiln-pte-effect-remove" data-id="${escapeHtml(effect.id)}"
 					        style="background:none;border:none;padding:0 2px;cursor:pointer;color:rgba(255,255,255,0.4);font-size:0.8rem;line-height:1;flex-shrink:0;"
 					        title="Remove">✕</button>
 				</div>`,
@@ -1023,10 +1369,14 @@ async function doOpenProfileThemeEditor({
 		cursorIdInput.value = "";
 		cursorStatus.textContent = !workingCursor
 			? ""
-			: POLYTORIA_CDN_URL.test(workingCursor)
+			: workingCursor.startsWith("data:") ||
+					POLYTORIA_CDN_URL.test(workingCursor)
 				? "Cursor set."
 				: "Using an older image URL. Replace it with a decal ID to change it.";
 		cursorClearBtn.style.display = workingCursor ? "" : "none";
+		cursorScaleRow.style.display = workingCursorSrc ? "flex" : "none";
+		cursorScaleInput.value = String(workingCursorScale);
+		cursorScaleLabel.textContent = `${workingCursorScale}px`;
 		const hasIconColor = !!workingIconColor;
 		iconAutoCheck.checked = !hasIconColor;
 		setRowVisible(iconColorRow, hasIconColor);
@@ -1052,9 +1402,10 @@ async function doOpenProfileThemeEditor({
 		visualCss.destroy();
 		document.removeEventListener("mousemove", onResizeMove);
 		document.removeEventListener("mouseup", onResizeUp);
-		document.body.style.marginRight = "";
+		document.removeEventListener("mousemove", onWindowDragMove);
+		document.removeEventListener("mouseup", onWindowDragUp);
+		window.removeEventListener("focus", recheckVerification);
 		document.body.style.userSelect = "";
-		document.body.classList.remove("kiln-pte-open");
 		sidebar.remove();
 		styleEl.remove();
 		const url = new URL(window.location.href);
@@ -1065,14 +1416,23 @@ async function doOpenProfileThemeEditor({
 
 	const resizeHandle = el("kiln-pte-resize");
 	let isResizing = false;
+	let resizeAnchorRight = 0;
 	function onResizeMove(e: MouseEvent) {
 		if (!isResizing) return;
-		const newWidth = Math.max(
-			300,
-			Math.min(window.innerWidth * 0.8, window.innerWidth - e.clientX),
-		);
-		sidebar.style.width = `${newWidth}px`;
-		document.body.style.marginRight = `${newWidth}px`;
+		if (isFloating) {
+			const newWidth = Math.max(
+				300,
+				Math.min(window.innerWidth * 0.8, resizeAnchorRight - e.clientX),
+			);
+			sidebar.style.width = `${newWidth}px`;
+			sidebar.style.left = `${resizeAnchorRight - newWidth}px`;
+		} else {
+			const newWidth = Math.max(
+				300,
+				Math.min(window.innerWidth * 0.8, window.innerWidth - e.clientX),
+			);
+			sidebar.style.width = `${newWidth}px`;
+		}
 	}
 	function onResizeUp() {
 		if (!isResizing) return;
@@ -1084,10 +1444,68 @@ async function doOpenProfileThemeEditor({
 		isResizing = true;
 		resizeHandle.classList.add("kiln-pte-dragging");
 		document.body.style.userSelect = "none";
+		if (isFloating)
+			resizeAnchorRight =
+				parseInt(sidebar.style.left, 10) + sidebar.offsetWidth;
 		e.preventDefault();
 	});
 	document.addEventListener("mousemove", onResizeMove);
 	document.addEventListener("mouseup", onResizeUp);
+
+	const floatBtn = el<HTMLButtonElement>("kiln-pte-float-btn");
+	const sidebarHeader = el("kiln-pte-header");
+	let isFloating = false;
+	let isWindowDragging = false;
+	let winDragStartX = 0;
+	let winDragStartY = 0;
+	let winDragStartLeft = 0;
+	let winDragStartTop = 0;
+
+	function toggleFloat() {
+		isFloating = !isFloating;
+		if (isFloating) {
+			const rect = sidebar.getBoundingClientRect();
+			sidebar.classList.add("kiln-pte-floating");
+			sidebar.style.left = `${rect.left}px`;
+			sidebar.style.top = `${rect.top}px`;
+			sidebar.style.height = `${Math.min(window.innerHeight * 0.85, 680)}px`;
+			floatBtn.innerHTML = '<i class="fas fa-compress"></i>';
+			floatBtn.title = "Dock to side";
+		} else {
+			sidebar.classList.remove("kiln-pte-floating");
+			sidebar.style.left = "";
+			sidebar.style.top = "";
+			sidebar.style.height = "";
+			sidebar.style.width = "";
+			floatBtn.innerHTML = '<i class="fas fa-expand"></i>';
+			floatBtn.title = "Float as window";
+		}
+	}
+
+	function onWindowDragMove(e: MouseEvent) {
+		if (!isWindowDragging) return;
+		sidebar.style.left = `${winDragStartLeft + e.clientX - winDragStartX}px`;
+		sidebar.style.top = `${winDragStartTop + e.clientY - winDragStartY}px`;
+	}
+	function onWindowDragUp() {
+		if (!isWindowDragging) return;
+		isWindowDragging = false;
+		document.body.style.userSelect = "";
+	}
+	sidebarHeader.addEventListener("mousedown", (e) => {
+		if (!isFloating) return;
+		if ((e.target as HTMLElement).closest("button")) return;
+		isWindowDragging = true;
+		winDragStartX = e.clientX;
+		winDragStartY = e.clientY;
+		winDragStartLeft = parseInt(sidebar.style.left, 10) || 0;
+		winDragStartTop = parseInt(sidebar.style.top, 10) || 0;
+		document.body.style.userSelect = "none";
+		e.preventDefault();
+	});
+	document.addEventListener("mousemove", onWindowDragMove);
+	document.addEventListener("mouseup", onWindowDragUp);
+	floatBtn.addEventListener("click", toggleFloat);
 
 	el("kiln-pte-close").addEventListener("click", () => {
 		void closeSidebar();
@@ -1207,6 +1625,53 @@ async function doOpenProfileThemeEditor({
 		refreshPreview();
 	});
 
+	async function applyScaledCursor() {
+		if (!workingCursorSrc) {
+			workingCursor = "";
+			refreshPreview();
+			return;
+		}
+		let source = workingCursorSrc;
+		if (/^https?:\/\//i.test(source)) {
+			const image = await sendMessage("fetchCdnImageDataUrl", source).catch(
+				() => null,
+			);
+			if (!image?.ok) {
+				cursorStatus.textContent = "Couldn't load that image. Try again.";
+				return;
+			}
+			source = image.data;
+		}
+		const img = new Image();
+		img.src = source;
+		await new Promise<void>((resolve) => {
+			if (img.complete) {
+				resolve();
+				return;
+			}
+			img.onload = () => resolve();
+			img.onerror = () => resolve();
+		});
+		if (!img.naturalWidth) {
+			cursorStatus.textContent =
+				"Couldn't process that image. Try a different decal.";
+			return;
+		}
+		try {
+			const canvas = document.createElement("canvas");
+			canvas.width = workingCursorScale;
+			canvas.height = workingCursorScale;
+			canvas
+				.getContext("2d")!
+				.drawImage(img, 0, 0, workingCursorScale, workingCursorScale);
+			workingCursor = canvas.toDataURL("image/png");
+		} catch {
+			cursorStatus.textContent =
+				"Couldn't process that image. Try a different decal.";
+		}
+		refreshPreview();
+	}
+
 	cursorSetBtn.addEventListener("click", async () => {
 		cursorSetBtn.disabled = true;
 		cursorStatus.textContent = "Looking up decal…";
@@ -1217,20 +1682,28 @@ async function doOpenProfileThemeEditor({
 				"Couldn't find that decal. Check the ID and try again.";
 			return;
 		}
-		workingCursor = url;
+		workingCursorSrc = url;
 		cursorIdInput.value = "";
 		cursorStatus.textContent = "Cursor set.";
 		cursorClearBtn.style.display = "";
-		refreshPreview();
+		cursorScaleRow.style.display = "flex";
+		await applyScaledCursor();
 	});
 	cursorIdInput.addEventListener("keydown", (e) => {
 		if (e.key === "Enter") cursorSetBtn.click();
 	});
+	cursorScaleInput.addEventListener("input", async () => {
+		workingCursorScale = Number(cursorScaleInput.value);
+		cursorScaleLabel.textContent = `${workingCursorScale}px`;
+		await applyScaledCursor();
+	});
 	cursorClearBtn.addEventListener("click", () => {
 		workingCursor = "";
+		workingCursorSrc = "";
 		cursorIdInput.value = "";
 		cursorStatus.textContent = "";
 		cursorClearBtn.style.display = "none";
+		cursorScaleRow.style.display = "none";
 		refreshPreview();
 	});
 
@@ -1433,7 +1906,7 @@ async function doOpenProfileThemeEditor({
 						typeof data.backgroundOverlayOpacity === "number"
 							? data.backgroundOverlayOpacity
 							: undefined,
-					effects: Array.isArray(data.effects) ? data.effects : undefined,
+					effects: sanitizeImportedEffects(data.effects),
 					navbarIconColor:
 						typeof data.navbarIconColor === "string"
 							? data.navbarIconColor
@@ -1458,6 +1931,8 @@ async function doOpenProfileThemeEditor({
 	});
 
 	saveBtn.addEventListener("click", async () => {
+		if (themeLoadFailed) return;
+		await recheckVerification();
 		if (!verified) {
 			window.open("https://polytoria.com/my/settings/kiln?tab=sync", "_blank");
 			setStatus(
@@ -1466,14 +1941,27 @@ async function doOpenProfileThemeEditor({
 			return;
 		}
 
+		if (!serverTheme) {
+			const acknowledged = await confirmPublishRulesSeen(
+				publishRulesOverlay,
+				publishRulesContinueBtn,
+				publishRulesCancelBtn,
+			);
+			if (!acknowledged) return;
+		}
+
 		const original = saveBtn.innerHTML;
 		saveBtn.disabled = true;
 		saveBtn.innerHTML =
 			'<i class="fas fa-spinner fa-spin me-1"></i>Publishing…';
 
+		const values = currentValues();
+		const notes = values.notes?.filter((n) => n.text.trim());
+
 		const result = await sendMessage("saveProfileTheme", {
 			userId,
-			...currentValues(),
+			...values,
+			notes: notes && notes.length > 0 ? notes : undefined,
 		});
 
 		saveBtn.disabled = false;
@@ -1743,20 +2231,20 @@ async function doOpenProfileThemeEditor({
 				(sticker, i) => `
 			<div class="border rounded p-2 mb-2" style="border-color:rgba(128,128,128,0.25)!important;" data-index="${i}">
 				<div class="d-flex align-items-center gap-2 mb-2">
-					<img src="${sticker.url}" alt="" style="width:36px;height:36px;object-fit:contain;flex-shrink:0;" />
+					<img src="${escapeHtml(sticker.url)}" alt="" style="width:36px;height:36px;object-fit:contain;flex-shrink:0;" />
 					<span class="small text-muted flex-fill" style="min-width:0;">
-						<i class="fas fa-thumbtack me-1"></i>${stickerAnchorLabel(sticker.anchor)}
+						<i class="fas fa-thumbtack me-1"></i>${escapeHtml(stickerAnchorLabel(sticker.anchor))}
 					</span>
 					<button class="kiln-pte-sticker-remove" title="Remove"
 					        style="background:none;border:none;padding:0 2px;cursor:pointer;color:rgba(255,255,255,0.4);font-size:0.8rem;line-height:1;flex-shrink:0;">✕</button>
 				</div>
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<span class="small text-muted" style="min-width:4.5em;">Size</span>
-					<input type="range" class="flex-fill kiln-pte-sticker-size" min="16" max="400" step="4" value="${sticker.size}" style="min-width:0;" />
+					<input type="range" class="flex-fill kiln-pte-sticker-size" min="16" max="400" step="4" value="${clamp(Number(sticker.size) || 64, 16, 400)}" style="min-width:0;" />
 				</div>
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<span class="small text-muted" style="min-width:4.5em;">Rotation</span>
-					<input type="range" class="flex-fill kiln-pte-sticker-rotation" min="-180" max="180" step="1" value="${sticker.rotation}" style="min-width:0;" />
+					<input type="range" class="flex-fill kiln-pte-sticker-rotation" min="-180" max="180" step="1" value="${clamp(Number(sticker.rotation) || 0, -180, 180)}" style="min-width:0;" />
 				</div>
 				<select class="form-select form-select-sm kiln-pte-sticker-layer">
 					<option value="front"${sticker.layer === "front" ? " selected" : ""}>On top</option>
@@ -1848,7 +2336,7 @@ async function doOpenProfileThemeEditor({
 					<button class="kiln-pte-note-remove" title="Remove"
 					        style="background:none;border:none;padding:0 2px;cursor:pointer;color:rgba(255,255,255,0.4);font-size:0.8rem;line-height:1;flex-shrink:0;">✕</button>
 				</div>
-				<div class="small text-muted mb-2"><i class="fas fa-thumbtack me-1"></i>${stickerAnchorLabel(note.anchor)}</div>
+				<div class="small text-muted mb-2"><i class="fas fa-thumbtack me-1"></i>${escapeHtml(stickerAnchorLabel(note.anchor))}</div>
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<span class="small text-muted" style="min-width:4.5em;">Colors</span>
 					<input type="color" class="kiln-te-color-picker kiln-pte-note-color" />
@@ -1856,11 +2344,11 @@ async function doOpenProfileThemeEditor({
 				</div>
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<span class="small text-muted" style="min-width:4.5em;">Text Size</span>
-					<input type="range" class="flex-fill kiln-pte-note-size" min="10" max="40" step="1" value="${note.size}" style="min-width:0;" />
+					<input type="range" class="flex-fill kiln-pte-note-size" min="10" max="40" step="1" value="${clamp(Number(note.size) || 16, 10, 40)}" style="min-width:0;" />
 				</div>
 				<div class="d-flex align-items-center gap-2 mb-1">
 					<span class="small text-muted" style="min-width:4.5em;">Rotation</span>
-					<input type="range" class="flex-fill kiln-pte-note-rotation" min="-180" max="180" step="1" value="${note.rotation}" style="min-width:0;" />
+					<input type="range" class="flex-fill kiln-pte-note-rotation" min="-180" max="180" step="1" value="${clamp(Number(note.rotation) || 0, -180, 180)}" style="min-width:0;" />
 				</div>
 				<select class="form-select form-select-sm kiln-pte-note-layer">
 					<option value="front"${note.layer === "front" ? " selected" : ""}>On top</option>
@@ -2023,6 +2511,8 @@ async function doOpenProfileThemeEditor({
 	const cardsFields = el("kiln-pte-cards-fields");
 	const cardsPreset = el<HTMLSelectElement>("kiln-pte-cards-preset");
 	const cardsHover = el<HTMLSelectElement>("kiln-pte-cards-hover");
+	const cardsLiquidRow = el("kiln-pte-cards-liquid-row");
+	const cardsLiquid = el<HTMLInputElement>("kiln-pte-cards-liquid");
 	const cardsTint = el<HTMLInputElement>("kiln-pte-cards-tint");
 	const cardsTintAuto = el<HTMLInputElement>("kiln-pte-cards-tint-auto");
 	const cardsOpacity = el<HTMLInputElement>("kiln-pte-cards-opacity");
@@ -2058,6 +2548,8 @@ async function doOpenProfileThemeEditor({
 		setFieldsEnabled(cardsFields, !!cards);
 		cardsPreset.value = cards?.preset ?? "glass";
 		cardsHover.value = cards?.hover ?? "none";
+		cardsLiquidRow.style.display = cardsPreset.value === "glass" ? "" : "none";
+		cardsLiquid.checked = !!cards?.liquidGlass;
 		cardsTintAuto.checked = !cards?.tint;
 		cardsTint.value = cards?.tint ?? workingNavbar;
 		cardsTint.disabled = !cards?.tint;
@@ -2102,6 +2594,8 @@ async function doOpenProfileThemeEditor({
 		cardsTint.disabled = !cardsEnabled.checked || cardsTintAuto.checked;
 		cardsOpacityLabel.textContent = `${cardsOpacity.value}%`;
 		cardsRadiusLabel.textContent = `${cardsRadius.value}px`;
+		const isGlass = cardsPreset.value === "glass";
+		cardsLiquidRow.style.display = isGlass ? "" : "none";
 		workingExtras.cardStyle = cardsEnabled.checked
 			? {
 					preset: cardsPreset.value as ProfileCardStyle["preset"],
@@ -2109,6 +2603,7 @@ async function doOpenProfileThemeEditor({
 					opacity: Number(cardsOpacity.value),
 					radius: Number(cardsRadius.value),
 					...(cardsTintAuto.checked ? {} : { tint: cardsTint.value }),
+					...(isGlass && cardsLiquid.checked ? { liquidGlass: true } : {}),
 				}
 			: undefined;
 		refreshPreview();
@@ -2119,7 +2614,7 @@ async function doOpenProfileThemeEditor({
 		cardsOpacity.value = String(opacity);
 		readCardStyle();
 	});
-	for (const input of [cardsEnabled, cardsHover, cardsTintAuto])
+	for (const input of [cardsEnabled, cardsHover, cardsTintAuto, cardsLiquid])
 		input.addEventListener("change", readCardStyle);
 	for (const input of [cardsTint, cardsOpacity, cardsRadius])
 		input.addEventListener("input", readCardStyle);
@@ -2199,8 +2694,11 @@ async function doOpenProfileThemeEditor({
 		input.addEventListener("change", readPointerEffects);
 	pointerColor.addEventListener("input", readPointerEffects);
 
+	window.addEventListener("focus", recheckVerification);
+
 	verifyNotice.style.display = verified ? "none" : "";
 	syncInputs();
 	updateStateBadge();
 	refreshPreview();
+	if (themeLoadFailed) showLoadError();
 }

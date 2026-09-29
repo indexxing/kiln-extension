@@ -54,12 +54,15 @@ export const MetadataSchema = z.object({
 export type Metadata = z.infer<typeof MetadataSchema>;
 
 export const CurrentSessionApi = z.object({
-	data: z.object({
-		state: z.enum(["pending", "verified"]),
-		id: z.number(),
-		likes: z.number(),
-		linkedAt: z.string(),
-	}),
+	data: z.discriminatedUnion("state", [
+		z.object({ state: z.literal("pending") }),
+		z.object({
+			state: z.literal("verified"),
+			id: z.number(),
+			likes: z.number(),
+			linkedAt: z.string().nullable(),
+		}),
+	]),
 });
 export type CurrentSessionApi = z.infer<typeof CurrentSessionApi>;
 
@@ -124,7 +127,8 @@ export const RetroItemsApi = z.object({
 		self: z.string(),
 		first: z.string(),
 		last: z.string(),
-		next: z.string().nullable(),
+		next: z.string().optional(),
+		prev: z.string().optional(),
 	}),
 });
 export type RetroItemsApi = z.infer<typeof RetroItemsApi>;
@@ -304,6 +308,39 @@ const PublishedThemeEffect = z.object({
 	value: z.union([z.string(), z.number()]),
 });
 
+export const PROFILE_AMBIENT_TYPES = [
+	"snow",
+	"stars",
+	"rain",
+	"bubbles",
+	"fireflies",
+	"petals",
+] as const;
+
+export const ProfileAmbient = z.object({
+	type: z.enum(PROFILE_AMBIENT_TYPES),
+	density: z.number(),
+	color: z.string().optional(),
+});
+export type ProfileAmbient = z.infer<typeof ProfileAmbient>;
+
+export const ProfileCardStyle = z.object({
+	preset: z.enum(["solid", "glass", "outline", "gradient"]),
+	tint: z.string().optional(),
+	opacity: z.number().optional(),
+	radius: z.number().optional(),
+	hover: z.enum(["none", "lift", "glow", "tilt"]).optional(),
+	liquidGlass: z.boolean().optional(),
+});
+export type ProfileCardStyle = z.infer<typeof ProfileCardStyle>;
+
+export const ProfilePointerEffects = z.object({
+	click: z.enum(["sparkles", "hearts", "ripples", "confetti"]).optional(),
+	trail: z.enum(["sparkles", "dots", "hearts", "glow"]).optional(),
+	color: z.string().optional(),
+});
+export type ProfilePointerEffects = z.infer<typeof ProfilePointerEffects>;
+
 export const GetPublishedThemeApi = z.object({
 	data: z.object({
 		id: z.string(),
@@ -314,10 +351,15 @@ export const GetPublishedThemeApi = z.object({
 		fontFamily: z.string().nullable().optional(),
 		customCss: z.string().nullable().optional(),
 		backgroundImage: z.string().nullable().optional(),
+		backgroundOverlayColor: z.string().nullable().optional(),
+		backgroundOverlayOpacity: z.number().nullable().optional(),
 		navbarIconColor: z.string().nullable().optional(),
 		cursorUrl: z.string().nullable().optional(),
 		effects: z.array(PublishedThemeEffect).nullable().optional(),
 		colorTokens: z.record(z.string(), z.string()).nullable().optional(),
+		ambient: ProfileAmbient.nullable().optional(),
+		cardStyle: ProfileCardStyle.nullable().optional(),
+		pointerEffects: ProfilePointerEffects.nullable().optional(),
 	}),
 });
 export type GetPublishedThemeApi = z.infer<typeof GetPublishedThemeApi>;
@@ -374,22 +416,6 @@ export const ProfileBanner = z.object({
 });
 export type ProfileBanner = z.infer<typeof ProfileBanner>;
 
-export const PROFILE_AMBIENT_TYPES = [
-	"snow",
-	"stars",
-	"rain",
-	"bubbles",
-	"fireflies",
-	"petals",
-] as const;
-
-export const ProfileAmbient = z.object({
-	type: z.enum(PROFILE_AMBIENT_TYPES),
-	density: z.number(),
-	color: z.string().optional(),
-});
-export type ProfileAmbient = z.infer<typeof ProfileAmbient>;
-
 export const ProfileSticker = z.object({
 	id: z.string(),
 	url: z.string(),
@@ -416,15 +442,6 @@ export const ProfileNote = z.object({
 });
 export type ProfileNote = z.infer<typeof ProfileNote>;
 
-export const ProfileCardStyle = z.object({
-	preset: z.enum(["solid", "glass", "outline", "gradient"]),
-	tint: z.string().optional(),
-	opacity: z.number().optional(),
-	radius: z.number().optional(),
-	hover: z.enum(["none", "lift", "glow", "tilt"]).optional(),
-});
-export type ProfileCardStyle = z.infer<typeof ProfileCardStyle>;
-
 export const ProfileAvatarBackdrop = z.discriminatedUnion("type", [
 	z.object({
 		type: z.literal("gradient"),
@@ -441,13 +458,6 @@ export const ProfileAvatarBackdrop = z.discriminatedUnion("type", [
 	}),
 ]);
 export type ProfileAvatarBackdrop = z.infer<typeof ProfileAvatarBackdrop>;
-
-export const ProfilePointerEffects = z.object({
-	click: z.enum(["sparkles", "hearts", "ripples", "confetti"]).optional(),
-	trail: z.enum(["sparkles", "dots", "hearts", "glow"]).optional(),
-	color: z.string().optional(),
-});
-export type ProfilePointerEffects = z.infer<typeof ProfilePointerEffects>;
 
 const ProfileTheme = z.object({
 	userId: z.number(),
@@ -615,6 +625,7 @@ const PlaceReview = z.object({
 	anonymous: z.boolean(),
 	rating: z.number().min(1).max(5),
 	body: z.string().nullable(),
+	migrated: z.boolean(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 	replies: z.array(PlaceReviewReply),
@@ -646,6 +657,36 @@ export const PlaceReviewReplyApi = z.object({
 	data: PlaceReviewReply,
 });
 export type PlaceReviewReplyApi = z.infer<typeof PlaceReviewReplyApi>;
+
+// A review belonging to the requesting user, paired with a resolved world
+// name so the migration tool can list it before recreating it natively.
+export const MigratablePlaceReview = z.object({
+	id: z.string(),
+	placeId: z.number(),
+	placeName: z.string().nullable(),
+	rating: z.number().min(1).max(5),
+	body: z.string().nullable(),
+	anonymous: z.boolean(),
+	approvalStatus: z.string(),
+	migrated: z.boolean(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+});
+
+export const MigratablePlaceReviewsApi = z.object({
+	data: z.array(MigratablePlaceReview),
+});
+export type MigratablePlaceReviewsApi = z.infer<
+	typeof MigratablePlaceReviewsApi
+>;
+
+export const MigratePlaceReviewApi = z.object({
+	data: z.object({
+		id: z.string(),
+		migrated: z.boolean(),
+	}),
+});
+export type MigratePlaceReviewApi = z.infer<typeof MigratePlaceReviewApi>;
 
 export const TopReviewersApi = z.object({
 	data: z.array(
@@ -768,6 +809,20 @@ export const AdminDeleteFeedbackApi = z.object({
 });
 export type AdminDeleteFeedbackApi = z.infer<typeof AdminDeleteFeedbackApi>;
 
+export const AdminStatsApi = z.object({
+	data: z.object({
+		totalVerifiedUsers: z.number(),
+		pendingFeedback: z.number(),
+		versions: z.array(
+			z.object({
+				version: z.string().nullable(),
+				users: z.number(),
+			}),
+		),
+	}),
+});
+export type AdminStatsApi = z.infer<typeof AdminStatsApi>;
+
 export const DataExportApi = z.object({
 	data: z.object({
 		exportedAt: z.string(),
@@ -819,6 +874,7 @@ export const DataExportApi = z.object({
 				body: z.string().nullable(),
 				anonymous: z.boolean(),
 				approvalStatus: z.string(),
+				migrated: z.boolean(),
 				createdAt: z.string(),
 				updatedAt: z.string(),
 			}),
@@ -886,6 +942,15 @@ export const DataExportApi = z.object({
 				updatedAt: z.string(),
 			}),
 		),
+		profileTheme: z
+			.looseObject({
+				userId: z.number(),
+				approvalStatus: z.string(),
+				createdAt: z.string(),
+				updatedAt: z.string().nullable(),
+			})
+			.nullable()
+			.optional(),
 	}),
 });
 export type DataExportApi = z.infer<typeof DataExportApi>;

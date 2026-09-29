@@ -25,6 +25,7 @@ import type {
 	KilnErrorLogEntry,
 	ThemeEffect,
 } from "./types";
+import type { Ambient, CardStyle, PointerEffects } from "./visualEffects";
 
 const prefItems = preferencesList.preferences;
 
@@ -56,6 +57,18 @@ const deprecatedHiddenIds = new Set(
 		.filter((p) => p.hide && !p.defaultEnabled)
 		.map((p) => p.id),
 );
+
+const deprecatedIds = new Set(
+	(prefItems as Array<{ id: string; tags?: string[] }>)
+		.filter((p) => p.tags?.includes("deprecated"))
+		.map((p) => p.id),
+);
+
+export function getEnabledDeprecatedFeatures(
+	enabled: FeatureId[],
+): FeatureId[] {
+	return enabled.filter((id) => deprecatedIds.has(id));
+}
 
 const irlBrickPriceCurrencies = new Set(
 	(
@@ -323,6 +336,9 @@ export type SavedTheme = {
 	cursorUrl?: string;
 	cursorScale?: number;
 	colorTokens?: Record<string, string>;
+	ambient?: Ambient;
+	cardStyle?: CardStyle;
+	pointerEffects?: PointerEffects;
 };
 
 export const _savedThemes = storage.defineItem<SavedTheme[]>(
@@ -343,8 +359,10 @@ export async function migrateThemesToLocal(): Promise<void> {
 	if (syncThemes.length === 0) return;
 
 	const localThemes = await _savedThemes.getValue();
-	if (localThemes.length === 0) {
-		await _savedThemes.setValue(syncThemes);
+	const localIds = new Set(localThemes.map((t) => t.id));
+	const missingFromLocal = syncThemes.filter((t) => !localIds.has(t.id));
+	if (missingFromLocal.length > 0) {
+		await _savedThemes.setValue([...localThemes, ...missingFromLocal]);
 	}
 	await _savedThemesSync.removeValue();
 }
@@ -468,6 +486,30 @@ preferences.getPreferences = async function () {
 	};
 };
 
+const originalSetValue = preferences.setValue.bind(preferences);
+
+preferences.setValue = async function (value) {
+	const rawStored = await this.getValue();
+	const configResult = await sendMessage("getConfig").catch(() => null);
+	const flags = configResult?.ok ? configResult.data.flags : {};
+	const mobile = isMobileDevice();
+	const chrome = isChrome();
+	const disabled = value.disabled ?? [];
+
+	const enabled = new Set(value.enabled ?? []);
+	for (const id of rawStored.enabled ?? []) {
+		if (enabled.has(id) || disabled.includes(id)) continue;
+		const filteredOut =
+			flags[`features.${id}.enabled`] === false ||
+			(mobile && desktopOnlyIds.has(id)) ||
+			(!chrome && chromeOnlyIds.has(id)) ||
+			deprecatedHiddenIds.has(id);
+		if (filteredOut) enabled.add(id);
+	}
+
+	return originalSetValue({ ...value, enabled: [...enabled] });
+};
+
 export const cache = storage.defineItem<CacheInterface>("local:cache", {
 	fallback: {
 		remoteConfig: null as Record<string, any> | null,
@@ -524,6 +566,14 @@ export const dismissedNotices = storage.defineItem<string[]>(
 	},
 );
 
+export const _hasShownPublishRulesModal = storage.defineItem<boolean>(
+	"local:hasShownPublishRulesModal",
+	{
+		fallback: false,
+		version: 1,
+	},
+);
+
 export const _reportedTimezones = storage.defineItem<
 	Record<number, { timezone: string; reportedAt: number }>
 >("local:reportedTimezones", {
@@ -548,6 +598,30 @@ export const _showKilnDisclosures = storage.defineItem<boolean>(
 
 export const _condensedTabBars = storage.defineItem<boolean>(
 	"local:condensedTabBars",
+	{
+		fallback: true,
+		version: 1,
+	},
+);
+
+export const _textTruncateFix = storage.defineItem<boolean>(
+	"local:textTruncateFix",
+	{
+		fallback: false,
+		version: 1,
+	},
+);
+
+export const _forumFeedbackRedirectBanner = storage.defineItem<boolean>(
+	"local:forumFeedbackRedirectBanner",
+	{
+		fallback: true,
+		version: 1,
+	},
+);
+
+export const _kilnUpdatesCategory = storage.defineItem<boolean>(
+	"local:kilnUpdatesCategory",
 	{
 		fallback: true,
 		version: 1,

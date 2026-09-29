@@ -26,10 +26,14 @@ export default defineContentScript({
 		const [_, first, second, third] = window.location.pathname.split("/");
 
 		if (first == "u") {
-			resolveUserAPIURL(second).then((url) => window.location.replace(url));
+			resolveUserAPIURL(second)
+				.then((url) => window.location.replace(url))
+				.catch((err) =>
+					console.error("[Kiln] Failed to resolve user API URL:", err),
+				);
 		} else if (first == "store") {
 			window.location.replace(`https://api.polytoria.com/v1/store/${second}`);
-		} else if (first == "guild") {
+		} else if (first == "guilds") {
 			window.location.replace(`https://api.polytoria.com/v1/guild/${second}`);
 		} else if (first == "forum" && second == "post") {
 			window.location.replace(`https://api.polytoria.com/v1/forum/${third}`);

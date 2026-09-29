@@ -16,8 +16,15 @@
 
 import { Extension } from "@kiln/schemas";
 import { onMessage } from "@/utils/messaging";
-import { _errorLog, apiSessions, getFeedbackClientId } from "@/utils/storage";
-import { checkRateLimit, handle, safeFetch, withApi } from "./shared";
+import { _errorLog, getFeedbackClientId } from "@/utils/storage";
+import {
+	checkRateLimit,
+	handle,
+	NoSessionError,
+	safeFetch,
+	withApi,
+	withAuthSession,
+} from "./shared";
 
 const MAX_ERRORS_SENT = 15;
 const CLIENT_ID_HEADER = "x-kiln-feedback-id";
@@ -26,13 +33,14 @@ async function getOptionalAuthHeader(
 	userId: number | undefined,
 ): Promise<Record<string, string>> {
 	if (!userId) return {};
-	const sessions = await apiSessions.getValue();
-	const session = sessions.find(
-		(s) => s.userId === userId && s.state === "verified" && s.accessToken,
-	);
-	return session?.accessToken
-		? { Authorization: `Bearer ${session.accessToken}` }
-		: {};
+	try {
+		return await withAuthSession(userId, async (token) => ({
+			Authorization: `Bearer ${token}`,
+		}));
+	} catch (err) {
+		if (err instanceof NoSessionError) return {};
+		throw err;
+	}
 }
 
 onMessage("submitFeedback", ({ data }) =>

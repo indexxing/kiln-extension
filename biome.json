@@ -10,7 +10,14 @@
 		"includes": [
 			"**",
 			"!apps/extension/public/css",
-			"!apps/website",
+			"!apps/website/**/*.ts",
+			"!apps/website/**/*.mjs",
+			"!apps/website/**/*.json",
+			"!apps/website/**/*.md",
+			"!apps/website/**/*.css",
+			"!apps/website/.astro/**",
+			"!apps/website/dist/**",
+			"!apps/website/public/**",
 			"!apps/worker/worker-configuration.d.ts"
 		]
 	},
@@ -34,6 +41,15 @@
 	"javascript": {
 		"formatter": {
 			"quoteStyle": "double"
+		}
+	},
+	"html": {
+		"experimentalFullSupportEnabled": true,
+		"formatter": {
+			"enabled": true
+		},
+		"linter": {
+			"enabled": false
 		}
 	},
 	"assist": {

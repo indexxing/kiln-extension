@@ -18,7 +18,8 @@ import { sendMessage } from "@/utils/messaging";
 import { kilnDisclosureBadgeHtml } from "@/utils/utilities";
 
 export function actions(showDisclosures: boolean) {
-	const container = document.getElementById("friends-container")!;
+	const container = document.getElementById("friends-container");
+	if (!container) return;
 
 	const actionBtns = document.createElement("div");
 	actionBtns.classList.add("row", "mb-3");

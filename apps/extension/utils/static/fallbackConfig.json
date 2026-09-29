@@ -1,5 +1,5 @@
 {
-	"latestVersion": "2.13.0",
+	"latestVersion": "2.13.2",
 	"notices": [],
 	"apiAvailability": {
 		"public": true,
@@ -13,7 +13,8 @@
 		"apis.isExtensionApiStable": true,
 		"features.placeConsumablesTab.enabled": false,
 		"features.outfitManagement.enabled": false,
-		"features.customProfileThemes.useThisTheme": false
+		"features.customProfileThemes.useThisTheme": false,
+		"general.futureOfKilnNotice.visible": false
 	},
 	"limits": {
 		"maxPinnedWorlds": 25,
@@ -27,6 +28,12 @@
 		"maxStarredImages": 100
 	},
 	"users": {
-		"generativeAI": [48196, 767253, 48195, 826580, 826659]
+		"generativeAI": [
+			48196,
+			767253,
+			48195,
+			826580,
+			826659
+		]
 	}
 }

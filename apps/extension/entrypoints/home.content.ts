@@ -17,6 +17,7 @@
 import type { PolyTrack, Polytoria } from "@kiln/schemas";
 import errorIcon from "@/assets/error.svg";
 import sadFace from "@/assets/sad-face.webp";
+import { escapeHtml, safeHttpUrl } from "@/utils/escapeHtml";
 import {
 	_bestFriends,
 	_homepageSectionOrder,
@@ -36,7 +37,12 @@ import {
 import { sendMessage } from "../utils/messaging";
 
 export default defineContentScript({
-	matches: ["https://polytoria.com/", "https://polytoria.com/home"],
+	matches: [
+		"https://polytoria.com/",
+		"https://polytoria.com/?*",
+		"https://polytoria.com/home",
+		"https://polytoria.com/home?*",
+	],
 	main() {
 		Promise.all([
 			preferences.getPreferences(),
@@ -178,7 +184,7 @@ async function favoritedPlaces(showDisclosures: boolean) {
         <div class="scrollFade card me-2 place-card force-desktop text-center mb-2" style="opacity: 1;">
           <div class="card-body">
             <div class="ratings-header" style="position: relative;">
-              <img src="${details.thumbnail}" class="place-card-image" style="position: relative;">
+              <img src="${escapeHtml(safeHttpUrl(details.thumbnail) || errorIcon)}" class="place-card-image" style="position: relative;">
               <div class="p+pinned_games_playing" style="position: absolute;background: linear-gradient(to bottom, #000000f7, transparent, transparent, transparent);width: 100%;height: 100%;top: 0;left: 0;border-radius: 11px;padding-top: 12px;color: gray;font-size: 0.8rem;">
                 <i class="fa-duotone fa-users"></i>
                 <span>
@@ -189,7 +195,7 @@ async function favoritedPlaces(showDisclosures: boolean) {
             </div>
             <div>
               <div class="mt-2 mb-1 place-card-title">
-                ${details.name}
+                ${escapeHtml(details.name)}
               </div>
             </div>
           </div>
@@ -219,6 +225,7 @@ async function favoritedPlaces(showDisclosures: boolean) {
 		cardElements.map(async ({ scrollCard, details }) => {
 			const creatorResult = await sendMessage("getUser", details.creator.id);
 			if (creatorResult.ok) return;
+			if (creatorResult.code !== "UNKNOWN") return;
 
 			const ratingsHeader = scrollCard.querySelector(
 				".ratings-header",
@@ -307,14 +314,14 @@ function bestFriends(showDisclosures: boolean) {
 		});
 
 		headshot.innerHTML = `
-    <img width="90" height="auto" src="${user.thumbnail.icon}" alt="${user.username}" class="img-fluid rounded-circle border border-2 ">
+    <img width="90" height="auto" src="${escapeHtml(safeHttpUrl(user.thumbnail.icon) || errorIcon)}" alt="${escapeHtml(user.username)}" class="img-fluid rounded-circle border border-2 ">
     <div class="friend-name text-truncate mt-1">
       <div style="font-size: 0.5rem; line-height: 0.5rem; display: inline-block;">
         <span class="text-muted">
           <i class="fas fa-dot-circle"></i>
         </span>
       </div>
-      ${user.username}
+      ${escapeHtml(user.username)}
     </div>
     `;
 
@@ -381,15 +388,25 @@ async function irlBrickPrice(
 }
 
 function homeJoinFriendsButton(showDisclosures: boolean) {
-	const friendsPopup = document.getElementById("friend-name")!;
+	const friendsPopup = document.getElementById("friend-name");
+	if (!friendsPopup) {
+		console.warn("[Kiln] #friend-name not found");
+		return;
+	}
 
 	const observer = new MutationObserver((records) => {
 		for (const record of records) {
 			for (const node of record.addedNodes) {
 				if (!(node instanceof HTMLAnchorElement)) continue;
 
+				const target = node.parentElement?.parentElement;
+				if (!target) continue;
+
+				target.querySelector('[data-kiln="home-join-btn"]')?.remove();
+
 				const joinButton = document.createElement("button");
 				joinButton.className = "btn btn-success btn-sm";
+				joinButton.dataset.kiln = "home-join-btn";
 				Object.assign(joinButton.style, {
 					position: "absolute",
 					top: 0,
@@ -403,7 +420,7 @@ function homeJoinFriendsButton(showDisclosures: boolean) {
 					showDisclosures,
 					"Join friend's game",
 				);
-				node.parentElement?.parentElement?.appendChild(joinButton);
+				target.appendChild(joinButton);
 
 				joinButton.addEventListener("click", async () => {
 					const profileLink = document.getElementById(
@@ -419,7 +436,10 @@ function homeJoinFriendsButton(showDisclosures: boolean) {
 					const userResult = await sendMessage("getUser", +userId);
 					if (!userResult.ok) return;
 
-					window.location.href = `https://polytoria.com/places/${userResult.data.playing!.placeID}?serverId=${userResult.data.playing!.serverID}`;
+					const playing = userResult.data.playing;
+					if (!playing) return;
+
+					window.location.href = `https://polytoria.com/places/${playing.placeID}?serverId=${playing.serverID}`;
 				});
 			}
 		}
@@ -682,14 +702,6 @@ async function myFeedPosts() {
 	if (!found) return;
 	const { toolbar, container } = found;
 
-	const escapeHtml = (value: string): string =>
-		value
-			.replaceAll("&", "&amp;")
-			.replaceAll("<", "&lt;")
-			.replaceAll(">", "&gt;")
-			.replaceAll('"', "&quot;")
-			.replaceAll("'", "&#39;");
-
 	const renderFeedEntry = (entry: PolyTrack.FeedEntry): HTMLElement => {
 		const isReply = entry.kind === "reply";
 		const preview = entry.content.replace(/\s+/g, " ").trim();
@@ -842,8 +854,10 @@ async function myFeedPosts() {
 		)!;
 
 		let nextPage: number | null = null;
+		let requestId = 0;
 
 		const loadPage = async (page: number) => {
+			const thisRequest = ++requestId;
 			const result = await sendMessage("getFeedSearch", {
 				page,
 				search: "",
@@ -853,6 +867,8 @@ async function myFeedPosts() {
 				postedAfter: "",
 				postedBefore: "",
 			});
+
+			if (thisRequest !== requestId) return;
 
 			if (!result.ok) {
 				if (page === 1) {
@@ -963,14 +979,6 @@ async function searchFeedPosts() {
 	const found = findFeedToolbar();
 	if (!found) return;
 	const { toolbar, container } = found;
-
-	const escapeHtml = (value: string): string =>
-		value
-			.replaceAll("&", "&amp;")
-			.replaceAll("<", "&lt;")
-			.replaceAll(">", "&gt;")
-			.replaceAll('"', "&quot;")
-			.replaceAll("'", "&#39;");
 
 	const renderFeedEntry = (entry: PolyTrack.FeedEntry): HTMLElement => {
 		const isReply = entry.kind === "reply";
@@ -1343,6 +1351,7 @@ async function searchFeedPosts() {
 		)!;
 
 		let nextPage: number | null = null;
+		let requestId = 0;
 
 		const readFilters = (targetPage: number) => ({
 			page: targetPage,
@@ -1355,10 +1364,13 @@ async function searchFeedPosts() {
 		});
 
 		const runSearch = async () => {
+			const thisRequest = ++requestId;
 			resultsContainer.innerHTML = `<div class="text-center text-muted p-4"><span class="spinner-border spinner-border-sm"></span> Searching...</div>`;
 			setLoadMoreState(loadMoreButton, "hidden");
 
 			const result = await sendMessage("getFeedSearch", readFilters(1));
+			if (thisRequest !== requestId) return;
+
 			if (!result.ok) {
 				resultsContainer.innerHTML = `<div class="alert alert-danger">Failed to search the feed: ${escapeHtml(result.message)}</div>`;
 				return;
@@ -1381,9 +1393,12 @@ async function searchFeedPosts() {
 
 		loadMoreButton.addEventListener("click", async () => {
 			if (nextPage === null) return;
+			const thisRequest = ++requestId;
 			setLoadMoreState(loadMoreButton, "loading");
 
 			const result = await sendMessage("getFeedSearch", readFilters(nextPage));
+			if (thisRequest !== requestId) return;
+
 			if (!result.ok) {
 				setLoadMoreState(loadMoreButton, "error");
 				return;

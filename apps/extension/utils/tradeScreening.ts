@@ -136,9 +136,21 @@ export async function screenTradeNotifications(
 		);
 		if (!verdict) return;
 
-		await sendMessage("rejectTrade", Number(tradeId));
-		anchor.style.opacity = "0.5";
-		applyKilnDisclosureTitle(anchor, showDisclosures, VERDICT_REASONS[verdict]);
+		const result = await sendMessage("rejectTrade", Number(tradeId));
+		if (result.ok) {
+			anchor.style.opacity = "0.5";
+			applyKilnDisclosureTitle(
+				anchor,
+				showDisclosures,
+				VERDICT_REASONS[verdict],
+			);
+		} else {
+			applyKilnDisclosureTitle(
+				anchor,
+				showDisclosures,
+				"Kiln couldn't auto-reject this trade",
+			);
+		}
 	}
 
 	async function run() {

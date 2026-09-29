@@ -282,22 +282,28 @@ export class AvatarRenderer {
 		this.camera.updateProjectionMatrix();
 	}
 
-	private clearAvatar(): void {
-		if (this.mixer) {
-			this.mixer.stopAllAction();
-			this.mixer = null;
-		}
-		if (!this.avatarGroup) return;
-		this.avatarGroup.traverse((obj) => {
-			if (!(obj instanceof THREE.Mesh)) return;
-			obj.geometry.dispose();
-			const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+	private disposeObject(obj: THREE.Object3D): void {
+		obj.traverse((node) => {
+			if (!(node instanceof THREE.Mesh)) return;
+			node.geometry.dispose();
+			const mats = Array.isArray(node.material)
+				? node.material
+				: [node.material];
 			for (const m of mats) {
 				const stdMat = m as THREE.MeshStandardMaterial;
 				stdMat.map?.dispose();
 				stdMat.dispose();
 			}
 		});
+	}
+
+	private clearAvatar(): void {
+		if (this.mixer) {
+			this.mixer.stopAllAction();
+			this.mixer = null;
+		}
+		if (!this.avatarGroup) return;
+		this.disposeObject(this.avatarGroup);
 		this.scene.remove(this.avatarGroup);
 		this.avatarGroup = null;
 		this.accessoryObjects.clear();
@@ -329,7 +335,7 @@ export class AvatarRenderer {
 
 	async load(avatar: AvatarIFrameState): Promise<void> {
 		const gen = ++this.loadGen;
-		this.clearAvatar();
+		const isCurrent = () => gen === this.loadGen;
 
 		const faceUrl = isUrl(avatar.face) ? avatar.face : undefined;
 		const clothingUrls = (avatar.clothing ?? []).filter(isUrl) as string[];
@@ -341,6 +347,7 @@ export class AvatarRenderer {
 
 		if (!this.cachedBodyGltf) {
 			this.cachedBodyGltf = await loadGLB(this.loader, BODY_GLB);
+			if (!isCurrent()) return;
 		}
 
 		const clothingImages: HTMLImageElement[] = [];
@@ -352,11 +359,16 @@ export class AvatarRenderer {
 					} catch {}
 				}),
 			);
+			if (!isCurrent()) return;
 		}
 
 		const faceTexture = faceUrl
 			? await buildFaceTexture(avatar.headColor, faceUrl)
 			: null;
+		if (!isCurrent()) {
+			faceTexture?.dispose();
+			return;
+		}
 
 		const partTexCache = new Map<string, THREE.CanvasTexture>();
 		const getClothingTex = (skinColor: string): THREE.CanvasTexture => {
@@ -375,12 +387,13 @@ export class AvatarRenderer {
 			THREE.AnimationClip.parse(THREE.AnimationClip.toJSON(clip)),
 		);
 		const animName = toolUrl ? "ToolHold" : "Idle";
-		this.clips = animations;
+		let localClips: THREE.AnimationClip[] = animations;
+		let localMixer: THREE.AnimationMixer | null = null;
 		const clipToPlay =
 			animations.find((a) => a.name === animName) ?? animations[0];
 		if (clipToPlay) {
-			this.mixer = new THREE.AnimationMixer(bodyScene);
-			const action = this.mixer.clipAction(clipToPlay).reset().play();
+			localMixer = new THREE.AnimationMixer(bodyScene);
+			const action = localMixer.clipAction(clipToPlay).reset().play();
 			if (animName === "Idle") action.paused = true;
 		}
 
@@ -425,6 +438,11 @@ export class AvatarRenderer {
 		if (bodyUrl) {
 			try {
 				const bodyGltf = await loadGLB(this.loader, bodyUrl);
+				if (!isCurrent()) {
+					this.disposeObject(bodyGltf.scene);
+					this.disposeObject(group);
+					return;
+				}
 				const bodyGltfScene = bodyGltf.scene;
 
 				bodyGltfScene.traverse((node: THREE.Object3D) => {
@@ -457,20 +475,20 @@ export class AvatarRenderer {
 					mat.needsUpdate = true;
 				});
 
-				this.mixer?.stopAllAction();
+				localMixer?.stopAllAction();
 				const rawBodyAnims: THREE.AnimationClip[] = bodyGltf.animations?.length
 					? bodyGltf.animations
 					: (this.cachedBodyGltf.animations ?? []);
 				const bodyAnims = rawBodyAnims.map((clip: THREE.AnimationClip) =>
 					THREE.AnimationClip.parse(THREE.AnimationClip.toJSON(clip)),
 				);
-				this.clips = bodyAnims;
+				localClips = bodyAnims;
 				const bodyClip =
 					bodyAnims.find((a: THREE.AnimationClip) => a.name === animName) ??
 					bodyAnims[0];
 				if (bodyClip) {
-					this.mixer = new THREE.AnimationMixer(bodyGltfScene);
-					const action = this.mixer.clipAction(bodyClip).reset().play();
+					localMixer = new THREE.AnimationMixer(bodyGltfScene);
+					const action = localMixer.clipAction(bodyClip).reset().play();
 					if (animName === "Idle") action.paused = true;
 				}
 
@@ -490,34 +508,63 @@ export class AvatarRenderer {
 				rightHandBone = obj;
 		});
 
+		const localAccessoryObjects = new Map<string, THREE.Object3D>();
+		const localAccessoryBase = new Map<
+			string,
+			{
+				position: THREE.Vector3;
+				quaternion: THREE.Quaternion;
+				scale: THREE.Vector3;
+			}
+		>();
+		const localAccessoryPivot = new Map<string, THREE.Vector3>();
+
 		await Promise.all(
 			[...accUrls, ...(toolUrl ? [toolUrl] : [])].map(async (url) => {
 				try {
 					const gltf = await loadGLB(this.loader, url);
+					if (!isCurrent()) {
+						this.disposeObject(gltf.scene);
+						return;
+					}
 					if (url.includes("poly-upd-archival.pages.dev"))
 						gltf.scene.position.y += RETRO_HAT_Y_OFFSET;
 					if (url === toolUrl) {
 						(rightHandBone ?? activeBodyScene).attach(gltf.scene);
 					} else {
 						(headBone ?? activeBodyScene).attach(gltf.scene);
-						this.accessoryObjects.set(url, gltf.scene);
-						this.accessoryBase.set(url, {
+						localAccessoryObjects.set(url, gltf.scene);
+						localAccessoryBase.set(url, {
 							position: gltf.scene.position.clone(),
 							quaternion: gltf.scene.quaternion.clone(),
 							scale: gltf.scene.scale.clone(),
 						});
-						this.accessoryPivot.set(url, this.computeLocalPivot(gltf.scene));
-						const transform = avatar.itemTransforms?.[url];
-						if (transform) this.setAccessoryTransform(url, transform);
+						localAccessoryPivot.set(url, this.computeLocalPivot(gltf.scene));
 					}
 				} catch {}
 			}),
 		);
 
-		if (gen !== this.loadGen) return;
+		if (!isCurrent()) {
+			this.disposeObject(group);
+			return;
+		}
 
+		this.clearAvatar();
+		this.mixer = localMixer;
+		this.clips = localClips;
+		this.accessoryObjects = localAccessoryObjects;
+		this.accessoryBase = localAccessoryBase;
+		this.accessoryPivot = localAccessoryPivot;
 		this.avatarGroup = group;
 		this.scene.add(group);
+
+		for (const [url, transform] of Object.entries(
+			avatar.itemTransforms ?? {},
+		)) {
+			if (this.accessoryObjects.has(url))
+				this.setAccessoryTransform(url, transform);
+		}
 
 		if (!this.hasLoaded) {
 			this.hasLoaded = true;

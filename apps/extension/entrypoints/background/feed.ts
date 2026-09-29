@@ -16,15 +16,15 @@
 
 import { onMessage } from "@/utils/messaging";
 import type { FeedApi } from "@/utils/types";
-import { handle } from "./shared";
+import { handle, resolveInjectableTabId } from "./shared";
 
-onMessage("getFeed", ({ data: page }) =>
+onMessage("getFeed", ({ data: page, sender }) =>
 	handle(async () => {
-		const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-		if (!tabs[0]?.id) throw new Error("No active tab");
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) throw new Error("No active tab");
 
 		const results = await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id },
+			target: { tabId },
 			world: "MAIN",
 			args: [page],
 			func: async (page: number) => {

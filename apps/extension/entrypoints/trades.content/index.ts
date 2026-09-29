@@ -20,6 +20,8 @@ import * as newTrade from "./newTrade";
 import * as overview from "./overview";
 import * as view from "./view";
 
+const MAX_VIEWED_TRADE_IDS = 1000;
+
 type TradePage =
 	| { type: "overview"; tab: "received" | "sent" | "completed" | "inactive" }
 	| { type: "view"; tradeId: string }
@@ -40,7 +42,11 @@ function parseTradePage(): TradePage {
 }
 
 export default defineContentScript({
-	matches: ["https://polytoria.com/trade/*"],
+	matches: [
+		"https://polytoria.com/trade",
+		"https://polytoria.com/trade?*",
+		"https://polytoria.com/trade/*",
+	],
 	main() {
 		Promise.all([
 			preferences.getPreferences(),
@@ -59,7 +65,9 @@ export default defineContentScript({
 				}
 
 				if (page.type === "new") {
-					newTrade.nftItems(showDisclosures);
+					if (values.enabled.includes("nftItems")) {
+						newTrade.nftItems(showDisclosures);
+					}
 
 					if (values.enabled.includes("nlfItems")) {
 						newTrade.nlfItems(showDisclosures);
@@ -68,10 +76,10 @@ export default defineContentScript({
 					const trade = parseTrade(document);
 
 					_viewedTradeIds.getValue().then((tradeIds) => {
-						_viewedTradeIds.setValue([
-							...tradeIds,
-							+window.location.pathname.split("/")[3],
-						]);
+						const tradeId = +window.location.pathname.split("/")[3];
+						const deduped = tradeIds.filter((id) => id !== tradeId);
+						deduped.push(tradeId);
+						_viewedTradeIds.setValue(deduped.slice(-MAX_VIEWED_TRADE_IDS));
 					});
 
 					if (values.enabled.includes("irlBrickPrice")) {

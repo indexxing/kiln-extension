@@ -17,16 +17,19 @@
 import { LOVE } from "@kiln/schemas";
 import { onMessage } from "@/utils/messaging";
 import { pullBulkKVCache, pullKVCache } from "@/utils/utilities";
-import { checkRateLimit, handle, safeFetch } from "./shared";
+import {
+	checkRateLimit,
+	handle,
+	resolveInjectableTabId,
+	safeFetch,
+} from "./shared";
 
-onMessage("rejectTrade", ({ data: tradeId, sender }) => {
+onMessage("rejectTrade", ({ data: tradeId, sender }) =>
 	handle(async () => {
-		const tabId =
-			sender.tab?.id ??
-			(await browser.tabs.query({ active: true, currentWindow: true }))[0]?.id;
-		if (tabId === undefined) return;
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) throw new Error("No active tab");
 
-		browser.scripting.executeScript({
+		const results = await browser.scripting.executeScript({
 			target: { tabId },
 			world: "MAIN",
 			args: [tradeId],
@@ -37,9 +40,11 @@ onMessage("rejectTrade", ({ data: tradeId, sender }) => {
 					if (parts.length === 2) return parts.pop()!.split(";").shift();
 				};
 
-				const xsrfToken = decodeURIComponent(getCookie("XSRF-TOKEN")!);
+				const xsrfCookie = getCookie("XSRF-TOKEN");
+				if (!xsrfCookie) return false;
+				const xsrfToken = decodeURIComponent(xsrfCookie);
 
-				fetch("/api/trade/decline", {
+				const res = await fetch("/api/trade/decline", {
 					method: "POST",
 					headers: {
 						"Content-Type": "application/json",
@@ -48,10 +53,15 @@ onMessage("rejectTrade", ({ data: tradeId, sender }) => {
 					body: JSON.stringify({ id: tradeId }),
 					credentials: "include",
 				});
+				return res.ok;
 			},
 		});
-	});
-});
+
+		const ok = results[0]?.result;
+		if (!ok) throw new Error("Failed to decline trade");
+		return true;
+	}),
+);
 
 onMessage("getPolytoriaTradeItems", ({ data: itemIds }) =>
 	handle(async () => {

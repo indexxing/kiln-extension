@@ -598,6 +598,10 @@
 				{
 					"type": "info",
 					"text": "This feature requires \"World Server Share Links\" to be enabled to work properly."
+				},
+				{
+					"type": "warning",
+					"text": "This feature was deprecated because it was implemented natively by Polytoria."
 				}
 			],
 			"tags": [
@@ -964,6 +968,12 @@
 			"desc": "Choose that exact color shade with an input for any hex code you can dream up in the \"Custom\" tab of the body part color selector modal on the avatar editor page.",
 			"id": "customBodyColorHexCodes",
 			"defaultEnabled": true,
+			"notes": [
+				{
+					"type": "warning",
+					"text": "This feature was deprecated because it was implemented natively by Polytoria."
+				}
+			],
 			"tags": [
 				"utility",
 				"deprecated"
@@ -1059,6 +1069,12 @@
 					"hide": true
 				}
 			],
+			"notes": [
+				{
+					"type": "warning",
+					"text": "This feature was deprecated because it was implemented natively by Polytoria."
+				}
+			],
 			"tags": [
 				"utility",
 				"deprecated"
@@ -1094,8 +1110,12 @@
 				{
 					"type": "select",
 					"subsetting": "membershipStyle",
-					"default": "free",
+					"default": "auto",
 					"options": [
+						{
+							"value": "auto",
+							"label": "Auto (Match My Membership)"
+						},
 						{
 							"value": "free",
 							"label": "Free"
@@ -1173,7 +1193,7 @@
 		},
 		{
 			"name": "Legacy World View Layout",
-			"desc": "Revert the world page to be the old layout from before February 2026.",
+			"desc": "Revert an individual world's page (the page you land on when you open a specific world) to the old layout from before February 2026.",
 			"id": "legacyWorldViewLayout",
 			"config": [
 				{
@@ -1356,8 +1376,15 @@
 			"desc": "Quickly apply markdown to your forum posts with easy to use formatting buttons!",
 			"id": "forumMarkdownButtons",
 			"defaultEnabled": true,
+			"notes": [
+				{
+					"type": "warning",
+					"text": "This feature was deprecated because it was implemented natively by Polytoria."
+				}
+			],
 			"tags": [
-				"utility"
+				"utility",
+				"deprecated"
 			]
 		},
 		{
@@ -1685,7 +1712,7 @@
 		},
 		{
 			"name": "Legacy World Discovery Layout",
-			"desc": "Revert the world discovery page to be the old layout from before September 2026.",
+			"desc": "Revert the worlds list page (where you browse and search all worlds, not an individual world's page) to the old layout from before September 2026.",
 			"id": "legacyWorldDiscoveryLayout",
 			"tags": [
 				"new",
@@ -1797,6 +1824,78 @@
 					"type": "check",
 					"subsetting": "viewOthers",
 					"label": "View other users' themes",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "audio",
+					"label": "Play Background Music & Click Sounds",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "customCss",
+					"label": "Apply Custom CSS",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "effects",
+					"label": "Apply Visual Effects (borders, shadows, frames)",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "animated",
+					"label": "Allow Animated Effects (shimmering usernames)",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "ambient",
+					"label": "Show Ambient Effects (snow, stars, rain, etc.)",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "pointer",
+					"label": "Show Cursor Effects (clicks & trails)",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "layout",
+					"label": "Allow Profile Layout Changes (reordering/hiding sections)",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "banner",
+					"label": "Show Profile Banners",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "stickers",
+					"label": "Show Stickers",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "notes",
+					"label": "Show Sticky Notes",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "cards",
+					"label": "Apply Card Styling",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "backdrop",
+					"label": "Show Avatar Backdrops",
 					"default": true
 				}
 			],

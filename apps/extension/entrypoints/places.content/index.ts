@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import { runFeature } from "@/utils/runFeature";
 import {
 	_condensedTabBars,
 	_showKilnDisclosures,
@@ -26,6 +27,7 @@ import * as view from "./view";
 export default defineContentScript({
 	matches: [
 		"https://polytoria.com/places",
+		"https://polytoria.com/places?*",
 		"https://polytoria.com/places/*",
 		"https://polytoria.com/create/place/*",
 	],
@@ -43,7 +45,7 @@ export default defineContentScript({
 
 			const [_, first, second] = window.location.pathname.split("/");
 
-			if (!Number.isNaN(Number(second))) {
+			if (second !== undefined && /^\d+$/.test(second)) {
 				if (import.meta.env.MODE == "development") {
 					console.log("[Kiln] Running view page functions: ", view);
 				}
@@ -55,55 +57,79 @@ export default defineContentScript({
 					creatorAnchor?.getAttribute("href")?.split("/")[2] ?? null;
 
 				if (values.enabled.includes("legacyWorldViewLayout")) {
-					view.legacyPlaceViewLayout(
-						showDisclosures,
-						values.config.legacyWorldViewLayout.newerFeatures,
+					runFeature("legacyWorldViewLayout", () =>
+						view.legacyPlaceViewLayout(
+							showDisclosures,
+							values.config.legacyWorldViewLayout.newerFeatures,
+						),
 					);
 				}
 				if (values.enabled.includes("favoritedPlaces")) {
-					view.favoritedPlaces(user.userId, showDisclosures);
+					runFeature("favoritedPlaces", () =>
+						view.favoritedPlaces(user.userId, showDisclosures),
+					);
 				}
 				if (values.enabled.includes("downloadableCopyableWorlds")) {
-					view.downloadableCopyableWorlds(showDisclosures);
+					runFeature("downloadableCopyableWorlds", () =>
+						view.downloadableCopyableWorlds(showDisclosures),
+					);
 				}
 				if (values.enabled.includes("placeRevenue")) {
-					view.approxPlaceRevenue(
-						values.enabled.includes("irlBrickPrice"),
-						values.config.irlBrickPrice.currency,
-						showDisclosures,
+					runFeature("placeRevenue", () =>
+						view.approxPlaceRevenue(
+							values.enabled.includes("irlBrickPrice"),
+							values.config.irlBrickPrice.currency,
+							showDisclosures,
+						),
 					);
 				}
 				if (values.enabled.includes("playtimeTracking")) {
-					view.playtimeTracking(user.userId, showDisclosures);
+					runFeature("playtimeTracking", () =>
+						view.playtimeTracking(user.userId, showDisclosures),
+					);
 				}
 				if (values.enabled.includes("activeChallengesDisplay")) {
-					view.activeChallenges(showDisclosures);
+					runFeature("activeChallengesDisplay", () =>
+						view.activeChallenges(showDisclosures),
+					);
 				}
 				if (values.enabled.includes("improvedAchievements")) {
 					if (values.config.improvedAchievements.progressBar) {
-						view.achievementsProgressBar(showDisclosures);
+						runFeature("improvedAchievements.progressBar", () =>
+							view.achievementsProgressBar(showDisclosures),
+						);
 					}
 					if (values.config.improvedAchievements.opacity) {
-						view.fadedUnearnedAchievements();
+						runFeature("improvedAchievements.opacity", () =>
+							view.fadedUnearnedAchievements(),
+						);
 					}
 					if (values.config.improvedAchievements.percentages) {
-						view.achievementEarnedPercentages(showDisclosures);
+						runFeature("improvedAchievements.percentages", () =>
+							view.achievementEarnedPercentages(showDisclosures),
+						);
 					}
 				}
 				if (values.enabled.includes("serverShareLinks")) {
-					view.serverShareLinks(showDisclosures);
+					runFeature("serverShareLinks", () =>
+						view.serverShareLinks(showDisclosures),
+					);
 				}
 				if (values.enabled.includes("serverRefreshing")) {
-					view.serverRefreshing(
-						values.enabled.includes("serverShareLinks")
-							? (serverList) =>
-									view.attachServerShareButtons(serverList, showDisclosures)
-							: undefined,
-						showDisclosures,
+					runFeature("serverRefreshing", () =>
+						view.serverRefreshing(
+							values.enabled.includes("serverShareLinks")
+								? (serverList) =>
+										view.attachServerShareButtons(serverList, showDisclosures)
+								: undefined,
+							showDisclosures,
+						),
 					);
 				}
 				if (values.enabled.includes("serverUserSearch")) {
-					view.serverUserSearch(showDisclosures);
+					runFeature("serverUserSearch", () =>
+						view.serverUserSearch(showDisclosures),
+					);
 				}
 
 				if (
@@ -111,24 +137,32 @@ export default defineContentScript({
 					values.config.creatorCommentLabels.worlds &&
 					creatorId
 				) {
-					view.creatorCommentLabels(creatorId);
+					runFeature("creatorCommentLabels", () =>
+						view.creatorCommentLabels(creatorId),
+					);
 				}
 
 				if (values.enabled.includes("autoRefreshData")) {
-					view.autoRefreshData(
-						values.config.autoRefreshData.interval as "30s" | "1m" | "5m",
-						showDisclosures,
+					runFeature("autoRefreshData", () =>
+						view.autoRefreshData(
+							values.config.autoRefreshData.interval as "30s" | "1m" | "5m",
+							showDisclosures,
+						),
 					);
 				}
 				if (values.enabled.includes("detailedPlaceReviews")) {
-					view.detailedPlaceReviews(
-						user.userId,
-						showDisclosures,
-						condensedTabBars,
+					runFeature("detailedPlaceReviews", () =>
+						view.detailedPlaceReviews(
+							user.userId,
+							showDisclosures,
+							condensedTabBars,
+						),
 					);
 				}
 				if (values.enabled.includes("placeConsumablesTab") && creatorId) {
-					view.placeConsumablesTab(creatorId, showDisclosures);
+					runFeature("placeConsumablesTab", () =>
+						view.placeConsumablesTab(creatorId, showDisclosures),
+					);
 				}
 			} else if (first === "create") {
 				if (import.meta.env.MODE == "development") {
@@ -141,21 +175,25 @@ export default defineContentScript({
 							window.location.pathname.split("/").length == 4) &&
 						values.config.placeManagement.download
 					) {
-						manage.placeFileExport(showDisclosures);
+						runFeature("placeManagement.download", () =>
+							manage.placeFileExport(showDisclosures),
+						);
 					}
 
 					if (
 						window.location.pathname.includes("access") &&
 						values.config.placeManagement.bulkWhitelist
 					) {
-						manage.bulkWhitelist(showDisclosures);
+						runFeature("placeManagement.bulkWhitelist", () =>
+							manage.bulkWhitelist(showDisclosures),
+						);
 					}
 
 					if (
 						window.location.pathname.includes("stats") &&
 						values.enabled.includes("worldTrends")
 					) {
-						manage.worldTrends();
+						runFeature("worldTrends", () => manage.worldTrends());
 					}
 				}
 			} else if (first === "places" && !second) {
@@ -164,24 +202,32 @@ export default defineContentScript({
 				}
 
 				if (values.enabled.includes("legacyWorldDiscoveryLayout")) {
-					discovery.legacyWorldDiscoveryLayout(
-						showDisclosures,
-						values.enabled.includes("disableInfiniteScrolling") &&
-							values.config.disableInfiniteScrolling.places,
+					runFeature("legacyWorldDiscoveryLayout", () =>
+						discovery.legacyWorldDiscoveryLayout(
+							showDisclosures,
+							values.enabled.includes("disableInfiniteScrolling") &&
+								values.config.disableInfiniteScrolling.places,
+						),
 					);
 
 					if (values.enabled.includes("subtleV2Labels")) {
-						discovery.legacySubtleV2Labels(
-							values.config.subtleV2Labels.mode,
-							showDisclosures,
+						runFeature("subtleV2Labels", () =>
+							discovery.legacySubtleV2Labels(
+								values.config.subtleV2Labels.mode,
+								showDisclosures,
+							),
 						);
 					}
 
 					if (values.enabled.includes("randomPlace")) {
-						discovery.legacyRandomPlace(showDisclosures);
+						runFeature("randomPlace", () =>
+							discovery.legacyRandomPlace(showDisclosures),
+						);
 					}
 				} else if (values.enabled.includes("randomPlace")) {
-					discovery.randomPlace(showDisclosures);
+					runFeature("randomPlace", () =>
+						discovery.randomPlace(showDisclosures),
+					);
 				}
 			}
 		});

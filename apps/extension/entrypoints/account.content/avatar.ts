@@ -16,6 +16,7 @@
 
 import sadFace from "@/assets/sad-face.webp";
 import pageContent from "@/public/avatar-sandbox.html?raw";
+import { escapeHtml, safeHttpUrl } from "@/utils/escapeHtml";
 import retroItemsData from "@/utils/static/retroItems.json";
 import type {
 	AccessoryTransform,
@@ -139,6 +140,32 @@ function normalizeBodyColors(state: AvatarIFrameState): AvatarIFrameState {
 	return state;
 }
 
+function sanitizeAssetId(value: unknown): number | string | undefined {
+	if (typeof value === "number")
+		return Number.isFinite(value) ? value : undefined;
+	if (typeof value === "string") {
+		if (/^https?:\/\//i.test(value) || value.startsWith("data:")) return value;
+		const num = Number(value);
+		return Number.isFinite(num) ? num : undefined;
+	}
+	return undefined;
+}
+
+function sanitizeImportedAvatar(state: AvatarIFrameState): AvatarIFrameState {
+	state.items = (state.items ?? [])
+		.map(sanitizeAssetId)
+		.filter((x): x is number | string => x !== undefined);
+	if (state.clothing) {
+		state.clothing = state.clothing
+			.map(sanitizeAssetId)
+			.filter((x): x is number | string => x !== undefined);
+	}
+	state.face = sanitizeAssetId(state.face);
+	state.body = sanitizeAssetId(state.body);
+	state.tool = sanitizeAssetId(state.tool);
+	return state;
+}
+
 export function customBodyColorHexCodes(showDisclosures: boolean) {
 	const bodyPartButtons = document.querySelectorAll<HTMLButtonElement>(
 		".avatarAction.bodypart",
@@ -231,7 +258,7 @@ export function customBodyColorHexCodes(showDisclosures: boolean) {
 }
 
 export function avatarSandbox(
-	avatar: AvatarIFrameState = { ...DEFAULT_AVATAR },
+	avatar: AvatarIFrameState = structuredClone(DEFAULT_AVATAR),
 ) {
 	const container = document.querySelector(
 		".container.p-0.p-lg-5",
@@ -273,6 +300,7 @@ export function avatarSandbox(
 
 	let page = 1;
 	let pageCount = 1;
+	let loadItemsRequestId = 0;
 	let search = "";
 	let sort = "createdAt";
 	let order = "desc";
@@ -596,7 +624,7 @@ export function avatarSandbox(
 		".kiln-rename-target",
 	)!;
 
-	let renameTargetIndex = -1;
+	let renameTargetId: string | null = null;
 	outfitRenameButton.addEventListener("click", async () => {
 		const renameInput =
 			outfitRenameButton.previousElementSibling as HTMLInputElement;
@@ -618,8 +646,9 @@ export function avatarSandbox(
 			return;
 		}
 
-		if (kilnUserId === null) return;
-		const target = outfits![renameTargetIndex];
+		if (kilnUserId === null || renameTargetId === null) return;
+		const target = outfits!.find((o) => o.id === renameTargetId);
+		if (!target) return;
 		const result = await sendMessage("updateAvatarOutfit", {
 			userId: kilnUserId,
 			outfitId: target.id,
@@ -764,7 +793,7 @@ export function avatarSandbox(
 	(document.getElementById("clear") as HTMLButtonElement).addEventListener(
 		"click",
 		() => {
-			avatar = { ...DEFAULT_AVATAR };
+			avatar = structuredClone(DEFAULT_AVATAR);
 			updateAvatar();
 		},
 	);
@@ -785,7 +814,9 @@ export function avatarSandbox(
 		const reader = new FileReader();
 		reader.addEventListener("loadend", () => {
 			avatar = normalizeBodyColors(
-				JSON.parse(reader.result as string) as AvatarIFrameState,
+				sanitizeImportedAvatar(
+					JSON.parse(reader.result as string) as AvatarIFrameState,
+				),
 			);
 			updateAvatar();
 			jsonUploadButton.value = "";
@@ -852,7 +883,7 @@ export function avatarSandbox(
 				? inputEl.value
 				: parseInt(inputEl.value, 10);
 			if (selectedType === "hat") {
-				avatar.items.push(inputEl.value);
+				avatar.items.push(parsedVal);
 			} else if (selectedType === "clothing") {
 				avatar.clothing ??= [];
 				avatar.clothing.push(parsedVal);
@@ -968,75 +999,72 @@ export function avatarSandbox(
 			initRetroItems();
 		}
 
-		const accessoryPromise = [...avatar.items, avatar.tool, avatar.body]
-			.filter(
-				(x) =>
-					x !== undefined &&
-					!x.toString().startsWith("http") &&
-					!x.toString().startsWith("data:"),
-			)
-			.map(async (x, index) => {
-				const key = x as number | string;
+		const isPendingAsset = (x: unknown): x is number | string =>
+			x != null &&
+			!x.toString().startsWith("http") &&
+			!x.toString().startsWith("data:");
 
-				if (itemCache[key] === undefined) {
-					const itemResult = await sendMessage("getItem", +key);
-					if (itemResult.ok) {
-						const itemDetails = itemResult.data;
-						itemCache[key] = {
-							type: itemDetails.type,
-							name: itemDetails.name,
-							price: itemDetails.price,
-							creator: {
-								name: itemDetails.creator.name,
-								id: itemDetails.creator.id,
-							},
-							thumbnail: itemDetails.thumbnail,
-							asset: undefined,
-						};
-						if (itemDetails.type === "hat") {
-							//@ts-expect-error
-							itemCache[key].accessoryType = itemDetails.accessoryType;
-						}
-					} else {
-						itemCache[key] = {
-							type: "unknown",
-							name: `#${key}`,
-							price: null,
-							creator: null,
-							thumbnail:
-								"https://cdn.polytoria.com/static/images/broken.136e44ee.png",
-							asset: undefined,
-							ribbon: "unknown",
-						};
+		const resolveAccessoryCache = async (
+			key: number | string,
+		): Promise<void> => {
+			if (itemCache[key] === undefined) {
+				const itemResult = await sendMessage("getItem", +key);
+				if (itemResult.ok) {
+					const itemDetails = itemResult.data;
+					itemCache[key] = {
+						type: itemDetails.type,
+						name: itemDetails.name,
+						price: itemDetails.price,
+						creator: {
+							name: itemDetails.creator.name,
+							id: itemDetails.creator.id,
+						},
+						thumbnail: itemDetails.thumbnail,
+						asset: undefined,
+					};
+					if (itemDetails.type === "hat") {
+						//@ts-expect-error
+						itemCache[key].accessoryType = itemDetails.accessoryType;
 					}
-
-					if (["mesh", "decal", "audio"].includes(itemCache[key].type)) {
-						itemCache[key].type =
-							loadAssetType.options[loadAssetType.selectedIndex].value;
-						itemCache[key].ribbon = "custom";
-					}
+				} else {
+					itemCache[key] = {
+						type: "unknown",
+						name: `#${key}`,
+						price: null,
+						creator: null,
+						thumbnail:
+							"https://cdn.polytoria.com/static/images/broken.136e44ee.png",
+						asset: undefined,
+						ribbon: "unknown",
+					};
 				}
 
-				if (itemCache[key].asset === undefined) {
-					const meshResult = await sendMessage("getItemMesh", +key);
-					if (meshResult.ok && meshResult.data.success)
-						itemCache[key].asset = meshResult.data.url;
+				if (["mesh", "decal", "audio"].includes(itemCache[key].type)) {
+					itemCache[key].type =
+						loadAssetType.options[loadAssetType.selectedIndex].value;
+					itemCache[key].ribbon = "custom";
 				}
+			}
 
-				if (itemCache[key].asset !== undefined) {
-					if (itemCache[key].type === "hat") {
-						formattedAvatar.items[index] = itemCache[key].asset!;
-						const transform = avatar.itemTransforms?.[key.toString()];
-						if (transform) {
-							formattedAvatar.itemTransforms![itemCache[key].asset!] =
-								transform;
-						}
-					} else {
-						(formattedAvatar as Record<string, unknown>)[itemCache[key].type] =
-							itemCache[key].asset;
-					}
+			if (itemCache[key].asset === undefined) {
+				const meshResult = await sendMessage("getItemMesh", +key);
+				if (meshResult.ok && meshResult.data.success)
+					itemCache[key].asset = meshResult.data.url;
+			}
+		};
+
+		const accessoryPromise = [
+			...avatar.items
+				.filter(isPendingAsset)
+				.map((x) => resolveAccessoryCache(x)),
+			...[avatar.tool, avatar.body].filter(isPendingAsset).map(async (x) => {
+				await resolveAccessoryCache(x);
+				if (itemCache[x].asset !== undefined && itemCache[x].type !== "hat") {
+					(formattedAvatar as Record<string, unknown>)[itemCache[x].type] =
+						itemCache[x].asset;
 				}
-			});
+			}),
+		];
 
 		const loadTexture = async (x: number | string): Promise<void> => {
 			const key = x as number | string;
@@ -1107,6 +1135,16 @@ export function avatarSandbox(
 		await Promise.all(accessoryPromise);
 		await facePromise;
 		await clothingPromise;
+
+		formattedAvatar.items = avatar.items.flatMap((x) => {
+			if (x.toString().startsWith("http") || x.toString().startsWith("data:"))
+				return [x as string];
+			const cached = itemCache[x];
+			if (cached?.asset === undefined || cached.type !== "hat") return [];
+			const transform = avatar.itemTransforms?.[x.toString()];
+			if (transform) formattedAvatar.itemTransforms![cached.asset] = transform;
+			return [cached.asset];
+		});
 
 		formattedAvatar.clothing = (avatar.clothing ?? []).flatMap((x) => {
 			if (x.toString().startsWith("http") || x.toString().startsWith("data:"))
@@ -1179,6 +1217,7 @@ export function avatarSandbox(
 	}
 
 	async function loadItems(): Promise<void> {
+		const requestId = ++loadItemsRequestId;
 		document.getElementById("inventory")!.innerHTML = "";
 
 		const isRetro = tabSelected === "retro";
@@ -1208,6 +1247,7 @@ export function avatarSandbox(
 					limit: FETCH_LIMIT,
 				});
 				if (!result.ok) return;
+				if (requestId !== loadItemsRequestId) return;
 				//@ts-expect-error: To-fix
 				const data: StoreApiResponse = result.data;
 				cache = {
@@ -1219,9 +1259,9 @@ export function avatarSandbox(
 				storeCache.set(cacheKey, cache);
 			}
 
-			const cachedDisplayPages =
+			let cachedDisplayPages =
 				Math.ceil(cache.items.length / DISPLAY_SIZE) || 1;
-			if (
+			while (
 				page >= cachedDisplayPages &&
 				cache.nextApiPage <= cache.totalApiPages
 			) {
@@ -1234,14 +1274,15 @@ export function avatarSandbox(
 					page: cache.nextApiPage,
 					limit: FETCH_LIMIT,
 				});
-				if (result.ok) {
-					//@ts-expect-error: To-fix
-					const data: StoreApiResponse = result.data;
-					cache.items.push(...(data.assets ?? []));
-					cache.nextApiPage++;
-					cache.totalApiPages = data.pages;
-					cache.total ??= data.total;
-				}
+				if (!result.ok) break;
+				if (requestId !== loadItemsRequestId) return;
+				//@ts-expect-error: To-fix
+				const data: StoreApiResponse = result.data;
+				cache.items.push(...(data.assets ?? []));
+				cache.nextApiPage++;
+				cache.totalApiPages = data.pages;
+				cache.total ??= data.total;
+				cachedDisplayPages = Math.ceil(cache.items.length / DISPLAY_SIZE) || 1;
 			}
 
 			const start = (page - 1) * DISPLAY_SIZE;
@@ -1313,6 +1354,8 @@ export function avatarSandbox(
 			return;
 		}
 
+		if (requestId !== loadItemsRequestId) return;
+
 		pageCount = items.pages;
 		updatePaginationState();
 		document.getElementById("pagination-current")!.innerText = String(page);
@@ -1339,12 +1382,12 @@ export function avatarSandbox(
   <div class="card mb-2 avatar-item-container">
     ${ribbon ?? ""}
     <div class="p-2">
-      <img src="${item.thumbnail}" class="img-fluid" style="border-radius: 10px;">
+      <img src="${escapeHtml(safeHttpUrl(item.thumbnail))}" class="img-fluid" style="border-radius: 10px;">
       <button class="avatarAction btn btn-success btn-sm position-absolute rounded-circle text-center" style="top: -10px; right: -16px; width: 32px; height: 32px; z-index: 1;"><i class="fas fa-plus"></i></button>
     </div>
   </div>
   <a href="${item.id > 0 ? `/store/${item.id}` : `https://poly-archive.vercel.app/archive/${Math.abs(item.id)}`}" class="text-reset">
-    <h6 class="text-truncate mb-0">${item.name}</h6>
+    <h6 class="text-truncate mb-0">${escapeHtml(item.name)}</h6>
   </a>
   <small class="text-muted d-block text-truncate">${formatTypeDisplay(item as unknown as CachedItem)}</small>
   <small style="font-size: 0.8rem;" class="d-block text-truncate mb-2 ${formatPrice(item.price as number | null | false)}
@@ -1382,14 +1425,13 @@ export function avatarSandbox(
 					}
 				});
 			} else {
-				(items.assets as unknown as AvatarSandboxOutfit[]).forEach(
-					(outfit, index) => {
-						const colorBtn = (color: string, padding: string) =>
-							`<button style="border:0;border-radius:5px;cursor:default;background-color:${color};padding:${padding};"></button>`;
+				(items.assets as unknown as AvatarSandboxOutfit[]).forEach((outfit) => {
+					const colorBtn = (color: string, padding: string) =>
+						`<button style="border:0;border-radius:5px;cursor:default;background-color:${color};padding:${padding};"></button>`;
 
-						const itemColumn = document.createElement("div");
-						itemColumn.classList.value = "col-auto";
-						itemColumn.innerHTML = `
+					const itemColumn = document.createElement("div");
+					itemColumn.classList.value = "col-auto";
+					itemColumn.innerHTML = `
 <div style="max-width: 150px;">
   <div class="card mb-2">
     <div class="p-2 text-center">
@@ -1403,7 +1445,7 @@ export function avatarSandbox(
       ${colorBtn(outfit.data.rightLegColor, "10px 10px 20px")}
     </div>
   </div>
-  <h6 class="text-truncate mb-0 text-reset text-center mb-2">${outfit.name}</h6>
+  <h6 class="text-truncate mb-0 text-reset text-center mb-2">${escapeHtml(outfit.name)}</h6>
   <div class="btn-group w-100">
     <button class="btn btn-primary btn-sm p+outfit_wear_button">Wear</button>
     <div class="btn-group">
@@ -1419,65 +1461,65 @@ export function avatarSandbox(
     </div>
   </div>
 </div>`;
-						inventory.appendChild(itemColumn);
+					inventory.appendChild(itemColumn);
 
-						itemColumn
-							.getElementsByClassName("p+outfit_wear_button")[0]
-							.addEventListener("click", () => {
-								if (avatar === outfit.data) return;
-								console.log("Equipped Outfit: ", outfit);
-								avatar = outfit.data;
-								updateAvatar();
+					itemColumn
+						.getElementsByClassName("p+outfit_wear_button")[0]
+						.addEventListener("click", () => {
+							console.log("Equipped Outfit: ", outfit);
+							avatar = structuredClone(outfit.data);
+							updateAvatar();
+						});
+
+					itemColumn
+						.getElementsByClassName("p+outfit_rename_button")[0]
+						.addEventListener("click", () => {
+							if (!isVerified) return;
+							renameTargetId = outfit.id;
+							outfitRenameModal.showModal();
+							outfitRenameNameEl.innerText = outfit.name;
+							(
+								outfitRenameButton.previousElementSibling as HTMLInputElement
+							).value = outfit.name;
+						});
+
+					setupPendingButton(
+						itemColumn.getElementsByClassName(
+							"p+outfit_overwrite_button",
+						)[0] as HTMLElement,
+						"Overwrite",
+						async () => {
+							if (!isVerified || kilnUserId === null) return;
+							const result = await sendMessage("updateAvatarOutfit", {
+								userId: kilnUserId,
+								outfitId: outfit.id,
+								avatarData: avatar,
 							});
+							if (!result.ok) return;
+							const target = outfits!.find((o) => o.id === outfit.id);
+							if (target) target.data = structuredClone(avatar);
+							if (tabSelected === "outfit") loadItems();
+						},
+					);
 
-						itemColumn
-							.getElementsByClassName("p+outfit_rename_button")[0]
-							.addEventListener("click", () => {
-								if (!isVerified) return;
-								renameTargetIndex = index;
-								outfitRenameModal.showModal();
-								outfitRenameNameEl.innerText = outfit.name;
-								(
-									outfitRenameButton.previousElementSibling as HTMLInputElement
-								).value = outfit.name;
+					setupPendingButton(
+						itemColumn.getElementsByClassName(
+							"p+outfit_delete_button",
+						)[0] as HTMLElement,
+						"Delete",
+						async () => {
+							if (!isVerified || kilnUserId === null) return;
+							const result = await sendMessage("deleteAvatarOutfit", {
+								userId: kilnUserId,
+								outfitId: outfit.id,
 							});
-
-						setupPendingButton(
-							itemColumn.getElementsByClassName(
-								"p+outfit_overwrite_button",
-							)[0] as HTMLElement,
-							"Overwrite",
-							async () => {
-								if (!isVerified || kilnUserId === null) return;
-								const result = await sendMessage("updateAvatarOutfit", {
-									userId: kilnUserId,
-									outfitId: outfit.id,
-									avatarData: avatar,
-								});
-								if (!result.ok) return;
-								outfits![index].data = avatar;
-								if (tabSelected === "outfit") loadItems();
-							},
-						);
-
-						setupPendingButton(
-							itemColumn.getElementsByClassName(
-								"p+outfit_delete_button",
-							)[0] as HTMLElement,
-							"Delete",
-							async () => {
-								if (!isVerified || kilnUserId === null) return;
-								const result = await sendMessage("deleteAvatarOutfit", {
-									userId: kilnUserId,
-									outfitId: outfit.id,
-								});
-								if (!result.ok) return;
-								outfits!.splice(index, 1);
-								if (tabSelected === "outfit") loadItems();
-							},
-						);
-					},
-				);
+							if (!result.ok) return;
+							const targetIndex = outfits!.findIndex((o) => o.id === outfit.id);
+							if (targetIndex !== -1) outfits!.splice(targetIndex, 1);
+							if (tabSelected === "outfit") loadItems();
+						},
+					);
+				});
 			}
 		} else {
 			inventory.classList.remove("itemgrid");
@@ -1516,7 +1558,7 @@ export function avatarSandbox(
   <div class="card mb-2 avatar-item-container">
     ${ribbon ?? ""}
     <div class="p-2">
-      <img src="${cached.thumbnail}" class="img-fluid" style="border-radius: 10px;">
+      <img src="${escapeHtml(safeHttpUrl(cached.thumbnail))}" class="img-fluid" style="border-radius: 10px;">
       <button class="avatarAction btn btn-danger btn-sm position-absolute rounded-circle text-center" style="top: -10px; right: -16px; width: 32px; height: 32px; z-index: 1;"><i class="fas fa-minus"></i></button>
       ${
 				cached.type === "hat"
@@ -1526,7 +1568,7 @@ export function avatarSandbox(
     </div>
   </div>
   <a href="${(id as number) > 0 ? `/store/${id}` : `https://poly-archive.vercel.app/archive/${Math.abs(id as number)}`}" class="text-reset">
-    <h6 class="text-truncate mb-0">${cached.name}</h6>
+    <h6 class="text-truncate mb-0">${escapeHtml(cached.name)}</h6>
   </a>
   <small class="text-muted d-block text-truncate">${formatTypeDisplay(cached)}</small>
   <small style="font-size: 0.8rem;" class="d-block text-truncate mb-2 ${formatPrice(cached.price)}

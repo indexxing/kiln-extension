@@ -14,21 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-import { sendMessage } from "@/utils/messaging";
-
-export const POLYTORIA_CDN_URL =
-	/^https:\/\/cdn\.polytoria\.com\/[A-Za-z0-9._/-]+$/;
-
-export function parseAssetId(raw: string): number | null {
-	const match = raw.trim().match(/(\d+)\/?$/) ?? raw.match(/(\d+)/);
-	const id = match ? Number(match[1]) : Number.NaN;
-	return Number.isInteger(id) && id > 0 ? id : null;
+export function escapeHtml(value: unknown): string {
+	return String(value ?? "")
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
 }
 
-export async function resolveDecalUrl(raw: string): Promise<string | null> {
-	const id = parseAssetId(raw);
-	if (id === null) return null;
-	const result = await sendMessage("getItemTexture", id).catch(() => null);
-	const url = result?.ok && result.data.success ? result.data.url : undefined;
-	return url && POLYTORIA_CDN_URL.test(url) ? url : null;
+export function safeHttpUrl(value: unknown): string {
+	const url = String(value ?? "").trim();
+	return /^https?:\/\//i.test(url) ? url : "";
 }

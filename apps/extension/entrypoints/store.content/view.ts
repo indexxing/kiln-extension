@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import errorIcon from "@/assets/error.svg";
+import { escapeHtml } from "@/utils/escapeHtml";
 import type { CurrencyCode, FormattedHoarder } from "@/utils/types";
 import {
 	applyKilnDisclosureTitle,
@@ -191,6 +192,9 @@ export function hoardersList(
 				}
 				t.children[0].classList.add("active");
 				tabContent.classList.remove("d-none");
+			} else {
+				tab.children[0]?.classList.remove("active");
+				tabContent.classList.add("d-none");
 			}
 		});
 	}
@@ -1165,33 +1169,43 @@ export async function ownerCheck(showDisclosures: boolean) {
 		}
 
 		const total = totalResult.data.total;
-		if (serial > total) {
-			serialCheckBtn.disabled = false;
-			serialCheckBtn.innerHTML = originalText;
-			serialResult.className = "text-danger";
-			serialResult.textContent = `This item only has ${total} cop${total === 1 ? "y" : "ies"}.`;
-			return;
+		const maxPage = Math.max(1, Math.ceil(total / 100));
+		const estimatedPage = Math.max(1, Math.ceil(serial / 100));
+		const SEARCH_RADIUS = 5;
+
+		const pagesToTry = [estimatedPage];
+		for (let offset = 1; offset <= SEARCH_RADIUS; offset++) {
+			if (estimatedPage - offset >= 1) pagesToTry.push(estimatedPage - offset);
+			if (estimatedPage + offset <= maxPage + SEARCH_RADIUS)
+				pagesToTry.push(estimatedPage + offset);
 		}
 
-		const page = Math.ceil(serial / 100);
-		const pageResult = await sendMessage("getItemOwners", {
-			itemId: parseInt(itemID, 10),
-			limit: 100,
-			page,
-		});
+		const findOwnerOnPage = async (page: number) => {
+			const pageResult = await sendMessage("getItemOwners", {
+				itemId: parseInt(itemID, 10),
+				limit: 100,
+				page,
+			});
+			if (!pageResult.ok) return { ok: false as const };
+			return {
+				ok: true as const,
+				owner: pageResult.data.inventories.find((inv) => inv.serial === serial),
+			};
+		};
+
+		let owner: Awaited<ReturnType<typeof findOwnerOnPage>>["owner"];
+		let anySucceeded = false;
+		for (const page of pagesToTry) {
+			const result = await findOwnerOnPage(page);
+			if (result.ok) anySucceeded = true;
+			if (result.ok && result.owner) {
+				owner = result.owner;
+				break;
+			}
+		}
 
 		serialCheckBtn.disabled = false;
 		serialCheckBtn.innerHTML = originalText;
-
-		if (!pageResult.ok) {
-			serialResult.className = "text-danger";
-			serialResult.textContent = "Failed to look up owner. Try again later.";
-			return;
-		}
-
-		const owner = pageResult.data.inventories.find(
-			(inv) => inv.serial === serial,
-		);
 
 		serialResult.innerHTML = "";
 		const icon = document.createElement("i");
@@ -1206,6 +1220,10 @@ export async function ownerCheck(showDisclosures: boolean) {
 			link.textContent = owner.user.username;
 			text.append(link);
 			serialResult.className = "text-success";
+		} else if (!anySucceeded) {
+			icon.className = "fa-solid fa-triangle-exclamation me-1";
+			text.append("Failed to look up owner. Try again later.");
+			serialResult.className = "text-danger";
 		} else {
 			icon.className = "fa-regular fa-circle-question me-1";
 			text.append(`Couldn't find who owns serial #${serial}.`);
@@ -1501,7 +1519,7 @@ export async function loveIntegration(showDisclosures: boolean) {
 	const fmt = (n?: number | null) => (n != null ? n.toLocaleString() : "—");
 
 	const coloredBadge = (label: string | null | undefined, color: string) =>
-		`<span class="badge bg-${color}">${label ?? "—"}</span>`;
+		`<span class="badge bg-${color}">${escapeHtml(label ?? "—")}</span>`;
 
 	cardBody.innerHTML = `
 		<div class="mb-1">
@@ -1534,13 +1552,13 @@ export async function loveIntegration(showDisclosures: boolean) {
 				<i class="fa-duotone fa-hand-wave" style="width:1.2em"></i>
 				Shorthand
 			</b>
-			<span class="float-end">${item.shorthand ?? "—"}</span>
+			<span class="float-end">${escapeHtml(item.shorthand ?? "—")}</span>
 		</div>
 		${
 			tags.length > 0
 				? `
 		<div class="d-flex mt-1" style="gap: 5px;">
-			${tags.map((t) => `<span class="badge bg-${getTagColor(t.name)}">${t.emoji ? `${t.emoji} ` : ""}${t.name}</span>`).join("")}
+			${tags.map((t) => `<span class="badge bg-${getTagColor(t.name)}">${t.emoji ? `${escapeHtml(t.emoji)} ` : ""}${escapeHtml(t.name)}</span>`).join("")}
 		</div>
 		`
 				: ""
@@ -1556,51 +1574,75 @@ export async function collectibleOwnerLabels(
 	const container = document.getElementById("owners-container");
 	if (!container) return;
 
-	console.log(container);
+	const processedCards = new WeakSet<Element>();
+	const infoCache = new Map<
+		number,
+		{ active: boolean; registeredAt: string | null } | null
+	>();
+	const OG_CUTOFF = `${ogYear + 1}-01-01`;
 
-	const processed = new Set<number>();
+	const applyLabels = (
+		nameEl: Element,
+		info: { active: boolean; registeredAt: string | null } | null,
+	) => {
+		if (!info) return;
+
+		if (!info.active) {
+			nameEl.insertAdjacentHTML(
+				"beforeend",
+				`<span class="badge bg-secondary ms-1" style="font-size:0.65rem;vertical-align:middle;" data-bs-toggle="tooltip" data-bs-title="Hasn't been seen online in the last ${inactiveDays} days">Inactive</span>${kilnDisclosureBadgeHtml(showDisclosures)}`,
+			);
+		}
+
+		if (info.registeredAt && info.registeredAt.slice(0, 10) < OG_CUTOFF) {
+			nameEl.insertAdjacentHTML(
+				"beforeend",
+				`<span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;vertical-align:middle;" data-bs-toggle="tooltip" data-bs-title="Joined during ${ogYear} or earlier">OG</span>${kilnDisclosureBadgeHtml(showDisclosures)}`,
+			);
+		}
+	};
 
 	const processCards = async (cards: Element[]) => {
-		const batch: { userId: number; nameEl: Element }[] = [];
+		const cached: { userId: number; nameEl: Element }[] = [];
+		const toFetch = new Map<number, { userId: number; nameEls: Element[] }>();
 
 		for (const card of cards) {
+			if (processedCards.has(card)) continue;
 			const link = card.querySelector<HTMLAnchorElement>('a[href^="/users/"]');
 			if (!link) continue;
 			const userId = parseInt(link.getAttribute("href")!.split("/")[2], 10);
-			if (!userId || Number.isNaN(userId) || processed.has(userId)) continue;
+			if (!userId || Number.isNaN(userId)) continue;
 			const nameEl = card.querySelector("h6.mb-1");
 			if (!nameEl) continue;
-			processed.add(userId);
-			batch.push({ userId, nameEl });
+			processedCards.add(card);
+
+			if (infoCache.has(userId)) {
+				cached.push({ userId, nameEl });
+			} else {
+				const entry = toFetch.get(userId) ?? { userId, nameEls: [] };
+				entry.nameEls.push(nameEl);
+				toFetch.set(userId, entry);
+			}
 		}
 
-		const OG_CUTOFF = `${ogYear + 1}-01-01`;
+		for (const { userId, nameEl } of cached) {
+			applyLabels(nameEl, infoCache.get(userId) ?? null);
+		}
+		if (cached.length) sendMessage("registerBootstrapElements");
 
-		for (let i = 0; i < batch.length; i += 5) {
-			const chunk = batch.slice(i, i + 5);
+		const toFetchList = [...toFetch.values()];
+		for (let i = 0; i < toFetchList.length; i += 5) {
+			const chunk = toFetchList.slice(i, i + 5);
 			const result = await sendMessage("checkUserActivity", {
 				userIds: chunk.map((c) => c.userId),
 				days: inactiveDays,
 			});
 			if (!result.ok) continue;
 
-			for (const { userId, nameEl } of chunk) {
-				const info = result.data[String(userId)];
-				if (!info) continue;
-
-				if (!info.active) {
-					nameEl.insertAdjacentHTML(
-						"beforeend",
-						`<span class="badge bg-secondary ms-1" style="font-size:0.65rem;vertical-align:middle;" data-bs-toggle="tooltip" data-bs-title="Hasn't been seen online in the last ${inactiveDays} days">Inactive</span>${kilnDisclosureBadgeHtml(showDisclosures)}`,
-					);
-				}
-
-				if (info.registeredAt && info.registeredAt.slice(0, 10) < OG_CUTOFF) {
-					nameEl.insertAdjacentHTML(
-						"beforeend",
-						`<span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;vertical-align:middle;" data-bs-toggle="tooltip" data-bs-title="Joined during ${ogYear} or earlier">OG</span>${kilnDisclosureBadgeHtml(showDisclosures)}`,
-					);
-				}
+			for (const { userId, nameEls } of chunk) {
+				const info = result.data[String(userId)] ?? null;
+				infoCache.set(userId, info);
+				for (const nameEl of nameEls) applyLabels(nameEl, info);
 			}
 
 			sendMessage("registerBootstrapElements");
@@ -1624,7 +1666,8 @@ export function creatorCommentLabels(
 	creatorId: number,
 	showDisclosures: boolean,
 ) {
-	const container = document.getElementById("comments")!;
+	const container = document.getElementById("comments");
+	if (!container) return;
 
 	const tag = (Card: Element): void => {
 		const usernameElement = Card.querySelector<HTMLAnchorElement>(
@@ -1663,8 +1706,8 @@ export function creatorCommentLabels(
 	}).observe(container, { attributes: false, childList: true, subtree: false });
 }
 
-export function legacyStoreLayout(showDisclosures: boolean): void {
-	if (!location.pathname.match(/^\/store\/\d+/)) return;
+export function legacyStoreLayout(showDisclosures: boolean): Promise<void> {
+	if (!location.pathname.match(/^\/store\/\d+/)) return Promise.resolve();
 
 	function esc(str: unknown): string {
 		return String(str)
@@ -2282,10 +2325,13 @@ export function legacyStoreLayout(showDisclosures: boolean): void {
 	}
 
 	if (document.readyState === "loading") {
-		document.addEventListener("DOMContentLoaded", applyOldLayout);
-	} else {
-		applyOldLayout();
+		return new Promise<void>((resolve) => {
+			document.addEventListener("DOMContentLoaded", () => {
+				applyOldLayout().then(resolve);
+			});
+		});
 	}
+	return applyOldLayout();
 }
 
 export async function recentTransactions(showDisclosures: boolean) {
@@ -2336,6 +2382,9 @@ export async function recentTransactions(showDisclosures: boolean) {
 				}
 				t.children[0].classList.add("active");
 				tabContent.classList.remove("d-none");
+			} else {
+				tab.children[0]?.classList.remove("active");
+				tabContent.classList.add("d-none");
 			}
 		});
 	}

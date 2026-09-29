@@ -26,12 +26,7 @@ import {
 	safeFetch,
 } from "./shared";
 
-onMessage("getConfig", () =>
-	handle(async () => {
-		checkRateLimit("kiln_api", 100);
-		return fetchConfig();
-	}),
-);
+onMessage("getConfig", () => handle(async () => fetchConfig()));
 
 onMessage("getChangelog", () =>
 	handle(async () =>

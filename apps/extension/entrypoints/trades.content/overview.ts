@@ -25,7 +25,8 @@ import {
 } from "@/utils/utilities";
 
 export async function quickCancelOutboundTrades(showDisclosures: boolean) {
-	const container = document.querySelector(".col:has(.card-inbox)")!;
+	const container = document.querySelector(".col:has(.card-inbox)");
+	if (!container) return;
 	const cards = container.querySelectorAll(".card-inbox");
 
 	for (const card of cards) {
@@ -40,8 +41,12 @@ export async function quickCancelOutboundTrades(showDisclosures: boolean) {
 
 		cancelBtn.addEventListener("click", async () => {
 			cancelBtn.disabled = true;
-			await sendMessage("rejectTrade", tradeId);
-			// TODO: make the card opacity low if it succeeds
+			const result = await sendMessage("rejectTrade", tradeId);
+			if (result.ok) {
+				(card as HTMLElement).style.opacity = "0.5";
+			} else {
+				cancelBtn.disabled = false;
+			}
 		});
 
 		viewBtn.parentElement!.prepend(cancelBtn);
@@ -49,7 +54,8 @@ export async function quickCancelOutboundTrades(showDisclosures: boolean) {
 }
 
 export async function quickCounterTrades(showDisclosures: boolean) {
-	const container = document.querySelector(".col:has(.card-inbox)")!;
+	const container = document.querySelector(".col:has(.card-inbox)");
+	if (!container) return;
 	const cards = container.querySelectorAll(".card-inbox");
 
 	for (const card of cards) {
@@ -68,9 +74,12 @@ export async function quickCounterTrades(showDisclosures: boolean) {
 
 		counterBtn.addEventListener("click", async () => {
 			counterBtn.disabled = true;
-			await sendMessage("rejectTrade", tradeId);
-			// TODO: only send to new trade page if the rejection succeeds
-			window.location.pathname = `/trade/new/${userId}`;
+			const result = await sendMessage("rejectTrade", tradeId);
+			if (result.ok) {
+				window.location.pathname = `/trade/new/${userId}`;
+			} else {
+				counterBtn.disabled = false;
+			}
 		});
 
 		viewBtn.parentElement!.prepend(counterBtn);
@@ -201,13 +210,16 @@ export async function nftItems(user: UserDetails, showDisclosures: boolean) {
 	async function processTradeCard(
 		tradeId: number,
 		card: Element,
-	): Promise<void> {
+	): Promise<"clear" | "rejected" | "failed"> {
 		injectBadge(card, "checking");
 
 		try {
 			const hashes = getOfferingHashes(card);
 			const resolved = await sendMessage("resolveItemThumbnails", hashes);
-			if (!resolved.ok) return;
+			if (!resolved.ok) {
+				injectBadge(card, "failed");
+				return "failed";
+			}
 			const hashToId = resolved.data.data;
 			const itemIds = Object.values(hashToId);
 
@@ -216,13 +228,9 @@ export async function nftItems(user: UserDetails, showDisclosures: boolean) {
 			);
 
 			if (hasWholeItemHit) {
-				try {
-					await sendMessage("rejectTrade", tradeId);
-					injectBadge(card, "rejected");
-				} catch {
-					injectBadge(card, "failed");
-				}
-				return;
+				const result = await sendMessage("rejectTrade", tradeId);
+				injectBadge(card, result.ok ? "rejected" : "failed");
+				return result.ok ? "rejected" : "failed";
 			}
 
 			const hasSerialCandidates = itemIds.some((itemId) =>
@@ -231,24 +239,22 @@ export async function nftItems(user: UserDetails, showDisclosures: boolean) {
 
 			if (!hasSerialCandidates) {
 				injectBadge(card, "clear");
-				return;
+				return "clear";
 			}
 
 			const { giving } = await fetchTradeItemIds(tradeId);
 
 			if (!isNFTHit(giving)) {
 				injectBadge(card, "clear");
-				return;
+				return "clear";
 			}
 
-			try {
-				await sendMessage("rejectTrade", tradeId);
-				injectBadge(card, "rejected");
-			} catch {
-				injectBadge(card, "failed");
-			}
+			const result = await sendMessage("rejectTrade", tradeId);
+			injectBadge(card, result.ok ? "rejected" : "failed");
+			return result.ok ? "rejected" : "failed";
 		} catch {
 			injectBadge(card, "failed");
+			return "failed";
 		}
 	}
 
@@ -256,11 +262,16 @@ export async function nftItems(user: UserDetails, showDisclosures: boolean) {
 		return new Promise((resolve) => setTimeout(resolve, ms));
 	}
 
-	async function runBatch(entries: [number, Element][]): Promise<void> {
+	async function runBatch(
+		entries: [number, Element][],
+	): Promise<Map<number, "clear" | "rejected" | "failed">> {
+		const results = new Map<number, "clear" | "rejected" | "failed">();
 		for (let i = 0; i < entries.length; i++) {
 			if (i > 0) await delay(FETCH_DELAY_MS);
-			await processTradeCard(...entries[i]);
+			const [id, card] = entries[i];
+			results.set(id, await processTradeCard(id, card));
 		}
+		return results;
 	}
 
 	const tradeMap = parseTradeCards();
@@ -270,9 +281,12 @@ export async function nftItems(user: UserDetails, showDisclosures: boolean) {
 
 	for (const [, card] of unseen) injectBadge(card, "checking");
 
-	await runBatch(unseen);
+	const results = await runBatch(unseen);
+	const successfullyScreened = [...results.entries()]
+		.filter(([, status]) => status !== "failed")
+		.map(([id]) => id);
 
-	const updated = [...seenIds, ...unseen.map(([id]) => id)];
+	const updated = [...seenIds, ...successfullyScreened];
 	await _seenTradeIds.setValue(updated.slice(-500));
 }
 
@@ -376,8 +390,8 @@ export async function nlfItems(user: UserDetails, showDisclosures: boolean) {
 			await new Promise((resolve) => setTimeout(resolve, FETCH_DELAY_MS));
 		const { tradeId, card } = toReject[i];
 		try {
-			await sendMessage("rejectTrade", tradeId);
-			injectBadge(card, "rejected");
+			const result = await sendMessage("rejectTrade", tradeId);
+			injectBadge(card, result.ok ? "rejected" : "failed");
 		} catch {
 			injectBadge(card, "failed");
 		}
@@ -463,8 +477,8 @@ export async function blockedTraders(
 		if (i > 0) await new Promise((resolve) => setTimeout(resolve, 500));
 		const { tradeId, card } = toReject[i];
 		try {
-			await sendMessage("rejectTrade", tradeId);
-			injectBadge(card, "rejected");
+			const result = await sendMessage("rejectTrade", tradeId);
+			injectBadge(card, result.ok ? "rejected" : "failed");
 		} catch {
 			injectBadge(card, "failed");
 		}
@@ -499,12 +513,16 @@ export async function tradeManager(user: UserDetails) {
 	}
 
 	function getMaxPages(doc: Document): number {
-		const lastLink = doc.querySelector<HTMLAnchorElement>(
-			".pagination .page-item:last-child .page-link",
+		const links = doc.querySelectorAll<HTMLAnchorElement>(
+			".pagination .page-link",
 		);
-		if (!lastLink) return 1;
-		const url = new URL(lastLink.href, location.origin);
-		return parseInt(url.searchParams.get("page") ?? "1", 10);
+		let max = 1;
+		for (const link of links) {
+			const url = new URL(link.href, location.origin);
+			const page = parseInt(url.searchParams.get("page") ?? "", 10);
+			if (Number.isFinite(page) && page > max) max = page;
+		}
+		return max;
 	}
 
 	function parseTradeRows(
@@ -687,6 +705,7 @@ export async function tradeManager(user: UserDetails) {
 			document
 				.getElementById("kiln-tab-inbound")!
 				.addEventListener("click", () => {
+					selectedIds.clear();
 					activeTab = "inbound";
 					modalPage = 1;
 					renderModal();
@@ -694,6 +713,7 @@ export async function tradeManager(user: UserDetails) {
 			document
 				.getElementById("kiln-tab-outbound")!
 				.addEventListener("click", () => {
+					selectedIds.clear();
 					activeTab = "outbound";
 					modalPage = 1;
 					renderModal();
@@ -701,6 +721,7 @@ export async function tradeManager(user: UserDetails) {
 			document
 				.getElementById("kiln-tab-completed")!
 				.addEventListener("click", () => {
+					selectedIds.clear();
 					activeTab = "completed";
 					modalPage = 1;
 					if (!scrapedCompleted && !scrapingCompleted && !scraping)
@@ -710,6 +731,7 @@ export async function tradeManager(user: UserDetails) {
 			document
 				.getElementById("kiln-tab-inactive")!
 				.addEventListener("click", () => {
+					selectedIds.clear();
 					activeTab = "inactive";
 					modalPage = 1;
 					if (!scrapedInactive && !scrapingInactive && !scraping)
@@ -719,14 +741,17 @@ export async function tradeManager(user: UserDetails) {
 			document
 				.getElementById("kiln-tab-blocked")!
 				.addEventListener("click", () => {
+					selectedIds.clear();
 					activeTab = "blocked";
 					renderModal();
 				});
 			document.getElementById("kiln-tab-nft")!.addEventListener("click", () => {
+				selectedIds.clear();
 				activeTab = "nft";
 				renderModal();
 			});
 			document.getElementById("kiln-tab-nlf")!.addEventListener("click", () => {
+				selectedIds.clear();
 				activeTab = "nlf";
 				renderModal();
 			});
@@ -1224,8 +1249,12 @@ export async function tradeManager(user: UserDetails) {
 					btn.textContent = "...";
 					const tradeId = parseInt(btn.dataset.tradeId!, 10);
 					const userId = parseInt(btn.dataset.userId!, 10);
-					await sendMessage("rejectTrade", tradeId);
-					window.location.pathname = `/trade/new/${userId}`;
+					const result = await sendMessage("rejectTrade", tradeId);
+					if (result.ok) {
+						window.location.pathname = `/trade/new/${userId}`;
+					} else {
+						renderModal();
+					}
 				});
 			});
 
@@ -1236,10 +1265,12 @@ export async function tradeManager(user: UserDetails) {
 					btn.disabled = true;
 					btn.textContent = "...";
 					const tradeId = parseInt(btn.dataset.tradeId!, 10);
-					await sendMessage("rejectTrade", tradeId);
-					selectedIds.delete(tradeId);
-					const idx = trades.findIndex((t) => t.tradeId === tradeId);
-					if (idx !== -1) trades.splice(idx, 1);
+					const result = await sendMessage("rejectTrade", tradeId);
+					if (result.ok) {
+						selectedIds.delete(tradeId);
+						const idx = trades.findIndex((t) => t.tradeId === tradeId);
+						if (idx !== -1) trades.splice(idx, 1);
+					}
 					renderModal();
 				});
 			});
@@ -1265,10 +1296,12 @@ export async function tradeManager(user: UserDetails) {
 							blockedUserId: userId,
 						});
 						blockedIds.add(userId);
-						await sendMessage("rejectTrade", tradeId);
-						selectedIds.delete(tradeId);
-						const idx = trades.findIndex((t) => t.tradeId === tradeId);
-						if (idx !== -1) trades.splice(idx, 1);
+						const result = await sendMessage("rejectTrade", tradeId);
+						if (result.ok) {
+							selectedIds.delete(tradeId);
+							const idx = trades.findIndex((t) => t.tradeId === tradeId);
+							if (idx !== -1) trades.splice(idx, 1);
+						}
 					}
 
 					renderModal();
@@ -1287,10 +1320,12 @@ export async function tradeManager(user: UserDetails) {
 				const ids = [...selectedIds];
 				for (let i = 0; i < ids.length; i++) {
 					if (i > 0) await delay(FETCH_DELAY_MS);
-					await sendMessage("rejectTrade", ids[i]);
-					selectedIds.delete(ids[i]);
-					const idx = trades.findIndex((t) => t.tradeId === ids[i]);
-					if (idx !== -1) trades.splice(idx, 1);
+					const result = await sendMessage("rejectTrade", ids[i]);
+					if (result.ok) {
+						selectedIds.delete(ids[i]);
+						const idx = trades.findIndex((t) => t.tradeId === ids[i]);
+						if (idx !== -1) trades.splice(idx, 1);
+					}
 				}
 
 				renderModal();
@@ -1561,14 +1596,14 @@ export async function tradeViewedIndicators(
 	tradeIds: number[],
 	showDisclosures: boolean,
 ) {
-	const container = document.querySelector(".col:has(.card-inbox)")!;
+	const container = document.querySelector(".col:has(.card-inbox)");
+	if (!container) return;
 	const cards = container.querySelectorAll(".card-inbox");
 
 	for (const card of cards) {
 		const viewBtn = card.getElementsByClassName(
 			"btn-primary",
 		)[0] as unknown as HTMLLinkElement;
-		console.log(viewBtn.href);
 		const tradeId = +new URL(viewBtn.href).pathname.split("/")[3];
 
 		if (tradeIds.includes(tradeId)) {

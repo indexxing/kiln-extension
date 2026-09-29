@@ -16,13 +16,17 @@
 
 import errorIcon from "@/assets/error.svg";
 import data from "@/public/preferences.json";
+import { escapeHtml } from "@/utils/escapeHtml";
 import type { FeatureId } from "@/utils/featureIds.generated";
 import { sendMessage } from "@/utils/messaging";
 import {
 	_condensedTabBars,
 	_errorLog,
+	_forumFeedbackRedirectBanner,
+	_kilnUpdatesCategory,
 	_savedThemes,
 	_showKilnDisclosures,
+	_textTruncateFix,
 	apiSessions,
 	cache,
 	dismissedNotices,
@@ -38,6 +42,7 @@ import {
 	createModal,
 	getApiSession,
 	getConfig,
+	getFlag,
 	getUserDetails,
 	pullCache,
 	renderMarkdownLinks,
@@ -204,6 +209,12 @@ export async function kilnSettings() {
 
 	async function initAboutTab() {
 		const container = document.getElementById("kiln-about")!;
+		const config = await getConfig();
+		const showFutureOfKiln = getFlag(
+			config.flags,
+			"general.futureOfKilnNotice.visible",
+			false,
+		);
 		container.innerHTML = `
 			<div class="card mb-2">
 				<div class="card-body">
@@ -231,10 +242,16 @@ export async function kilnSettings() {
 							<a href="https://kiln.indexx.dev/privacy" target="_blank" class="text-muted text-decoration-none">
 								Privacy Policy
 							</a>
+							<a href="https://kiln.indexx.dev/terms" target="_blank" class="text-muted text-decoration-none">
+								Terms of Service
+							</a>
 						</div>
 					</div>
 				</div>
 			</div>
+			${
+				showFutureOfKiln
+					? `
 			<div class="card mb-2">
 				<div class="card-header">
 					<h5 class="mb-0">The Future of Kiln</h5>
@@ -253,6 +270,9 @@ export async function kilnSettings() {
 					<p class="mb-0 text-muted">Index</p>
 				</div>
 			</div>
+			`
+					: ""
+			}
 			<div class="card mb-2 d-none">
 				<div class="card-header small fw-semibold d-flex justify-content-between align-items-center">
 					<h5 class="mb-0">Support the Extension</h5>
@@ -361,6 +381,18 @@ export async function kilnSettings() {
 					<div class="form-check form-switch mb-0 mt-2">
 						<input class="form-check-input" type="checkbox" id="kiln-condensed-tab-bars-toggle">
 						<label class="form-check-label small" for="kiln-condensed-tab-bars-toggle">Condense tab bars (World Reviews & User Creations Tab)</label>
+					</div>
+					<div class="form-check form-switch mb-0 mt-2">
+						<input class="form-check-input" type="checkbox" id="kiln-text-truncate-fix-toggle">
+						<label class="form-check-label small" for="kiln-text-truncate-fix-toggle">Always show ellipses on truncated text</label>
+					</div>
+					<div class="form-check form-switch mb-0 mt-2">
+						<input class="form-check-input" type="checkbox" id="kiln-forum-feedback-banner-toggle">
+						<label class="form-check-label small" for="kiln-forum-feedback-banner-toggle">Suggest the feedback form when writing a Kiln-related forum post</label>
+					</div>
+					<div class="form-check form-switch mb-0 mt-2">
+						<input class="form-check-input" type="checkbox" id="kiln-updates-category-toggle">
+						<label class="form-check-label small" for="kiln-updates-category-toggle">Show the "Kiln Updates" forum category</label>
 					</div>
 				</div>
 			</div>
@@ -517,7 +549,33 @@ export async function kilnSettings() {
 			await _condensedTabBars.setValue(condensedTabBarsToggle.checked);
 		});
 
-		const config = await getConfig();
+		const textTruncateFixToggle = document.getElementById(
+			"kiln-text-truncate-fix-toggle",
+		) as HTMLInputElement;
+		textTruncateFixToggle.checked = await _textTruncateFix.getValue();
+		textTruncateFixToggle.addEventListener("change", async () => {
+			await _textTruncateFix.setValue(textTruncateFixToggle.checked);
+		});
+
+		const forumFeedbackBannerToggle = document.getElementById(
+			"kiln-forum-feedback-banner-toggle",
+		) as HTMLInputElement;
+		forumFeedbackBannerToggle.checked =
+			await _forumFeedbackRedirectBanner.getValue();
+		forumFeedbackBannerToggle.addEventListener("change", async () => {
+			await _forumFeedbackRedirectBanner.setValue(
+				forumFeedbackBannerToggle.checked,
+			);
+		});
+
+		const updatesCategoryToggle = document.getElementById(
+			"kiln-updates-category-toggle",
+		) as HTMLInputElement;
+		updatesCategoryToggle.checked = await _kilnUpdatesCategory.getValue();
+		updatesCategoryToggle.addEventListener("change", async () => {
+			await _kilnUpdatesCategory.setValue(updatesCategoryToggle.checked);
+		});
+
 		const notesContainer = document.getElementById("kiln-about-notices")!;
 		notesContainer.innerHTML = "";
 		if (
@@ -732,8 +790,58 @@ export async function kilnSettings() {
 				setConfigDisabled(card, !state);
 
 				if (setting.config) {
+					const configValues = () =>
+						(values.config[setting.id as keyof typeof values.config] as Record<
+							string,
+							any
+						>) ?? {};
+
+					const writeConfig = (subsetting: string, value: boolean) => {
+						if (!values.config[setting.id as keyof typeof values.config])
+							(values.config as Record<string, any>)[setting.id] = {};
+						(
+							values.config[setting.id as keyof typeof values.config] as Record<
+								string,
+								any
+							>
+						)[subsetting] = value;
+						preferences.setValue(values);
+					};
+
+					const renderCheck = (
+						container: HTMLElement,
+						sub: NonNullable<SettingData["config"]>[number],
+						idSuffix: string,
+					) => {
+						const span = document.createElement("span");
+						span.className = "form-check form-switch";
+						const checkId = `check-${setting.id}-${sub.subsetting}-${idSuffix}`;
+						span.innerHTML = `
+								<input class="form-check-input" type="checkbox" role="switch" id="${checkId}" />
+								<label class="form-check-label" for="${checkId}">${sub.label}</label>
+							`;
+						const checkbox =
+							span.querySelector<HTMLInputElement>(".form-check-input")!;
+						checkbox.checked =
+							configValues()[sub.subsetting] ??
+							(sub.default as boolean) ??
+							false;
+						checkbox.addEventListener("change", () =>
+							writeConfig(sub.subsetting, checkbox.checked),
+						);
+						container.appendChild(span);
+					};
+
+					const isThemeConfig = setting.id === "customProfileThemes";
+					const themeEffectSubs = isThemeConfig
+						? setting.config.filter(
+								(s) => !s.hide && s.subsetting !== "viewOthers",
+							)
+						: [];
+
 					for (const sub of setting.config) {
 						if (sub.hide) continue;
+						if (isThemeConfig && sub.subsetting !== "viewOthers") continue;
 
 						if (sub.type === "select") {
 							const select = document.createElement("select");
@@ -827,35 +935,24 @@ export async function kilnSettings() {
 							wrapper.appendChild(datalist);
 							configContainer.appendChild(wrapper);
 						} else if (sub.type === "check") {
-							const span = document.createElement("span");
-							span.className = "form-check form-switch";
-							const checkId = `check-${setting.id}-${sub.subsetting}-${primaryTag}`;
-							span.innerHTML = `
-								<input class="form-check-input" type="checkbox" role="switch" id="${checkId}" />
-								<label class="form-check-label" for="${checkId}">${sub.label}</label>
-							`;
-							const checkbox =
-								span.querySelector<HTMLInputElement>(".form-check-input")!;
-							checkbox.checked =
-								(
-									values.config[
-										setting.id as keyof typeof values.config
-									] as Record<string, any>
-								)?.[sub.subsetting] ??
-								(sub.default as boolean) ??
-								false;
-							checkbox.addEventListener("change", () => {
-								if (!values.config[setting.id as keyof typeof values.config])
-									(values.config as Record<string, any>)[setting.id] = {};
-								(
-									values.config[
-										setting.id as keyof typeof values.config
-									] as Record<string, any>
-								)[sub.subsetting] = checkbox.checked;
-								preferences.setValue(values);
-							});
-							configContainer.appendChild(span);
+							renderCheck(configContainer, sub, primaryTag);
 						}
+					}
+
+					if (themeEffectSubs.length > 0) {
+						const button = document.createElement("button");
+						button.type = "button";
+						button.className = "btn btn-sm btn-outline-primary";
+						button.innerHTML =
+							'<i class="fas fa-sliders me-1"></i>Customize Allowed Effects';
+						button.addEventListener("click", () =>
+							openProfileThemeEffectsModal(
+								themeEffectSubs,
+								(subsetting) => configValues()[subsetting],
+								writeConfig,
+							),
+						);
+						configContainer.appendChild(button);
 					}
 				}
 			}
@@ -1171,6 +1268,13 @@ export async function kilnSettings() {
 		};
 		renderCategoryList();
 
+		const categoryParam = new URLSearchParams(window.location.search).get(
+			"category",
+		);
+		if (categoryParam && (groupOrder as string[]).includes(categoryParam)) {
+			renderCategoryDetail(categoryParam as Tags);
+		}
+
 		document
 			.getElementById("kiln-export-btn")!
 			.addEventListener("click", () => {
@@ -1235,31 +1339,147 @@ export async function kilnSettings() {
 	switchTab(tabParam && tabParam in panels ? tabParam : "about");
 }
 
+function initAdminGeneralTab(userId: number, panel: HTMLElement) {
+	panel.innerHTML = `<p class="text-muted small">Loading…</p>`;
+	load();
+
+	async function load() {
+		const [result, config] = await Promise.all([
+			sendMessage("adminGetStats", userId),
+			getConfig(),
+		]);
+		if (!result.ok) {
+			panel.innerHTML = `<p class="text-danger small">Failed to load: ${result.message}</p>`;
+			return;
+		}
+
+		const { totalVerifiedUsers, pendingFeedback, versions } = result.data.data;
+		const latestVersion = config.latestVersion;
+
+		const sorted = [...versions]
+			.filter((v): v is { version: string; users: number } => !!v.version)
+			.sort((a, b) => {
+				if (isNewerVersion(a.version, b.version)) return -1;
+				if (isNewerVersion(b.version, a.version)) return 1;
+				return 0;
+			});
+
+		const latestUsers =
+			sorted.find((v) => v.version === latestVersion)?.users ?? 0;
+		const onLatestPct = totalVerifiedUsers
+			? Math.round((latestUsers / totalVerifiedUsers) * 100)
+			: 0;
+		const maxUsers = Math.max(...sorted.map((v) => v.users), 1);
+
+		const statTile = (
+			label: string,
+			value: string,
+			sub: string,
+			icon: string,
+			tone: string,
+		) => `
+			<div class="col-sm-4">
+				<div class="card h-100">
+					<div class="card-body py-2">
+						<div class="d-flex align-items-center gap-2 text-muted small mb-1">
+							<i class="fas fa-${icon} fa-fw"></i>${label}
+						</div>
+						<div class="fs-4 fw-semibold ${tone}">${value}</div>
+						<div class="text-muted" style="font-size:0.72rem;">${sub}</div>
+					</div>
+				</div>
+			</div>
+		`;
+
+		const bars = sorted.length
+			? sorted
+					.map((v) => {
+						const isLatest = v.version === latestVersion;
+						const pct = totalVerifiedUsers
+							? Math.round((v.users / totalVerifiedUsers) * 100)
+							: 0;
+						const width = Math.max(2, Math.round((v.users / maxUsers) * 100));
+						return `
+							<div class="mb-2">
+								<div class="d-flex justify-content-between align-items-center small">
+									<span>
+										<code>v${escapeHtml(v.version)}</code>
+										${isLatest ? '<span class="badge bg-success ms-1">Latest</span>' : ""}
+									</span>
+									<span class="text-muted">${v.users.toLocaleString()} user${v.users !== 1 ? "s" : ""} · ${pct}%</span>
+								</div>
+								<div class="progress mt-1" style="height:8px;">
+									<div class="progress-bar ${isLatest ? "bg-success" : "bg-primary"}" style="width:${width}%;"></div>
+								</div>
+							</div>
+						`;
+					})
+					.join("")
+			: '<p class="text-muted small mb-0">No version data yet.</p>';
+
+		panel.innerHTML = `
+			<div class="row g-2 mb-2">
+				${statTile("Verified Users", totalVerifiedUsers.toLocaleString(), "Linked Kiln accounts", "user-check", "")}
+				${statTile("Pending Feedback", pendingFeedback.toLocaleString(), "Open, unresolved submissions", "inbox", pendingFeedback > 0 ? "text-warning" : "")}
+				${statTile("On Latest Version", `${onLatestPct}%`, `v${escapeHtml(latestVersion)} · ${latestUsers.toLocaleString()} users`, "arrow-up", "text-success")}
+			</div>
+			<div class="card">
+				<div class="card-header small fw-semibold d-flex justify-content-between align-items-center">
+					<span>Version Migration</span>
+					<button id="kadmin-general-refresh" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Refresh">
+						<i class="fas fa-sync-alt" style="font-size:0.75rem;"></i>
+					</button>
+				</div>
+				<div class="card-body">
+					<p class="text-muted small mb-2">Linked users by the extension version they last reported.</p>
+					${bars}
+				</div>
+			</div>
+		`;
+
+		document
+			.getElementById("kadmin-general-refresh")
+			?.addEventListener("click", load);
+	}
+}
+
 function initAdminTab(userId: number) {
 	const inner = document.getElementById("kiln-admin-inner") as HTMLElement;
 
 	inner.innerHTML = `
 		<div class="d-flex gap-2 mb-3">
-			<button class="btn btn-primary flex-grow-1" id="kadmin-tab-themes">Themes</button>
+			<button class="btn btn-primary flex-grow-1" id="kadmin-tab-general">General</button>
+			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-themes">Themes</button>
+			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-profile-themes">Profile Themes</button>
 			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-feedback">Feedback</button>
 		</div>
-		<div id="kadmin-themes"></div>
+		<div id="kadmin-general"></div>
+		<div id="kadmin-themes" style="display:none;"></div>
+		<div id="kadmin-profile-themes" style="display:none;"></div>
 		<div id="kadmin-feedback" style="display:none;"></div>
 	`;
 
+	const generalPanel = document.getElementById("kadmin-general")!;
 	const themesPanel = document.getElementById("kadmin-themes")!;
+	const profileThemesPanel = document.getElementById("kadmin-profile-themes")!;
 	const feedbackPanel = document.getElementById("kadmin-feedback")!;
 
 	const adminPanels: Record<string, HTMLElement> = {
+		general: generalPanel,
 		themes: themesPanel,
+		"profile-themes": profileThemesPanel,
 		feedback: feedbackPanel,
 	};
 	const adminTabBtns: Record<string, HTMLElement> = {
+		general: document.getElementById("kadmin-tab-general")!,
 		themes: document.getElementById("kadmin-tab-themes")!,
+		"profile-themes": document.getElementById("kadmin-tab-profile-themes")!,
 		feedback: document.getElementById("kadmin-tab-feedback")!,
 	};
 
+	let themesLoaded = false;
 	let feedbackLoaded = false;
+	let profileThemesLoaded = false;
 	for (const [name, btn] of Object.entries(adminTabBtns)) {
 		btn.addEventListener("click", () => {
 			for (const [key, panel] of Object.entries(adminPanels)) {
@@ -1268,14 +1488,22 @@ function initAdminTab(userId: number) {
 			for (const [key, b] of Object.entries(adminTabBtns)) {
 				b.className = `btn flex-grow-1 ${key === name ? "btn-primary" : "btn-secondary"}`;
 			}
+			if (name === "themes" && !themesLoaded) {
+				themesLoaded = true;
+				renderPendingThemes();
+			}
 			if (name === "feedback" && !feedbackLoaded) {
 				feedbackLoaded = true;
 				initAdminFeedbackTab(userId, feedbackPanel);
 			}
+			if (name === "profile-themes" && !profileThemesLoaded) {
+				profileThemesLoaded = true;
+				initAdminProfileThemesTab(userId, profileThemesPanel);
+			}
 		});
 	}
 
-	renderPendingThemes();
+	initAdminGeneralTab(userId, generalPanel);
 
 	async function renderPendingThemes() {
 		themesPanel.innerHTML = `<p class="text-muted small">Loading…</p>`;
@@ -1310,12 +1538,12 @@ function initAdminTab(userId: number) {
 					<div class="card-body">
 						<div class="d-flex align-items-start gap-3">
 							<div class="d-flex gap-1 flex-shrink-0">
-								<div style="width:32px;height:32px;border-radius:6px;background:${t.accentColor};" title="Accent"></div>
-								<div style="width:32px;height:32px;border-radius:6px;background:${t.navbarColor};" title="Navbar"></div>
+								<div style="width:32px;height:32px;border-radius:6px;background:${escapeHtml(t.accentColor)};" title="Accent"></div>
+								<div style="width:32px;height:32px;border-radius:6px;background:${escapeHtml(t.navbarColor)};" title="Navbar"></div>
 							</div>
 							<div class="flex-grow-1 min-w-0">
-								<div class="fw-semibold">${t.name}</div>
-								<div class="text-muted small">ID: <code>${t.id}</code> &middot; User ID: ${t.userId}${t.fontFamily ? ` &middot; Font: ${t.fontFamily}` : ""}</div>
+								<div class="fw-semibold">${escapeHtml(t.name)}</div>
+								<div class="text-muted small">ID: <code>${t.id}</code> &middot; User ID: ${t.userId}${t.fontFamily ? ` &middot; Font: ${escapeHtml(t.fontFamily)}` : ""}</div>
 								${
 									t.customCss
 										? `<pre id="css-pre-${t.id}" class="mt-2 mb-1 p-2 rounded bg-black text-success" style="font-size:0.7rem;max-height:120px;overflow:hidden;white-space:pre-wrap;">${t.customCss.replace(/</g, "&lt;").slice(0, 500)}${t.customCss.length > 500 ? "\n…" : ""}</pre><button class="btn btn-link btn-sm p-0 text-secondary" style="font-size:0.75rem;" data-expand="${t.id}">View full CSS (${t.customCss.length} chars)</button>`
@@ -1416,6 +1644,234 @@ function initAdminTab(userId: number) {
 				deleteBtn.disabled = false;
 			}
 		});
+	}
+}
+
+const POLYTORIA_CDN_PREFIX = "https://cdn.polytoria.com/";
+
+function safeColor(value: string | null | undefined, fallback: string): string {
+	return value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
+}
+
+function safeUrl(value: string): string | null {
+	try {
+		const parsed = new URL(value);
+		return parsed.protocol === "https:" || parsed.protocol === "http:"
+			? value
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+function initAdminProfileThemesTab(userId: number, panel: HTMLElement) {
+	renderPendingProfileThemes();
+
+	async function renderPendingProfileThemes() {
+		panel.innerHTML = `<p class="text-muted small">Loading…</p>`;
+		const result = await sendMessage("adminGetPendingProfileThemes", userId);
+		if (!result.ok) {
+			panel.innerHTML = `<p class="text-danger small">Failed to load: ${result.message}</p>`;
+			return;
+		}
+		const themes = result.data.data;
+
+		const manualForm = `
+			<div class="card mb-3">
+				<div class="card-body py-2">
+					<div class="d-flex gap-2 align-items-center flex-wrap">
+						<input id="kadmin-pt-id" type="text" class="form-control form-control-sm" style="max-width:200px;" placeholder="User ID…" />
+						<button id="kadmin-pt-decline" class="btn btn-danger btn-sm">Decline</button>
+						<button id="kadmin-pt-delete" class="btn btn-outline-danger btn-sm">Delete</button>
+						<span id="kadmin-pt-status" class="small"></span>
+					</div>
+				</div>
+			</div>
+		`;
+
+		if (themes.length === 0) {
+			panel.innerHTML = `${manualForm}<p class="text-muted small">No pending profile themes.</p>`;
+		} else {
+			panel.innerHTML =
+				manualForm +
+				themes
+					.map((t) => {
+						const notes = t.notes ?? [];
+						const reviewed = t.updatedAt || t.createdAt;
+						const imageBlock = (
+							url: string | null | undefined,
+							label: string,
+							maxHeight: number,
+						) => {
+							if (!url) return "";
+							const external = !url.startsWith(POLYTORIA_CDN_PREFIX);
+							const safe = safeUrl(url);
+							const badge = `<span class="badge ${safe ? (external ? "bg-warning text-dark" : "bg-secondary") : "bg-danger"}">${label}${safe ? (external ? " (external)" : " (CDN)") : " (unsupported scheme)"}</span>`;
+							if (!safe) {
+								return `
+								<div class="mt-2">
+									<div class="d-flex align-items-center gap-2 mb-1">
+										${badge}
+										<code class="small" style="max-width:320px;overflow-wrap:anywhere;">${escapeHtml(url)}</code>
+									</div>
+								</div>
+							`;
+							}
+							return `
+								<div class="mt-2">
+									<div class="d-flex align-items-center gap-2 mb-1">
+										${badge}
+										<a class="small text-truncate" href="${escapeHtml(safe)}" target="_blank" rel="noreferrer noopener" style="max-width:320px;">${escapeHtml(safe)}</a>
+									</div>
+									<img src="${escapeHtml(safe)}" alt="" style="max-height:${maxHeight}px;max-width:100%;border-radius:6px;" />
+								</div>
+							`;
+						};
+
+						return `
+				<div class="card mb-3" data-pt-card="${t.userId}">
+					<div class="card-body">
+						<div class="d-flex align-items-start gap-3">
+							<div class="d-flex gap-1 flex-shrink-0">
+								<div style="width:32px;height:32px;border-radius:6px;background:${safeColor(t.accentColor, "#888888")};" title="Accent"></div>
+								<div style="width:32px;height:32px;border-radius:6px;background:${safeColor(t.navbarColor, "#888888")};" title="Navbar"></div>
+							</div>
+							<div class="flex-grow-1 min-w-0">
+								<div class="fw-semibold"><a href="https://polytoria.com/users/${t.userId}" target="_blank" rel="noreferrer noopener">User ${t.userId}</a></div>
+								<div class="text-muted small">${reviewed ? `Submitted ${new Date(reviewed).toLocaleString()}` : ""}${t.fontFamily ? ` &middot; Font: ${escapeHtml(t.fontFamily)}` : ""}${t.enabled ? "" : " &middot; hidden by owner"}</div>
+								${imageBlock(t.backgroundImage, "Background", 140)}
+								${imageBlock(t.cursorUrl, "Cursor", 48)}
+								${
+									notes.length
+										? `<div class="mt-2">
+												<div class="text-muted" style="font-size:0.7rem;">Notes (${notes.length})</div>
+												<div class="d-flex flex-column gap-1 mt-1">
+													${notes
+														.map(
+															(n) =>
+																`<div class="small px-2 py-1 rounded" style="color:${safeColor(n.color, "#000000")};background:${safeColor(n.background, "#ffff88")};white-space:pre-wrap;overflow-wrap:anywhere;">${escapeHtml(n.text)}</div>`,
+														)
+														.join("")}
+												</div>
+											</div>`
+										: ""
+								}
+								${
+									t.customCss
+										? `<pre id="pt-css-pre-${t.userId}" class="mt-2 mb-1 p-2 rounded bg-black text-success" style="font-size:0.7rem;max-height:120px;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;">${escapeHtml(t.customCss.slice(0, 500))}${t.customCss.length > 500 ? "\n…" : ""}</pre><button class="btn btn-link btn-sm p-0 text-secondary" style="font-size:0.75rem;" data-pt-expand="${t.userId}">View full CSS (${t.customCss.length} chars)</button>`
+										: ""
+								}
+							</div>
+							<div class="d-flex gap-2 flex-shrink-0">
+								<button class="btn btn-success btn-sm" data-pt-action="approve" data-pt-user="${t.userId}">Approve</button>
+								<button class="btn btn-danger btn-sm" data-pt-action="decline" data-pt-user="${t.userId}">Decline</button>
+								<button class="btn btn-outline-danger btn-sm" data-pt-action="delete" data-pt-user="${t.userId}">Delete</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			`;
+					})
+					.join("");
+
+			for (const t of themes) {
+				if (!t.customCss) continue;
+				const expandBtn = panel.querySelector<HTMLButtonElement>(
+					`[data-pt-expand="${t.userId}"]`,
+				);
+				const pre = document.getElementById(`pt-css-pre-${t.userId}`);
+				if (!expandBtn || !pre) continue;
+				expandBtn.addEventListener("click", () => {
+					pre.textContent = t.customCss!;
+					pre.style.maxHeight = "none";
+					expandBtn.remove();
+				});
+			}
+
+			for (const btn of panel.querySelectorAll<HTMLButtonElement>(
+				"[data-pt-action]",
+			)) {
+				btn.addEventListener("click", async () => {
+					const targetUserId = Number(btn.dataset.ptUser);
+					const action = btn.dataset.ptAction as
+						| "approve"
+						| "decline"
+						| "delete";
+					btn.disabled = true;
+					const result =
+						action === "delete"
+							? await sendMessage("adminDeleteProfileTheme", {
+									userId,
+									targetUserId,
+								})
+							: await sendMessage("adminReviewProfileTheme", {
+									userId,
+									targetUserId,
+									action,
+								});
+					if (result.ok) {
+						await renderPendingProfileThemes();
+					} else {
+						btn.disabled = false;
+						btn.insertAdjacentHTML(
+							"afterend",
+							`<span class="text-danger small ms-2">Failed: ${result.message}</span>`,
+						);
+					}
+				});
+			}
+		}
+
+		const manualInput = document.getElementById(
+			"kadmin-pt-id",
+		) as HTMLInputElement;
+		const manualStatus = document.getElementById(
+			"kadmin-pt-status",
+		) as HTMLElement;
+		const manualBtns: [HTMLButtonElement, "decline" | "delete"][] = [
+			[
+				document.getElementById("kadmin-pt-decline") as HTMLButtonElement,
+				"decline",
+			],
+			[
+				document.getElementById("kadmin-pt-delete") as HTMLButtonElement,
+				"delete",
+			],
+		];
+		for (const [btn, action] of manualBtns) {
+			btn.addEventListener("click", async () => {
+				const targetUserId = Number(manualInput.value.trim());
+				if (!targetUserId) return;
+				for (const [b] of manualBtns) b.disabled = true;
+				manualStatus.textContent =
+					action === "delete" ? "Deleting…" : "Declining…";
+				manualStatus.className = "small text-muted";
+				const result =
+					action === "delete"
+						? await sendMessage("adminDeleteProfileTheme", {
+								userId,
+								targetUserId,
+							})
+						: await sendMessage("adminReviewProfileTheme", {
+								userId,
+								targetUserId,
+								action,
+							});
+				if (result.ok) {
+					await renderPendingProfileThemes();
+					const freshStatus = document.getElementById("kadmin-pt-status");
+					if (freshStatus) {
+						freshStatus.textContent =
+							action === "delete" ? "Deleted." : "Declined.";
+						freshStatus.className = "small text-success";
+					}
+				} else {
+					manualStatus.textContent = `Failed: ${result.message}`;
+					manualStatus.className = "small text-danger";
+					for (const [b] of manualBtns) b.disabled = false;
+				}
+			});
+		}
 	}
 }
 
@@ -1693,6 +2149,153 @@ function renderChangelogMd(md: string): string {
 	).html;
 }
 
+function initReviewMigration(userId: number) {
+	const migrateBtn = document.getElementById(
+		"kiln-migrate-btn",
+	) as HTMLButtonElement | null;
+	if (!migrateBtn) return;
+
+	const thresholdInput = document.getElementById(
+		"kiln-migrate-threshold",
+	) as HTMLInputElement;
+	const fallbackInput = document.getElementById(
+		"kiln-migrate-fallback",
+	) as HTMLInputElement;
+	const statusEl = document.getElementById("kiln-migrate-status")!;
+	const progressWrap = document.getElementById("kiln-migrate-progress-wrap")!;
+	const progressBar = document.getElementById("kiln-migrate-progress")!;
+	const logEl = document.getElementById("kiln-migrate-log")!;
+
+	const setStatus = (text: string, tone: "muted" | "danger" = "muted") => {
+		statusEl.textContent = text;
+		statusEl.className = `small text-${tone}`;
+	};
+
+	const appendLog = (html: string) => {
+		logEl.insertAdjacentHTML("beforeend", `<div>${html}</div>`);
+		logEl.scrollTop = logEl.scrollHeight;
+	};
+
+	migrateBtn.addEventListener("click", async () => {
+		const threshold = Math.min(
+			5,
+			Math.max(1, Math.round(Number(thresholdInput.value) || 4)),
+		);
+		thresholdInput.value = String(threshold);
+		const fallback = fallbackInput.value.trim();
+
+		migrateBtn.disabled = true;
+		thresholdInput.disabled = true;
+		fallbackInput.disabled = true;
+		progressWrap.classList.remove("d-none");
+		progressBar.style.width = "0%";
+		logEl.innerHTML = "";
+		setStatus("Loading your reviews…");
+
+		const listResult = await sendMessage("getMigratablePlaceReviews", userId);
+		if (!listResult.ok) {
+			setStatus(`Failed to load reviews: ${listResult.message}`, "danger");
+			migrateBtn.disabled = false;
+			thresholdInput.disabled = false;
+			fallbackInput.disabled = false;
+			return;
+		}
+
+		const pending = listResult.data.data.filter((r) => !r.migrated);
+		const total = pending.length;
+		if (total === 0) {
+			setStatus("No more reviews to migrate.");
+			migrateBtn.disabled = false;
+			thresholdInput.disabled = false;
+			fallbackInput.disabled = false;
+			return;
+		}
+
+		let done = 0;
+		let migrated = 0;
+		let skipped = 0;
+		let failed = 0;
+
+		const updateProgress = () => {
+			progressBar.style.width = `${Math.round((done / total) * 100)}%`;
+			setStatus(
+				`${done}/${total} processed · ${migrated} migrated · ${skipped} skipped · ${failed} failed`,
+			);
+		};
+		updateProgress();
+
+		for (const review of pending) {
+			const world = escapeHtml(review.placeName ?? `World #${review.placeId}`);
+
+			if (review.approvalStatus === "declined") {
+				skipped++;
+				appendLog(
+					`<span class="text-muted">${world}: skipped (hidden by Kiln moderation)</span>`,
+				);
+				done++;
+				updateProgress();
+				continue;
+			}
+
+			const content = (review.body ?? "").trim() || fallback;
+			if (!content) {
+				skipped++;
+				appendLog(
+					`<span class="text-muted">${world}: skipped (no review text)</span>`,
+				);
+				done++;
+				updateProgress();
+				continue;
+			}
+
+			const created = await sendMessage("createPolytoriaPlaceReview", {
+				placeId: review.placeId,
+				value: review.rating >= threshold ? "like" : "dislike",
+				content,
+			});
+
+			if (!created.ok) {
+				failed++;
+				appendLog(
+					`<span class="text-danger">${world}: ${escapeHtml(created.message)}</span>`,
+				);
+				done++;
+				updateProgress();
+				continue;
+			}
+
+			const marked = await sendMessage("markPlaceReviewMigrated", {
+				userId,
+				reviewId: review.id,
+			});
+
+			if (!marked.ok) {
+				failed++;
+				appendLog(
+					`<span class="text-danger">${world}: posted to Polytoria but failed to mark as migrated (${escapeHtml(marked.message)})</span>`,
+				);
+			} else {
+				migrated++;
+				appendLog(
+					`<span class="text-success">${world}: migrated as ${review.rating >= threshold ? "upvote" : "downvote"}</span>`,
+				);
+			}
+
+			done++;
+			updateProgress();
+			await new Promise((resolve) => setTimeout(resolve, 400));
+		}
+
+		setStatus(
+			`Done! ${migrated} migrated${skipped ? `, ${skipped} skipped` : ""}${failed ? `, ${failed} failed` : ""}.`,
+			failed ? "danger" : "muted",
+		);
+		migrateBtn.disabled = false;
+		thresholdInput.disabled = false;
+		fallbackInput.disabled = false;
+	});
+}
+
 async function initSyncTab() {
 	const container = document.getElementById("kiln-sync")!;
 	container.innerHTML = `<div class="text-muted small">Loading…</div>`;
@@ -1775,9 +2378,40 @@ async function initSyncTab() {
 				<button id="kiln-export-data-btn" class="btn btn-outline-secondary btn-sm flex-shrink-0">Download</button>
 			</div>
 		</div>
+		<div class="card mt-2">
+			<div class="card-body">
+				<div class="fw-semibold small">Migrate World Reviews to Polytoria</div>
+				<div class="text-muted mb-2" style="font-size:0.75rem;">
+					Polytoria now has native world reviews (upvote/downvote). This recreates each of your Kiln reviews on Polytoria. For now, all migrated world reviews will still show up in Kiln's review tab until the feature is fully deprecated.
+				</div>
+				<div class="d-flex align-items-center gap-2 flex-wrap">
+					<label class="small mb-0" for="kiln-migrate-threshold">Treat ratings of</label>
+					<input id="kiln-migrate-threshold" type="number" min="1" max="5" step="1" value="4" class="form-control form-control-sm" style="max-width:70px;">
+					<label class="small mb-0" for="kiln-migrate-threshold">stars or higher as an upvote <i class="fas fa-thumbs-up text-success"></i> (everything below becomes a downvote <i class="fas fa-thumbs-down text-danger"></i>)</label>
+				</div>
+				<div class="mt-2">
+					<label class="small mb-0" for="kiln-migrate-fallback">Comment for reviews with no text (optional)</label>
+					<input id="kiln-migrate-fallback" type="text" maxlength="500" class="form-control form-control-sm mt-1" placeholder="Leave blank to skip reviews without any text">
+				</div>
+				<div class="d-flex align-items-center gap-2 mt-2">
+					<button id="kiln-migrate-btn" class="btn btn-primary btn-sm">Start Migration</button>
+					<span id="kiln-migrate-status" class="small text-muted"></span>
+				</div>
+				<div id="kiln-migrate-progress-wrap" class="mt-2 d-none">
+					<div class="progress" style="height:6px;"><div id="kiln-migrate-progress" class="progress-bar" style="width:0%"></div></div>
+					<div id="kiln-migrate-log" class="text-muted mt-1" style="font-size:0.72rem;max-height:150px;overflow-y:auto;"></div>
+				</div>
+			</div>
+		</div>
 		`
 				: ""
 		}
+		<div class="text-muted text-center mt-3" style="font-size:0.75rem;">
+			By ${isLinked ? "using" : "linking"} your account with Kiln, you agree to the
+			<a href="https://kiln.indexx.dev/terms" target="_blank" class="text-muted">Terms of Service</a>
+			and
+			<a href="https://kiln.indexx.dev/privacy" target="_blank" class="text-muted">Privacy Policy</a>.
+		</div>
 	`;
 
 	document
@@ -1813,6 +2447,8 @@ async function initSyncTab() {
 			btn.disabled = false;
 			btn.textContent = originalText;
 		});
+
+	if (user && isLinked) initReviewMigration(user.userId);
 
 	document
 		.getElementById("kiln-sync-action-btn")
@@ -2047,7 +2683,7 @@ async function initFeedbackTab() {
 		} else {
 			status.textContent =
 				result.code === "RATE_LIMITED"
-					? "Slow down — try again in a minute."
+					? "Slow down. Try again in a minute."
 					: "Something went wrong. Try again later.";
 			status.className = "small text-danger";
 		}
@@ -2463,6 +3099,47 @@ function initDebugTab(container: HTMLElement) {
 		});
 }
 
+function openProfileThemeEffectsModal(
+	subs: NonNullable<SettingData["config"]>,
+	getValue: (subsetting: string) => unknown,
+	setValue: (subsetting: string, value: boolean) => void,
+) {
+	const modal = createModal();
+	modal.style.maxHeight = "85vh";
+	modal.style.overflowY = "auto";
+	modal.addEventListener("close", () => modal.remove());
+	modal.innerHTML = `
+		<div class="d-flex justify-content-between align-items-center mb-2">
+			<h5 class="mb-0">Allowed Profile Theme Effects</h5>
+			<button class="btn-close" data-close aria-label="Close"></button>
+		</div>
+		<p class="text-muted small mb-3">Choose which parts of other users' custom profile themes are allowed to load.</p>
+		<div data-body></div>
+		<div class="d-flex justify-content-end mt-3">
+			<button class="btn btn-sm btn-primary" data-close>Done</button>
+		</div>
+	`;
+	const body = modal.querySelector("[data-body]") as HTMLElement;
+	for (const sub of subs) {
+		const span = document.createElement("span");
+		span.className = "form-check form-switch d-block mb-1";
+		const id = `kiln-pte-opt-${sub.subsetting}`;
+		span.innerHTML = `<input class="form-check-input" type="checkbox" role="switch" id="${id}" /><label class="form-check-label" for="${id}">${sub.label}</label>`;
+		const checkbox = span.querySelector<HTMLInputElement>(".form-check-input")!;
+		checkbox.checked = (getValue(sub.subsetting) ??
+			sub.default ??
+			false) as boolean;
+		checkbox.addEventListener("change", () =>
+			setValue(sub.subsetting, checkbox.checked),
+		);
+		body.appendChild(span);
+	}
+	for (const el of modal.querySelectorAll("[data-close]")) {
+		el.addEventListener("click", () => modal.close());
+	}
+	modal.showModal();
+}
+
 async function openVerificationFlowModal(userId: number) {
 	const modal = createModal();
 
@@ -2493,6 +3170,12 @@ async function openVerificationFlowModal(userId: number) {
 			<div class="alert border-secondary small mb-2">
 				<i class="fas fa-info-circle me-1"></i>
 				<strong>How linking works:</strong> You complete an action that Kiln can verify, such as putting a short code in your bio, to prove you own the account. Kiln only reads your public Polytoria profile to verify you. Kiln has no access to your Polytoria account, your password, settings, or anything private.
+			</div>
+			<div class="text-muted mb-3" style="font-size:0.75rem;">
+				By clicking Agree, you agree to the
+				<a href="https://kiln.indexx.dev/terms" target="_blank" class="text-muted">Terms of Service</a>
+				and
+				<a href="https://kiln.indexx.dev/privacy" target="_blank" class="text-muted">Privacy Policy</a>.
 			</div>
 			<div class="d-flex justify-content-end gap-2">
 				<button class="btn btn-secondary btn-sm" id="kvf-close-2">Cancel</button>
@@ -2583,13 +3266,14 @@ async function openVerificationFlowModal(userId: number) {
 		const { phrase, token } = startResult.data.data;
 
 		const fresh = await apiSessions.getValue();
-		fresh.push({
+		const withoutExisting = fresh.filter((s) => s.userId !== userId);
+		withoutExisting.push({
 			userId,
 			state: "pending",
 			verificationToken: token,
 			phrase,
 		});
-		await apiSessions.setValue(fresh);
+		await apiSessions.setValue(withoutExisting);
 
 		return { ok: true, phrase };
 	}
@@ -2688,53 +3372,14 @@ async function openVerificationFlowModal(userId: number) {
 				?.addEventListener("click", renderMethodSelect);
 		}
 
-		async function fetchProfileForm(): Promise<{
-			form: HTMLFormElement;
-			description: HTMLTextAreaElement;
-		} | null> {
-			let res: Response;
-			try {
-				res = await fetch("https://polytoria.com/my/settings/profile", {
-					credentials: "same-origin",
-				});
-			} catch {
-				return null;
-			}
-			if (!res.ok) return null;
-
-			const doc = new DOMParser().parseFromString(
-				await res.text(),
-				"text/html",
-			);
-			const form = doc.querySelector<HTMLFormElement>(
-				'form[action="/my/settings/profile/update"]',
-			);
-			const description =
-				form?.querySelector<HTMLTextAreaElement>("#description");
-			if (!form || !description) return null;
-
-			return { form, description };
+		async function fetchProfileBio(): Promise<string | null> {
+			const result = await sendMessage("getProfileBio");
+			return result.ok ? result.data : null;
 		}
 
-		async function submitProfileForm(form: HTMLFormElement): Promise<boolean> {
-			const params = new URLSearchParams();
-			for (const [key, value] of new FormData(form)) {
-				if (typeof value === "string") params.append(key, value);
-			}
-			try {
-				const res = await fetch(
-					"https://polytoria.com/my/settings/profile/update",
-					{
-						method: "POST",
-						credentials: "same-origin",
-						headers: { "Content-Type": "application/x-www-form-urlencoded" },
-						body: params.toString(),
-					},
-				);
-				return res.ok;
-			} catch {
-				return false;
-			}
+		async function submitProfileBio(description: string): Promise<boolean> {
+			const result = await sendMessage("updateProfileBio", description);
+			return result.ok;
 		}
 
 		const phraseResult = await getVerificationPhrase();
@@ -2746,24 +3391,22 @@ async function openVerificationFlowModal(userId: number) {
 
 		setStatus("Updating your bio…");
 
-		const profileForm = await fetchProfileForm();
-		if (!profileForm) {
+		const currentBio = await fetchProfileBio();
+		if (currentBio === null) {
 			renderAutoError(
 				"Couldn't find your profile bio field. Please try the manual method instead.",
 			);
 			return;
 		}
 
-		const currentBio = profileForm.description.value;
 		const cleanBio = currentBio
 			.replace(KILN_ID_REGEX_GLOBAL, "")
 			.replace(/[ \t]*\n[ \t]*\n+/g, "\n")
 			.trim();
-		profileForm.description.value = cleanBio
-			? `${cleanBio}\n${phrase}`
-			: phrase;
 
-		if (!(await submitProfileForm(profileForm.form))) {
+		if (
+			!(await submitProfileBio(cleanBio ? `${cleanBio}\n${phrase}` : phrase))
+		) {
 			renderAutoError("Failed to update your bio. Please try again later.");
 			return;
 		}
@@ -2791,11 +3434,7 @@ async function openVerificationFlowModal(userId: number) {
 
 		setStatus("Cleaning up…");
 
-		const cleanupForm = await fetchProfileForm();
-		if (cleanupForm) {
-			cleanupForm.description.value = cleanBio;
-			await submitProfileForm(cleanupForm.form);
-		}
+		await submitProfileBio(cleanBio);
 
 		window.location.reload();
 	}
@@ -2880,7 +3519,8 @@ export async function kilnDebug() {
 }
 
 export async function checkForVerificationCode(userId: number) {
-	const descriptionTextbox = document.getElementById("description")!;
+	const descriptionTextbox = document.getElementById("description");
+	if (!descriptionTextbox) return;
 
 	const session = await getApiSession(userId);
 
@@ -2938,11 +3578,12 @@ export async function securityKeyRenaming() {
 	const securityKeys = document.querySelectorAll(".card.mcard.mt-2");
 
 	securityKeys.forEach((keyCard) => {
-		console.log(keyCard);
-		const keyId = +keyCard
-			.querySelector('button[onclick^="deleteSecurityKey"]')!
-			.getAttribute("onclick")!
-			.match(/'(\d+)'/)![1]!;
+		const deleteButton = keyCard.querySelector(
+			'button[onclick^="deleteSecurityKey"]',
+		);
+		const keyId = Number(
+			deleteButton?.getAttribute("onclick")?.match(/'(\d+)'/)?.[1],
+		);
 
 		const nameElement = keyCard.querySelector(".fw-bold");
 		if (nameElement) {
@@ -2950,9 +3591,6 @@ export async function securityKeyRenaming() {
 				nameElement.textContent = renames[keyId as keyof typeof renames];
 			}
 
-			const deleteButton = keyCard.querySelector(
-				'button[onclick^="deleteSecurityKey"]',
-			);
 			if (deleteButton) {
 				const existingRenameButton = deleteButton.parentElement?.querySelector(
 					".btn-outline-secondary",

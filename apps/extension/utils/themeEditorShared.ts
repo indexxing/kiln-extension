@@ -14,9 +14,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import type { Extension } from "@kiln/schemas";
 import { resolveDecalUrl } from "@/utils/decal";
+import { escapeHtml, safeHttpUrl } from "@/utils/escapeHtml";
 import { sendMessage } from "@/utils/messaging";
+import { publishedThemeFields } from "@/utils/publishedTheme";
 import {
+	_hasShownPublishRulesModal,
 	_savedThemes,
 	apiSessions,
 	preferences,
@@ -96,6 +100,55 @@ export function generateRandomThemeName(): string {
 
 const DEFAULT_ACCENT = "#3bafff";
 const DEFAULT_NAVBAR = "#1a1a1a";
+
+export function publishRulesModalBody(): string {
+	return `
+		<p class="fw-bold mb-2" style="font-size:0.95rem;">
+			<i class="fas fa-triangle-exclamation me-1 text-warning"></i>Before Publishing...
+		</p>
+		<p class="small text-muted mb-2">
+			Publishing shares this theme with every Kiln user. The same rules you agreed to when linking your account still apply:
+		</p>
+		<ul class="small mb-2" style="padding-left:1.1em;">
+			<li>No impersonation, hateful, sexual, or illegal content.</li>
+			<li>Published themes are reviewed and can be removed or reported.</li>
+			<li>Don't use Kiln to harass or deceive other players.</li>
+		</ul>
+		<p class="small fw-semibold mb-1">Custom CSS may not:</p>
+		<ul class="small mb-0" style="padding-left:1.1em;">
+			<li>Target or hide Kiln's own UI.</li>
+			<li>Hide the account dropdown, navbar, or "Report" actions.</li>
+			<li>Hide or blank the entire page.</li>
+			<li>Import anything other than Google Fonts / Bunny Fonts.</li>
+			<li>Use <code>expression()</code>, a <code>javascript:</code> url, <code>-moz-binding</code>, or <code>behavior: url(...)</code>.</li>
+		</ul>
+		<p class="small text-muted mb-0 mt-2">Themes that break these rules are rejected automatically or removed after review.</p>
+	`;
+}
+
+export function confirmPublishRulesSeen(
+	overlay: HTMLElement,
+	continueBtn: HTMLButtonElement,
+	cancelBtn: HTMLButtonElement,
+): Promise<boolean> {
+	return _hasShownPublishRulesModal.getValue().then((seen) => {
+		if (seen) return true;
+		overlay.style.display = "flex";
+		return new Promise<boolean>((resolve) => {
+			const finish = (result: boolean) => {
+				overlay.style.display = "none";
+				continueBtn.removeEventListener("click", onContinue);
+				cancelBtn.removeEventListener("click", onCancel);
+				if (result) void _hasShownPublishRulesModal.setValue(true);
+				resolve(result);
+			};
+			const onContinue = () => finish(true);
+			const onCancel = () => finish(false);
+			continueBtn.addEventListener("click", onContinue);
+			cancelBtn.addEventListener("click", onCancel);
+		});
+	});
+}
 
 export function applyThemeById(id: string, saved: SavedTheme[]): void {
 	if (id === "default") applyKilnTheme(null);
@@ -206,30 +259,25 @@ export function openNewThemeModal(
 }
 
 export async function showConfirmImport(
-	fetched: {
-		id: string;
-		userId: number;
-		name: string;
-		accentColor: string;
-		navbarColor: string;
-		fontFamily?: string | null;
-		customCss?: string | null;
-		backgroundImage?: string | null;
-		effects?: ThemeEffect[] | null;
-		navbarIconColor?: string | null;
-		cursorUrl?: string | null;
-		colorTokens?: Record<string, string> | null;
-	},
+	fetched: Extension.GetPublishedThemeApi["data"],
 	creatorName: string,
 	thumbnailUrl: string | null | undefined,
 	onCancel: (() => void) | undefined,
 	onImported: (localId: string) => void | Promise<void>,
 ) {
 	const confirmModal = createModal();
-	const thumbnailHtml = thumbnailUrl
-		? `<img src="${thumbnailUrl}" style="width:100%;height:100%;object-fit:cover;" />`
-		: `<div style="width:100%;height:50%;background:${fetched.navbarColor};"></div>
-			<div style="width:100%;height:50%;background:${fetched.accentColor};"></div>`;
+	confirmModal.addEventListener("close", () => confirmModal.remove());
+	const safeThumbnail = safeHttpUrl(thumbnailUrl);
+	const safeNavbarColor = isValidHex(fetched.navbarColor)
+		? fetched.navbarColor
+		: "#1a1a1a";
+	const safeAccentColor = isValidHex(fetched.accentColor)
+		? fetched.accentColor
+		: "#3bafff";
+	const thumbnailHtml = safeThumbnail
+		? `<img src="${escapeHtml(safeThumbnail)}" style="width:100%;height:100%;object-fit:cover;" />`
+		: `<div style="width:100%;height:50%;background:${safeNavbarColor};"></div>
+			<div style="width:100%;height:50%;background:${safeAccentColor};"></div>`;
 	const hasClickingSound = (fetched.effects ?? []).some(
 		(e) => e.slot === "global" && e.type === "clicking-sound",
 	);
@@ -254,8 +302,8 @@ export async function showConfirmImport(
 			${thumbnailHtml}
 		</div>
 		<div class="mt-2 mb-3">
-			<div class="fw-semibold">${fetched.name}</div>
-			<div class="text-muted small">by ${creatorName}</div>
+			<div class="fw-semibold">${escapeHtml(fetched.name)}</div>
+			<div class="text-muted small">by ${escapeHtml(creatorName)}</div>
 			${
 				notices.length > 0
 					? `<div class="d-flex gap-1 flex-wrap mt-2">
@@ -289,34 +337,32 @@ export async function showConfirmImport(
 
 	confirmModal
 		.querySelector<HTMLButtonElement>("#kiln-confirm-import")!
-		.addEventListener("click", async () => {
-			const current = await _savedThemes.getValue();
-			const alreadyImported = current.find(
-				(t) => t.importedSlug === fetched.id,
-			);
-			const localId = alreadyImported?.id ?? crypto.randomUUID();
+		.addEventListener("click", async (e) => {
+			const importBtn = e.currentTarget as HTMLButtonElement;
+			if (importBtn.disabled) return;
+			importBtn.disabled = true;
+			try {
+				const current = await _savedThemes.getValue();
+				const alreadyImported = current.find(
+					(t) => t.importedSlug === fetched.id,
+				);
+				const localId = alreadyImported?.id ?? crypto.randomUUID();
 
-			if (!alreadyImported) {
-				current.push({
-					id: localId,
-					name: fetched.name,
-					accentColor: fetched.accentColor,
-					navbarColor: fetched.navbarColor,
-					fontFamily: fetched.fontFamily ?? undefined,
-					customCss: fetched.customCss ?? undefined,
-					backgroundImage: fetched.backgroundImage ?? undefined,
-					effects: fetched.effects?.length ? fetched.effects : undefined,
-					navbarIconColor: fetched.navbarIconColor ?? undefined,
-					cursorUrl: fetched.cursorUrl ?? undefined,
-					colorTokens: fetched.colorTokens ?? undefined,
-					importedSlug: fetched.id,
-				});
-				await _savedThemes.setValue(current);
+				if (!alreadyImported) {
+					current.push({
+						id: localId,
+						...publishedThemeFields(fetched),
+						importedSlug: fetched.id,
+					});
+					await _savedThemes.setValue(current);
+				}
+
+				await setActiveTheme(localId);
+				confirmModal.close();
+				await onImported(localId);
+			} finally {
+				importBtn.disabled = false;
 			}
-
-			await setActiveTheme(localId);
-			confirmModal.close();
-			await onImported(localId);
 		});
 
 	confirmModal.showModal();
@@ -329,6 +375,7 @@ export function openThemeGallery(
 	let galleryTotalPages = 1;
 
 	const galleryModal = createModal("lg");
+	galleryModal.addEventListener("close", () => galleryModal.remove());
 
 	function renderGalleryShell() {
 		galleryModal.innerHTML = `
@@ -405,22 +452,29 @@ export function openThemeGallery(
 		const grid = body.querySelector("#kiln-gallery-grid")!;
 		for (const theme of themes) {
 			const creatorName = usernameMap[theme.userId];
+			const safeThumbnail = safeHttpUrl(theme.thumbnailUrl);
+			const safeNavbarColor = isValidHex(theme.navbarColor)
+				? theme.navbarColor
+				: "#1a1a1a";
+			const safeAccentColor = isValidHex(theme.accentColor)
+				? theme.accentColor
+				: "#3bafff";
 			const col = document.createElement("div");
 			col.className = "col-6 col-md-4 col-lg-3";
 			col.innerHTML = `
-				<div class="card h-100" style="cursor:pointer;" data-theme-id="${theme.id}">
+				<div class="card h-100" style="cursor:pointer;" data-theme-id="${escapeHtml(theme.id)}">
 					${
-						theme.thumbnailUrl
-							? `<img src="${theme.thumbnailUrl}" loading="lazy" style="height:96px;width:100%;object-fit:cover;border-radius:var(--bs-card-border-radius) var(--bs-card-border-radius) 0 0;" />`
+						safeThumbnail
+							? `<img src="${escapeHtml(safeThumbnail)}" loading="lazy" style="height:96px;width:100%;object-fit:cover;border-radius:var(--bs-card-border-radius) var(--bs-card-border-radius) 0 0;" />`
 							: `<div style="height:48px;display:flex;border-radius:var(--bs-card-border-radius) var(--bs-card-border-radius) 0 0;overflow:hidden;">
-						<div style="flex:1;background:${theme.navbarColor};"></div>
-						<div style="flex:1;background:${theme.accentColor};"></div>
+						<div style="flex:1;background:${safeNavbarColor};"></div>
+						<div style="flex:1;background:${safeAccentColor};"></div>
 					</div>`
 					}
 					<div class="card-body py-2 px-2">
-						<div class="fw-semibold small text-truncate">${theme.name}</div>
+						<div class="fw-semibold small text-truncate">${escapeHtml(theme.name)}</div>
 						<div class="d-flex align-items-center justify-content-between mt-1">
-							<div class="text-muted text-truncate" style="font-size:0.75em;">by ${creatorName}</div>
+							<div class="text-muted text-truncate" style="font-size:0.75em;">by ${escapeHtml(creatorName)}</div>
 							<button class="kiln-gallery-report btn btn-link p-0 text-muted" title="Report theme" style="font-size:0.7em;flex-shrink:0;line-height:1;">
 								<i class="fas fa-flag"></i>
 							</button>
@@ -447,12 +501,13 @@ export function openThemeGallery(
 				.addEventListener("click", (e) => {
 					e.stopPropagation();
 					const reportModal = createModal();
+					reportModal.addEventListener("close", () => reportModal.remove());
 					reportModal.innerHTML = `
 					<div class="d-flex justify-content-between align-items-center mb-3">
 						<h5 class="mb-0 fw-bold">Report Theme</h5>
 						<button class="btn-close" id="kiln-report-close" aria-label="Close"></button>
 					</div>
-					<p class="small text-muted mb-2">Describe the issue with <strong>${theme.name}</strong>:</p>
+					<p class="small text-muted mb-2">Describe the issue with <strong>${escapeHtml(theme.name)}</strong>:</p>
 					<textarea id="kiln-report-reason" class="form-control form-control-sm mb-3" rows="3" maxlength="500" placeholder="e.g. hides page content, inappropriate imagery…"></textarea>
 					<div id="kiln-report-status" class="small text-danger mb-2" style="min-height:1em;"></div>
 					<div class="d-flex gap-2 justify-content-end">
@@ -493,7 +548,7 @@ export function openThemeGallery(
 							if (result.ok) {
 								reportModal.innerHTML = `
 							<p class="fw-bold mb-1">Report submitted</p>
-							<p class="text-muted small mb-3">Thank you — we'll review this theme shortly.</p>
+							<p class="text-muted small mb-3">Thank you for your report. This theme will be reviewed shortly.</p>
 							<div class="d-flex justify-content-end">
 								<button class="btn btn-sm btn-secondary" id="kiln-report-done">Close</button>
 							</div>
@@ -518,23 +573,37 @@ export function openThemeGallery(
 	loadGalleryPage(1);
 }
 
+const GENERIC_API_ERROR = /^\[Kiln\] API Error: (\d{3})\b/;
+const NO_SESSION_MESSAGE = "[Kiln] No verified session found for user";
+
 export function friendlyApiError(
 	message: string,
 	fallback = "Something went wrong. Please try again.",
 ): string {
-	if (message.includes("401"))
+	const trimmed = message.trim();
+	if (trimmed === NO_SESSION_MESSAGE)
 		return "Your session has expired. Reconnect your account and try again.";
-	if (message.includes("403")) return "You don't have permission to do this.";
-	if (message.includes("404")) return "The requested resource was not found.";
-	if (message.includes("409"))
-		return "A conflict occurred. This name may already be taken.";
-	if (message.includes("422"))
-		return "The theme data is invalid. Check your colors and settings.";
-	if (message.includes("429"))
-		return "Too many requests. Please wait a moment and try again.";
-	if (message.includes("500") || message.includes("503"))
-		return "Server error. Please try again later.";
-	return fallback;
+	const genericMatch = trimmed.match(GENERIC_API_ERROR);
+	if (!genericMatch) return trimmed || fallback;
+	switch (genericMatch[1]) {
+		case "401":
+			return "Your session has expired. Reconnect your account and try again.";
+		case "403":
+			return "You don't have permission to do this.";
+		case "404":
+			return "The requested resource was not found.";
+		case "409":
+			return "A conflict occurred. This name may already be taken.";
+		case "422":
+			return "The theme data is invalid. Check your colors and settings.";
+		case "429":
+			return "Too many requests. Please wait a moment and try again.";
+		case "500":
+		case "503":
+			return "Server error. Please try again later.";
+		default:
+			return fallback;
+	}
 }
 
 export function parseColorAlpha(value: string | number): [string, number] {
@@ -706,8 +775,6 @@ export function renderEffectValueInput(
 	}
 }
 
-/** Reads the value entered for an effect. Resolves to null when it can't be
- *  used yet (a decal that didn't resolve), after saying why in the row. */
 export async function readEffectValue(
 	row: HTMLElement,
 	type: EffectType,

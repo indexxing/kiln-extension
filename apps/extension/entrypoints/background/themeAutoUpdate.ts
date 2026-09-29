@@ -16,12 +16,14 @@
 
 import { Extension } from "@kiln/schemas";
 import { sendMessage } from "@/utils/messaging";
-import { _savedThemes, preferences } from "@/utils/storage";
+import { publishedThemeFields } from "@/utils/publishedTheme";
+import { _savedThemes, preferences, type SavedTheme } from "@/utils/storage";
 import { safeFetch, withApi } from "./shared";
 
 const ALARM_NAME = "kiln-theme-autoupdate";
 
-export function scheduleThemeAutoUpdateCheck() {
+export async function scheduleThemeAutoUpdateCheck() {
+	if (await browser.alarms.get(ALARM_NAME)) return;
 	browser.alarms.create(ALARM_NAME, {
 		delayInMinutes: 1,
 		periodInMinutes: 24 * 60,
@@ -46,6 +48,19 @@ export async function checkForThemeUpdates(): Promise<void> {
 	if (targets.length === 0) return;
 
 	const config = await withApi("kiln_api", "extension");
+
+	const updates = new Map<string, ReturnType<typeof publishedThemeFields>>();
+	for (const t of targets) {
+		try {
+			const res = await safeFetch(
+				`${config.resolvedUrls.extension}themes/${encodeURIComponent(t.importedSlug!)}`,
+				Extension.GetPublishedThemeApi,
+			);
+			updates.set(t.id, publishedThemeFields(res.data));
+		} catch {}
+	}
+	if (updates.size === 0) return;
+
 	const current = await _savedThemes.getValue();
 	const values = await preferences.getPreferences();
 	const activeId = values.enabled.includes("themeCreator")
@@ -55,41 +70,17 @@ export async function checkForThemeUpdates(): Promise<void> {
 	let changed = false;
 	let activeChanged = false;
 
-	for (const t of targets) {
-		let fetched: Extension.GetPublishedThemeApi["data"];
-		try {
-			const res = await safeFetch(
-				`${config.resolvedUrls.extension}themes/${encodeURIComponent(t.importedSlug!)}`,
-				Extension.GetPublishedThemeApi,
-			);
-			fetched = res.data;
-		} catch {
-			continue;
-		}
-
-		const idx = current.findIndex((x) => x.id === t.id);
-		if (idx < 0) continue;
-		const updatedEntry = {
-			...current[idx],
-			name: fetched.name,
-			accentColor: fetched.accentColor,
-			navbarColor: fetched.navbarColor,
-			fontFamily: fetched.fontFamily ?? undefined,
-			customCss: fetched.customCss ?? undefined,
-			backgroundImage: fetched.backgroundImage ?? undefined,
-			effects: fetched.effects?.length ? fetched.effects : undefined,
-			navbarIconColor: fetched.navbarIconColor ?? undefined,
-			cursorUrl: fetched.cursorUrl ?? undefined,
-			colorTokens: fetched.colorTokens ?? undefined,
-		};
-		if (JSON.stringify(updatedEntry) !== JSON.stringify(current[idx])) {
-			current[idx] = updatedEntry;
-			changed = true;
-			if (activeId === t.id) activeChanged = true;
-		}
-	}
+	const next = current.map((entry) => {
+		const fields = updates.get(entry.id);
+		if (!fields) return entry;
+		const updatedEntry: SavedTheme = { ...entry, ...fields };
+		if (JSON.stringify(updatedEntry) === JSON.stringify(entry)) return entry;
+		changed = true;
+		if (activeId === entry.id) activeChanged = true;
+		return updatedEntry;
+	});
 
 	if (!changed) return;
-	await _savedThemes.setValue(current);
+	await _savedThemes.setValue(next);
 	if (activeChanged) await notifyActiveThemeChanged();
 }

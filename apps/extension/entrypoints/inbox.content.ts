@@ -18,7 +18,7 @@ import { _showKilnDisclosures, preferences } from "@/utils/storage";
 import { createKilnDisclosureBadge } from "@/utils/utilities";
 
 export default defineContentScript({
-	matches: ["https://polytoria.com/inbox"],
+	matches: ["https://polytoria.com/inbox", "https://polytoria.com/inbox?*"],
 	main() {
 		Promise.all([
 			preferences.getPreferences(),
@@ -39,15 +39,17 @@ export default defineContentScript({
 });
 
 function expandMessages(showDisclosures: boolean) {
-	const messages = document.getElementById("messages")!;
+	const messages = document.getElementById("messages");
+	if (!messages) return;
 	for (const message of messages.children) {
 		let expanded = false;
 		let div: null | HTMLDivElement = null;
 
-		const viewBtn = message.querySelector('a.btn[href^="/inbox/messages"]')!;
+		const viewBtn = message.querySelector('a.btn[href^="/inbox/messages"]');
+		if (!viewBtn) continue;
 		const messageP = message.querySelector(
 			"p.text-muted.text-truncate",
-		)! as HTMLParagraphElement;
+		) as HTMLParagraphElement | null;
 		const messageLink = messageP?.querySelector("a") as HTMLAnchorElement;
 
 		if (!messageLink) continue;

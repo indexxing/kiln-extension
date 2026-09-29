@@ -16,7 +16,12 @@
 
 import type { Extension } from "@kiln/schemas";
 import { POLYTORIA_CDN_URL } from "@/utils/decal";
-import { FONTS, hexToRgb } from "@/utils/theme";
+import { FONTS, hexToRgb, isValidHex } from "@/utils/theme";
+import {
+	applyAmbient as sharedApplyAmbient,
+	applyCardStyle as sharedApplyCardStyle,
+	applyPointerEffects as sharedApplyPointerEffects,
+} from "@/utils/visualEffects";
 
 export type ProfileLayout = Extension.ProfileLayout;
 export type ProfileUsernameStyle = Extension.ProfileUsernameStyle;
@@ -82,28 +87,6 @@ export function stickerAnchorLabel(key: string): string {
 	return PROFILE_SECTIONS.find((s) => s.key === key)?.label ?? key;
 }
 
-export const CARD_PRESET_OPACITY: Record<ProfileCardStyle["preset"], number> = {
-	solid: 100,
-	glass: 45,
-	outline: 0,
-	gradient: 85,
-};
-
-export const NO_POINTER_EFFECTS_ATTR = "data-kiln-pt-no-effects";
-
-export const AMBIENT_TYPES: {
-	key: ProfileAmbientType;
-	label: string;
-	color: string;
-}[] = [
-	{ key: "snow", label: "Snow", color: "#ffffff" },
-	{ key: "stars", label: "Twinkling Stars", color: "#fff6c8" },
-	{ key: "rain", label: "Rain", color: "#9cc7ff" },
-	{ key: "bubbles", label: "Bubbles", color: "#bfe8ff" },
-	{ key: "fireflies", label: "Fireflies", color: "#d7ff6b" },
-	{ key: "petals", label: "Petals", color: "#ffb7d5" },
-];
-
 const BASE_STYLE_ID = "kiln-pt-base";
 const USERNAME_STYLE_ID = "kiln-pt-username";
 const USERNAME_FONT_ID = "kiln-pt-username-font";
@@ -156,6 +139,7 @@ function ensureBaseStyle() {
 			position: absolute;
 			pointer-events: none;
 			user-select: none;
+			width: max-content;
 			max-width: 220px;
 			padding: 10px 12px;
 			border-radius: 6px;
@@ -284,12 +268,15 @@ function applyUsernameStyle(style: ProfileUsernameStyle | undefined) {
 		return;
 	}
 
+	const color1 = isValidHex(style.color1) ? style.color1 : "#ffffff";
+	const color2 =
+		style.color2 && isValidHex(style.color2) ? style.color2 : color1;
+
 	const rules: string[] = [];
 	if (style.mode === "gradient") {
-		const c2 = style.color2 ?? style.color1;
 		const stops = style.animated
-			? `${style.color1}, ${c2}, ${style.color1}`
-			: `${style.color1}, ${c2}`;
+			? `${color1}, ${color2}, ${color1}`
+			: `${color1}, ${color2}`;
 		rules.push(
 			`background-image: linear-gradient(90deg, ${stops}) !important`,
 			"-webkit-background-clip: text !important",
@@ -304,15 +291,16 @@ function applyUsernameStyle(style: ProfileUsernameStyle | undefined) {
 			);
 	} else {
 		rules.push(
-			`color: ${style.color1} !important`,
-			`-webkit-text-fill-color: ${style.color1} !important`,
+			`color: ${color1} !important`,
+			`-webkit-text-fill-color: ${color1} !important`,
 		);
 	}
 
-	if (style.glowColor && style.glowSize)
-		rules.push(
-			`filter: drop-shadow(0 0 ${style.glowSize}px ${style.glowColor})`,
-		);
+	const glowSize = style.glowSize
+		? Math.min(24, Math.max(0, style.glowSize))
+		: 0;
+	if (style.glowColor && isValidHex(style.glowColor) && glowSize > 0)
+		rules.push(`filter: drop-shadow(0 0 ${glowSize}px ${style.glowColor})`);
 
 	const font =
 		style.fontFamily && style.fontFamily !== "default"
@@ -374,194 +362,8 @@ function applyBanner(banner: ProfileBanner | undefined) {
 	el.style.backgroundPosition = `center ${banner.position}`;
 }
 
-type Particle = {
-	x: number;
-	y: number;
-	size: number;
-	speed: number;
-	drift: number;
-	phase: number;
-	spin: number;
-};
-
-let ambientKey = "";
-let ambientTeardown: (() => void) | null = null;
-
-function stopAmbient() {
-	ambientTeardown?.();
-	ambientTeardown = null;
-	ambientKey = "";
-}
-
 function applyAmbient(ambient: ProfileAmbient | undefined) {
-	const key = ambient ? JSON.stringify(ambient) : "";
-	if (key === ambientKey) return;
-	stopAmbient();
-	if (!ambient) return;
-	if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-	ambientKey = key;
-
-	const type = ambient.type;
-	const color =
-		ambient.color ?? AMBIENT_TYPES.find((t) => t.key === type)?.color ?? "#fff";
-	const [r, g, b] = hexToRgb(color);
-	const rgba = (a: number) => `rgba(${r},${g},${b},${a})`;
-
-	const canvas = document.createElement("canvas");
-	canvas.id = AMBIENT_ID;
-	Object.assign(canvas.style, {
-		position: "fixed",
-		inset: "0",
-		width: "100vw",
-		height: "100vh",
-		pointerEvents: "none",
-		zIndex: "1",
-	});
-	document.body.appendChild(canvas);
-	const ctx = canvas.getContext("2d")!;
-
-	let width = 0;
-	let height = 0;
-	const resize = () => {
-		const dpr = window.devicePixelRatio || 1;
-		width = window.innerWidth;
-		height = window.innerHeight;
-		canvas.width = width * dpr;
-		canvas.height = height * dpr;
-		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-	};
-	resize();
-
-	const perDensity: Record<ProfileAmbientType, number> = {
-		snow: 60,
-		stars: 70,
-		rain: 90,
-		bubbles: 25,
-		fireflies: 20,
-		petals: 25,
-	};
-	const count = Math.round(
-		perDensity[type] * Math.min(3, Math.max(1, ambient.density)),
-	);
-	const spawn = (anywhere: boolean): Particle => {
-		const rising = type === "bubbles" || type === "fireflies";
-		return {
-			x: Math.random() * width,
-			y: anywhere ? Math.random() * height : rising ? height + 20 : -20,
-			size:
-				type === "rain"
-					? 10 + Math.random() * 14
-					: type === "bubbles"
-						? 4 + Math.random() * 10
-						: type === "petals"
-							? 5 + Math.random() * 5
-							: 1 + Math.random() * 2.5,
-			speed:
-				type === "rain"
-					? 9 + Math.random() * 6
-					: type === "stars"
-						? 0
-						: type === "fireflies"
-							? 0.15 + Math.random() * 0.3
-							: 0.4 + Math.random() * 1.1,
-			drift: (Math.random() - 0.5) * 0.6,
-			phase: Math.random() * Math.PI * 2,
-			spin: (Math.random() - 0.5) * 0.04,
-		};
-	};
-	const particles = Array.from({ length: count }, () => spawn(true));
-
-	const tick = (time: number) => {
-		ctx.clearRect(0, 0, width, height);
-		for (let i = 0; i < particles.length; i++) {
-			const p = particles[i];
-			const t = time / 1000;
-			switch (type) {
-				case "snow": {
-					p.y += p.speed;
-					p.x += Math.sin(t + p.phase) * 0.4 + p.drift;
-					ctx.fillStyle = rgba(0.85);
-					ctx.beginPath();
-					ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-					ctx.fill();
-					break;
-				}
-				case "rain": {
-					p.y += p.speed;
-					p.x += p.drift;
-					ctx.strokeStyle = rgba(0.45);
-					ctx.lineWidth = 1;
-					ctx.beginPath();
-					ctx.moveTo(p.x, p.y);
-					ctx.lineTo(p.x + p.drift * 2, p.y + p.size);
-					ctx.stroke();
-					break;
-				}
-				case "stars": {
-					const alpha = 0.25 + 0.75 * Math.abs(Math.sin(t * 0.8 + p.phase));
-					ctx.fillStyle = rgba(alpha);
-					ctx.beginPath();
-					ctx.arc(p.x, p.y, p.size * 0.8, 0, Math.PI * 2);
-					ctx.fill();
-					break;
-				}
-				case "bubbles": {
-					p.y -= p.speed;
-					p.x += Math.sin(t * 1.5 + p.phase) * 0.5;
-					ctx.strokeStyle = rgba(0.55);
-					ctx.lineWidth = 1.2;
-					ctx.beginPath();
-					ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-					ctx.stroke();
-					break;
-				}
-				case "fireflies": {
-					p.y -= p.speed * Math.sin(t * 0.5 + p.phase);
-					p.x += Math.cos(t * 0.7 + p.phase) * 0.6;
-					const alpha = 0.3 + 0.7 * Math.abs(Math.sin(t * 1.3 + p.phase));
-					ctx.shadowBlur = 12;
-					ctx.shadowColor = rgba(alpha);
-					ctx.fillStyle = rgba(alpha);
-					ctx.beginPath();
-					ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-					ctx.fill();
-					ctx.shadowBlur = 0;
-					break;
-				}
-				case "petals": {
-					p.y += p.speed;
-					p.x += Math.sin(t + p.phase) * 0.8 + p.drift;
-					p.phase += p.spin;
-					ctx.save();
-					ctx.translate(p.x, p.y);
-					ctx.rotate(p.phase);
-					ctx.fillStyle = rgba(0.8);
-					ctx.beginPath();
-					ctx.ellipse(0, 0, p.size, p.size * 0.55, 0, 0, Math.PI * 2);
-					ctx.fill();
-					ctx.restore();
-					break;
-				}
-			}
-
-			const out =
-				p.y > height + 30 || p.y < -30 || p.x < -30 || p.x > width + 30;
-			if (out) {
-				particles[i] = type === "fireflies" ? spawn(true) : spawn(false);
-			}
-		}
-		frame = requestAnimationFrame(tick);
-	};
-
-	let frame = 0;
-	window.addEventListener("resize", resize);
-	ambientTeardown = () => {
-		cancelAnimationFrame(frame);
-		window.removeEventListener("resize", resize);
-		canvas.remove();
-	};
-
-	frame = requestAnimationFrame(tick);
+	sharedApplyAmbient(AMBIENT_ID, ambient);
 }
 
 function stickerAnchors(): Map<HTMLElement, string> {
@@ -706,9 +508,9 @@ function renderStickers() {
 			img.dataset.pinId = sticker.id;
 			img.dataset.stickerId = sticker.id;
 			Object.assign(img.style, {
-				width: `${sticker.size}px`,
+				width: `${Math.min(400, Math.max(16, sticker.size))}px`,
 				transform: `translate(-50%, -50%) rotate(${sticker.rotation}deg)`,
-				zIndex: sticker.layer === "back" ? "-1" : "900",
+				zIndex: sticker.layer === "back" ? "-1" : "500",
 			});
 			img.addEventListener("load", schedulePositionPins, { once: true });
 			return img;
@@ -740,7 +542,7 @@ function renderNotes() {
 				color: note.color,
 				background: note.background,
 				transform: `translate(-50%, -50%) rotate(${note.rotation}deg)`,
-				zIndex: note.layer === "back" ? "-1" : "900",
+				zIndex: note.layer === "back" ? "-1" : "500",
 			});
 			return div;
 		}),
@@ -810,15 +612,19 @@ function onEditPointerUp(e: PointerEvent) {
 	dragging = null;
 	document.documentElement.classList.remove("kiln-pt-grabbing");
 
-	window.addEventListener(
-		"click",
-		(click) => {
-			click.preventDefault();
-			click.stopPropagation();
-		},
-		{ capture: true, once: true },
-	);
 	if (!moved) return;
+
+	const suppressClick = (click: MouseEvent) => {
+		click.preventDefault();
+		click.stopPropagation();
+	};
+	window.addEventListener("click", suppressClick, {
+		capture: true,
+		once: true,
+	});
+	requestAnimationFrame(() =>
+		window.removeEventListener("click", suppressClick, { capture: true }),
+	);
 
 	const placement = stickerPlacementAt(
 		e.clientX - offsetX,
@@ -898,95 +704,11 @@ function getProfileRow(): HTMLElement | null {
 	);
 }
 
-let tiltTeardown: (() => void) | null = null;
-
 function applyCardStyle(style: ProfileCardStyle | undefined) {
-	document.getElementById(CARD_STYLE_ID)?.remove();
-	tiltTeardown?.();
-	tiltTeardown = null;
 	const row = getProfileRow();
-	if (!style || !row) {
-		row?.classList.remove(PAGE_CLASS);
-		return;
-	}
-	row.classList.add(PAGE_CLASS);
-
-	const alpha = (style.opacity ?? CARD_PRESET_OPACITY[style.preset]) / 100;
-	const tint = style.tint ? hexToRgb(style.tint).join(",") : null;
-	const base = tint ?? "var(--bs-tertiary-bg-rgb, 33,37,41)";
-	const accent = tint ?? "var(--bs-primary-rgb, 59,175,255)";
-
-	const rules: string[] = [];
-	switch (style.preset) {
-		case "solid":
-			rules.push(`background-color: rgba(${base}, ${alpha}) !important`);
-			break;
-		case "glass":
-			rules.push(
-				`background-color: rgba(${base}, ${alpha}) !important`,
-				"backdrop-filter: blur(12px) saturate(140%)",
-				"-webkit-backdrop-filter: blur(12px) saturate(140%)",
-				"border-color: rgba(255,255,255,0.14) !important",
-			);
-			break;
-		case "outline":
-			rules.push(
-				`background-color: rgba(${base}, ${alpha}) !important`,
-				`border: 1px solid rgba(${accent}, 0.7) !important`,
-			);
-			break;
-		case "gradient":
-			rules.push(
-				"background-color: transparent !important",
-				`background-image: linear-gradient(135deg, rgba(${accent}, ${alpha * 0.45}), rgba(${base}, ${alpha})) !important`,
-			);
-			break;
-	}
-	if (style.radius !== undefined)
-		rules.push(`border-radius: ${style.radius}px !important`);
-
-	let css = `${OUTER_CARD} { ${rules.join("; ")}; }`;
-	const hover = style.hover ?? "none";
-	if (hover !== "none")
-		css += `\n${OUTER_CARD} { transition: transform 0.2s ease, box-shadow 0.2s ease; }`;
-	if (hover === "lift")
-		css += `\n${OUTER_CARD}:hover { transform: translateY(-4px); box-shadow: 0 12px 28px rgba(0,0,0,0.35); }`;
-	if (hover === "glow")
-		css += `\n${OUTER_CARD}:hover { box-shadow: 0 0 0 1px rgba(${accent}, 0.6), 0 0 22px rgba(${accent}, 0.35); }`;
-
-	const el = document.createElement("style");
-	el.id = CARD_STYLE_ID;
-	el.textContent = css;
-	document.head.appendChild(el);
-
-	if (hover === "tilt") tiltTeardown = enableTilt(row);
-}
-
-function enableTilt(row: HTMLElement): () => void {
-	let tilted: HTMLElement | null = null;
-	const reset = () => {
-		if (tilted) tilted.style.transform = "";
-		tilted = null;
-	};
-	const onMove = (e: PointerEvent) => {
-		const card = (e.target as Element | null)?.closest<HTMLElement>(
-			".card:not(.card .card)",
-		);
-		if (card !== tilted) reset();
-		if (!card || !row.contains(card)) return;
-		tilted = card;
-		const r = card.getBoundingClientRect();
-		const px = (e.clientX - r.left) / r.width - 0.5;
-		const py = (e.clientY - r.top) / r.height - 0.5;
-		card.style.transform = `perspective(900px) rotateX(${(-py * 6).toFixed(2)}deg) rotateY(${(px * 6).toFixed(2)}deg)`;
-	};
-	row.addEventListener("pointermove", onMove);
-	row.addEventListener("pointerleave", reset);
-	return () => {
-		row.removeEventListener("pointermove", onMove);
-		row.removeEventListener("pointerleave", reset);
-		reset();
-	};
+	row?.classList.toggle(PAGE_CLASS, !!style);
+	if (!row) return;
+	sharedApplyCardStyle(CARD_STYLE_ID, style, OUTER_CARD, row);
 }
 
 const AVATAR_BACKDROP_ID = "kiln-pt-avatar-backdrop";
@@ -1053,269 +775,8 @@ function applyAvatarBackdrop(backdrop: ProfileAvatarBackdrop | undefined) {
 	setAvatarIframeTransparent(!!background);
 }
 
-type Spark = {
-	kind: "star" | "heart" | "ring" | "rect" | "dot" | "glow";
-	x: number;
-	y: number;
-	vx: number;
-	vy: number;
-	gravity: number;
-	size: number;
-	grow: number;
-	life: number;
-	maxLife: number;
-	rotation: number;
-	spin: number;
-	color: string;
-};
-
-const POINTER_CANVAS_ID = "kiln-pt-pointer";
-let pointerKey = "";
-let pointerTeardown: (() => void) | null = null;
-
-function drawStar(ctx: CanvasRenderingContext2D, r: number) {
-	ctx.beginPath();
-	for (let i = 0; i < 8; i++) {
-		const radius = i % 2 === 0 ? r : r * 0.35;
-		const angle = (Math.PI / 4) * i;
-		ctx.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
-	}
-	ctx.closePath();
-	ctx.fill();
-}
-
-function drawHeart(ctx: CanvasRenderingContext2D, size: number) {
-	const s = size / 2;
-	ctx.beginPath();
-	ctx.moveTo(0, s * 0.6);
-	ctx.bezierCurveTo(-s * 1.2, -s * 0.2, -s * 0.5, -s * 1.1, 0, -s * 0.4);
-	ctx.bezierCurveTo(s * 0.5, -s * 1.1, s * 1.2, -s * 0.2, 0, s * 0.6);
-	ctx.fill();
-}
-
 function applyPointerEffects(effects: ProfilePointerEffects | undefined) {
-	const active = !!effects && (!!effects.click || !!effects.trail);
-	const key = active ? JSON.stringify(effects) : "";
-	if (key === pointerKey) return;
-	pointerTeardown?.();
-	pointerTeardown = null;
-	pointerKey = key;
-	if (!active || window.matchMedia("(prefers-reduced-motion: reduce)").matches)
-		return;
-
-	const canvas = document.createElement("canvas");
-	canvas.id = POINTER_CANVAS_ID;
-	Object.assign(canvas.style, {
-		position: "fixed",
-		inset: "0",
-		width: "100vw",
-		height: "100vh",
-		pointerEvents: "none",
-		zIndex: "99990",
-	});
-	document.body.appendChild(canvas);
-	const ctx = canvas.getContext("2d")!;
-
-	const resize = () => {
-		const dpr = window.devicePixelRatio || 1;
-		canvas.width = window.innerWidth * dpr;
-		canvas.height = window.innerHeight * dpr;
-		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-	};
-	resize();
-
-	const color = () =>
-		effects!.color ??
-		(getComputedStyle(document.documentElement)
-			.getPropertyValue("--bs-primary")
-			.trim() ||
-			"#ffffff");
-	const confettiColor = () =>
-		effects!.color ?? `hsl(${Math.floor(Math.random() * 360)}, 90%, 62%)`;
-
-	const sparks: Spark[] = [];
-	const spark = (partial: Partial<Spark> & Pick<Spark, "kind" | "x" | "y">) =>
-		sparks.push({
-			vx: 0,
-			vy: 0,
-			gravity: 0,
-			size: 6,
-			grow: 0,
-			life: 0,
-			maxLife: 40,
-			rotation: 0,
-			spin: 0,
-			color: color(),
-			...partial,
-		});
-
-	let frame = 0;
-	const tick = () => {
-		ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-		for (let i = sparks.length - 1; i >= 0; i--) {
-			const p = sparks[i];
-			p.life++;
-			if (p.life >= p.maxLife) {
-				sparks.splice(i, 1);
-				continue;
-			}
-			p.vy += p.gravity;
-			p.x += p.vx;
-			p.y += p.vy;
-			p.size = Math.max(0, p.size + p.grow);
-			p.rotation += p.spin;
-
-			ctx.save();
-			ctx.globalAlpha = 1 - p.life / p.maxLife;
-			ctx.translate(p.x, p.y);
-			ctx.rotate(p.rotation);
-			ctx.fillStyle = p.color;
-			ctx.strokeStyle = p.color;
-			switch (p.kind) {
-				case "star":
-					drawStar(ctx, p.size);
-					break;
-				case "heart":
-					drawHeart(ctx, p.size);
-					break;
-				case "ring":
-					ctx.lineWidth = 2;
-					ctx.beginPath();
-					ctx.arc(0, 0, p.size, 0, Math.PI * 2);
-					ctx.stroke();
-					break;
-				case "rect":
-					ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
-					break;
-				case "dot":
-					ctx.beginPath();
-					ctx.arc(0, 0, p.size, 0, Math.PI * 2);
-					ctx.fill();
-					break;
-				case "glow": {
-					const g = ctx.createRadialGradient(0, 0, 0, 0, 0, p.size);
-					g.addColorStop(0, p.color);
-					g.addColorStop(1, "transparent");
-					ctx.fillStyle = g;
-					ctx.beginPath();
-					ctx.arc(0, 0, p.size, 0, Math.PI * 2);
-					ctx.fill();
-					break;
-				}
-			}
-			ctx.restore();
-		}
-		frame = sparks.length ? requestAnimationFrame(tick) : 0;
-	};
-	const kick = () => {
-		if (!frame) frame = requestAnimationFrame(tick);
-	};
-
-	const ignored = (target: EventTarget | null) =>
-		target instanceof Element &&
-		!!target.closest(`[${NO_POINTER_EFFECTS_ATTR}]`);
-
-	const onDown = (e: PointerEvent) => {
-		if (e.button !== 0 || ignored(e.target)) return;
-		const { clientX: x, clientY: y } = e;
-		const rand = (min: number, max: number) =>
-			min + Math.random() * (max - min);
-		switch (effects!.click) {
-			case "sparkles":
-				for (let i = 0; i < 10; i++) {
-					const a = (Math.PI * 2 * i) / 10 + rand(-0.2, 0.2);
-					const v = rand(1.5, 3.5);
-					spark({
-						kind: "star",
-						x,
-						y,
-						vx: Math.cos(a) * v,
-						vy: Math.sin(a) * v,
-						size: rand(3, 6),
-						maxLife: 34,
-						spin: 0.15,
-					});
-				}
-				break;
-			case "hearts":
-				for (let i = 0; i < 6; i++)
-					spark({
-						kind: "heart",
-						x,
-						y,
-						vx: rand(-1.6, 1.6),
-						vy: rand(-3, -1.5),
-						size: rand(10, 16),
-						maxLife: 48,
-					});
-				break;
-			case "ripples":
-				spark({ kind: "ring", x, y, size: 4, grow: 1.4, maxLife: 32 });
-				spark({ kind: "ring", x, y, size: 1, grow: 0.9, maxLife: 40 });
-				break;
-			case "confetti":
-				for (let i = 0; i < 18; i++)
-					spark({
-						kind: "rect",
-						x,
-						y,
-						vx: rand(-4, 4),
-						vy: rand(-6, -2),
-						gravity: 0.25,
-						size: rand(6, 10),
-						maxLife: 60,
-						spin: rand(-0.3, 0.3),
-						color: confettiColor(),
-					});
-				break;
-		}
-		kick();
-	};
-
-	let lastX = -1000;
-	let lastY = -1000;
-	const onMove = (e: PointerEvent) => {
-		if (!effects!.trail || ignored(e.target)) return;
-		const { clientX: x, clientY: y } = e;
-		if (Math.hypot(x - lastX, y - lastY) < 14) return;
-		lastX = x;
-		lastY = y;
-		switch (effects!.trail) {
-			case "sparkles":
-				spark({
-					kind: "star",
-					x,
-					y,
-					vx: (Math.random() - 0.5) * 0.8,
-					vy: 0.4,
-					size: 4,
-					maxLife: 28,
-					spin: 0.1,
-				});
-				break;
-			case "dots":
-				spark({ kind: "dot", x, y, size: 3.5, grow: -0.12, maxLife: 26 });
-				break;
-			case "hearts":
-				spark({ kind: "heart", x, y, vy: -0.6, size: 9, maxLife: 32 });
-				break;
-			case "glow":
-				spark({ kind: "glow", x, y, size: 16, grow: -0.3, maxLife: 30 });
-				break;
-		}
-		kick();
-	};
-
-	window.addEventListener("resize", resize);
-	window.addEventListener("pointerdown", onDown, { passive: true });
-	window.addEventListener("pointermove", onMove, { passive: true });
-	pointerTeardown = () => {
-		cancelAnimationFrame(frame);
-		window.removeEventListener("resize", resize);
-		window.removeEventListener("pointerdown", onDown);
-		window.removeEventListener("pointermove", onMove);
-		canvas.remove();
-	};
+	sharedApplyPointerEffects("kiln-pt-pointer", effects);
 }
 
 export function applyProfileExtras(

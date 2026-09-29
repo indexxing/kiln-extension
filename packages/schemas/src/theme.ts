@@ -849,6 +849,9 @@ export function buildThemeCSS(
 	const [accentH] = rgbToHsl(ar, ag, ab);
 	const hueRotate = Math.round(((accentH - LOGO_BASE_HUE + 1) % 1) * 360);
 
+	const bodyText = getContrastColor(navbarColor);
+	const [btr, btg, btb] = hexToRgb(bodyText);
+
 	return `
 :root {
   --bs-primary: ${accentColor};
@@ -861,6 +864,8 @@ export function buildThemeCSS(
 
   --bs-body-bg: ${navbarColor};
   --bs-body-bg-rgb: ${nr}, ${ng}, ${nb};
+  --bs-body-color: ${bodyText};
+  --bs-body-color-rgb: ${btr}, ${btg}, ${btb};
 
   --bs-secondary-bg: ${secondaryBg};
   --bs-secondary-bg-rgb: ${sr}, ${sg}, ${sb};
@@ -869,6 +874,8 @@ export function buildThemeCSS(
 
   --bs-border-color: ${borderColor};
   --bs-border-color-translucent: ${borderColor}40;
+
+  --pt-inset: ${secondaryBg};
 }
 
 .btn-primary {
@@ -902,7 +909,7 @@ export function buildThemeCSS(
 }
 
 #feed-post-button {
-  --bs-btn-color: #f6f6f6;
+  --bs-btn-color: ${bodyText};
   --bs-btn-border-color: ${accentColor};
   --bs-btn-hover-color: ${btnText};
   --bs-btn-hover-bg: ${accentColor};
@@ -932,7 +939,7 @@ export function buildThemeCSS(
 .nav-tabs { border-bottom-color: ${borderColor} !important; }
 .nav-tabs .nav-link {
   border-color: transparent !important;
-  color: #f6f6f6 !important;
+  color: ${bodyText} !important;
 }
 .nav-tabs .nav-link:hover {
   border-color: ${borderColor} ${borderColor} ${borderColor} !important;
@@ -963,20 +970,22 @@ export function buildThemeCSS(
 .page-link {
   background-color: ${cardBg} !important;
   border-color: ${borderColor} !important;
-  color: #f6f6f6 !important;
+  color: ${bodyText} !important;
 }
 .page-link:hover {
   background-color: ${secondaryBg} !important;
   border-color: ${borderColor} !important;
-  color: #f6f6f6 !important;
+  color: ${bodyText} !important;
 }
 .page-item.disabled .page-link {
   background-color: ${navbarColor} !important;
   border-color: ${borderColor} !important;
-  color: rgba(246, 246, 246, 0.35) !important;
+  color: rgba(${btr}, ${btg}, ${btb}, 0.35) !important;
 }
 
 .bg-navbar { background-color: ${chromeBg} !important; }
+
+.bg-inset { background-color: ${secondaryBg} !important; }
 
 :root { --bs-dark-rgb: ${cr}, ${cg}, ${cb}; }
 
@@ -985,7 +994,7 @@ export function buildThemeCSS(
 .form-select {
   background-color: ${cardBg} !important;
   border-color: ${borderColor} !important;
-  color: #f6f6f6 !important;
+  color: ${bodyText} !important;
 }
 .form-select:focus {
   border-color: ${accentColor} !important;
@@ -1073,9 +1082,9 @@ html .input-group.nav-search #search-addon,
 html .input-group.nav-search input#gsearch {
   background: ${cardBg} !important;
   border-color: ${borderColor} !important;
-  color: #f6f6f6 !important;
+  color: ${bodyText} !important;
 }
-#gsearch::placeholder { color: rgba(246, 246, 246, 0.5) !important; }
+#gsearch::placeholder { color: rgba(${btr}, ${btg}, ${btb}, 0.5) !important; }
 html .input-group.nav-search input#gsearch:focus {
   border-color: ${accentColor} !important;
   box-shadow: 0 0 0 0.25rem rgba(${ar}, ${ag}, ${ab}, 0.25) !important;
@@ -1085,7 +1094,7 @@ html .input-group.nav-search input#gsearch:focus {
 .store-accessory-btn {
   background-color: ${cardBg};
   border: 1px solid ${borderColor};
-  color: #f6f6f6;
+  color: ${bodyText};
 }
 .store-type-btn:hover,
 .store-type-btn.active,
@@ -1139,7 +1148,7 @@ html .input-group.nav-search input#gsearch:focus {
 .form-control {
   background-color: ${cardBg} !important;
   border-color: ${borderColor} !important;
-  color: #f6f6f6 !important;
+  color: ${bodyText} !important;
 }
 .form-control:focus {
   background-color: ${secondaryBg} !important;
@@ -1170,22 +1179,22 @@ html .input-group.nav-search input#gsearch:focus {
 
 .swal2-popup {
   background-color: ${cardBg} !important;
-  color: #f6f6f6 !important;
+  color: ${bodyText} !important;
   border: 1px solid ${borderColor} !important;
 }
 .swal2-title,
-.swal2-html-container { color: #f6f6f6 !important; }
+.swal2-html-container { color: ${bodyText} !important; }
 .swal2-confirm {
   background-color: ${accentColor} !important;
   border-color: ${accentColor} !important;
   color: ${btnText} !important;
 }
-.swal2-cancel { background-color: ${secondaryBg} !important; color: #f6f6f6 !important; }
+.swal2-cancel { background-color: ${secondaryBg} !important; color: ${bodyText} !important; }
 .swal2-input,
 .swal2-textarea {
   background-color: ${secondaryBg} !important;
   border-color: ${borderColor} !important;
-  color: #f6f6f6 !important;
+  color: ${bodyText} !important;
 }
 
 .thumbup-button.active,
@@ -1197,7 +1206,7 @@ html .input-group.nav-search input#gsearch:focus {
 }
 
 #reportForm .bg-dark { background-color: ${cardBg} !important; }
-code.bg-dark { background-color: ${navbarColor} !important; color: #f6f6f6 !important; }
+code.bg-dark { background-color: ${navbarColor} !important; color: ${bodyText} !important; }
 
 hr { border-color: ${borderColor} !important; opacity: 1; }
 
@@ -1220,17 +1229,17 @@ ${(() => {
 }
 
 .btn-secondary {
-  --bs-btn-color: #f6f6f6;
+  --bs-btn-color: ${bodyText};
   --bs-btn-bg: ${secondaryBg};
   --bs-btn-border-color: ${borderColor};
-  --bs-btn-hover-color: #f6f6f6;
+  --bs-btn-hover-color: ${bodyText};
   --bs-btn-hover-bg: ${cardBg};
   --bs-btn-hover-border-color: ${borderColor};
   --bs-btn-focus-shadow-rgb: ${bcr}, ${bcg}, ${bcb};
-  --bs-btn-active-color: #f6f6f6;
+  --bs-btn-active-color: ${bodyText};
   --bs-btn-active-bg: ${cardCap};
   --bs-btn-active-border-color: ${borderColor};
-  --bs-btn-disabled-color: #f6f6f6;
+  --bs-btn-disabled-color: ${bodyText};
   --bs-btn-disabled-bg: ${secondaryBg};
   --bs-btn-disabled-border-color: ${borderColor};
 }
@@ -1238,7 +1247,7 @@ ${(() => {
 .user-post-bubble {
   background-color: ${cardBg} !important;
   border: 1px solid ${borderColor} !important;
-  color: #f6f6f6 !important;
+  color: ${bodyText} !important;
 }
 .user-post-bubble-0,
 .user-post-bubble-1,

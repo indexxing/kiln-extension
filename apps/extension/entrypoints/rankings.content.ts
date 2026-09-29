@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import { escapeHtml, safeHttpUrl } from "@/utils/escapeHtml";
 import { preferences } from "@/utils/storage";
 
 export default defineContentScript({
@@ -70,22 +71,24 @@ function renderLeaderboardCard(data: {
 	value: string;
 	valueColor?: string;
 }) {
+	const thumbnailUrl = data.thumbnail ? safeHttpUrl(data.thumbnail) : "";
+	const href = escapeHtml(data.href);
 	return `
 		<div class="card mb-2 p-2">
 			<div class="row">
 				<div class="col-auto">
-					<a href="${data.href}">
-						<img src="${data.thumbnail ?? ""}" width="72" height="72" class="rounded-circle border border-2 border-secondary">
+					<a href="${href}">
+						<img src="${escapeHtml(thumbnailUrl)}" width="72" height="72" class="rounded-circle border border-2 border-secondary">
 					</a>
 				</div>
 				<div class="col d-flex align-items-center">
-					<a href="${data.href}" class="text-reset">
-						<h5 class="mb-0">${data.name}</h5>
+					<a href="${href}" class="text-reset">
+						<h5 class="mb-0">${escapeHtml(data.name)}</h5>
 						<h6 class="text-muted mb-0">#${data.rank}</h6>
 					</a>
 				</div>
-				<div class="col-auto d-flex align-items-center"${data.valueColor ? ` style="color:${data.valueColor};font-weight:600;"` : ""}>
-					${data.value}
+				<div class="col-auto d-flex align-items-center"${data.valueColor ? ` style="color:${escapeHtml(data.valueColor)};font-weight:600;"` : ""}>
+					${escapeHtml(data.value)}
 				</div>
 			</div>
 		</div>
@@ -139,7 +142,10 @@ async function placeReviewLeaderboards() {
 		activateTab(urlCategory as LeaderboardTabId);
 	}
 
+	let activeRequestId = 0;
+
 	async function activateTab(tabId: LeaderboardTabId) {
+		const requestId = ++activeRequestId;
 		setActiveTab(tabId);
 		sendMessage("setNativeRankingsLoadingPaused", true);
 
@@ -153,19 +159,21 @@ async function placeReviewLeaderboards() {
 		try {
 			switch (tabId) {
 				case "kilntopreviewers":
-					await renderTopReviewers();
+					await renderTopReviewers(requestId);
 					break;
 				case "kilnratedworldshighest":
-					await renderRatedWorlds();
+					await renderRatedWorlds(requestId);
 					break;
 			}
 		} finally {
-			if (spinner) spinner.style.display = "none";
+			if (requestId === activeRequestId && spinner)
+				spinner.style.display = "none";
 		}
 	}
 
-	async function renderTopReviewers() {
+	async function renderTopReviewers(requestId: number) {
 		const result = await sendMessage("getTopReviewers");
+		if (requestId !== activeRequestId) return;
 		if (!result.ok) {
 			content!.innerHTML = `<p class="text-muted text-center">Couldn't load the leaderboard.</p>`;
 			return;
@@ -184,8 +192,9 @@ async function placeReviewLeaderboards() {
 			.join("");
 	}
 
-	async function renderRatedWorlds() {
+	async function renderRatedWorlds(requestId: number) {
 		const result = await sendMessage("getRatedWorldsLeaderboard", "highest");
+		if (requestId !== activeRequestId) return;
 		if (!result.ok) {
 			content!.innerHTML = `<p class="text-muted text-center">Couldn't load the leaderboard.</p>`;
 			return;
@@ -195,6 +204,7 @@ async function placeReviewLeaderboards() {
 		const places = await Promise.all(
 			entries.map((entry) => sendMessage("getPlace", entry.placeId)),
 		);
+		if (requestId !== activeRequestId) return;
 
 		content!.innerHTML = entries
 			.map((entry, i) => {

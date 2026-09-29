@@ -36,7 +36,11 @@ export interface ProtocolMap {
 	themeAutoUpdated(): void;
 	downloadPlaceFile(id: number): void;
 	getModelFile(id: number): string;
-	joinPlace(data: { placeId: number; serverId?: number; version: 1 | 2 }): void;
+	joinPlace(data: {
+		placeId: number;
+		serverId?: number;
+		version: 1 | 2;
+	}): Promise<Result<boolean>>;
 	registerBootstrapElements(): void;
 	getStreakFreezeCount(): Promise<Result<number | null>>;
 	disableFeedAutoScroll(): void;
@@ -149,7 +153,7 @@ export interface ProtocolMap {
 	rollRandomPlace(): Promise<Result<void>>;
 	rollRandomPlaceStatus(status: string): void;
 
-	rejectTrade(tradeId: number): void;
+	rejectTrade(tradeId: number): Promise<Result<boolean>>;
 	getPolytoriaTradeItems(itemIds: number[]): Promise<
 		Result<
 			{
@@ -244,6 +248,8 @@ export interface ProtocolMap {
 		userId: number,
 	): Promise<Result<Extension.AuthStartApi>>;
 	finishKilnVerification(userId: number): Promise<Result<Extension.AuthEndApi>>;
+	getProfileBio(): Promise<Result<string>>;
+	updateProfileBio(description: string): Promise<Result<boolean>>;
 	terminateKilnSession(userId: number): Promise<Result<null>>;
 	getKilnSessions(userId: number): Promise<Result<Extension.AuthSessionsApi>>;
 	terminateKilnSessionById(data: {
@@ -262,7 +268,13 @@ export interface ProtocolMap {
 		effects?: import("./types").ThemeEffect[];
 		existingId?: string;
 		navbarIconColor?: string;
+		cursorUrl?: string;
+		backgroundOverlayColor?: string;
+		backgroundOverlayOpacity?: number;
 		colorTokens?: Record<string, string>;
+		ambient?: Extension.ProfileAmbient;
+		cardStyle?: Extension.ProfileCardStyle;
+		pointerEffects?: Extension.ProfilePointerEffects;
 	}): Promise<Result<Extension.PublishThemeApi>>;
 	getPublishedTheme(
 		id: string,
@@ -326,6 +338,18 @@ export interface ProtocolMap {
 		id: string;
 		action: "approve" | "decline";
 	}): Promise<Result<Extension.AdminReviewThemeApi>>;
+	adminGetPendingProfileThemes(
+		userId: number,
+	): Promise<Result<Extension.AdminPendingProfileThemesApi>>;
+	adminReviewProfileTheme(data: {
+		userId: number;
+		targetUserId: number;
+		action: "approve" | "decline";
+	}): Promise<Result<Extension.ProfileThemeOkApi>>;
+	adminDeleteProfileTheme(data: {
+		userId: number;
+		targetUserId: number;
+	}): Promise<Result<Extension.ProfileThemeOkApi>>;
 	adminListConfigs(
 		userId: number,
 	): Promise<Result<Extension.AdminConfigListApi>>;
@@ -384,6 +408,7 @@ export interface ProtocolMap {
 		userId: number;
 		id: string;
 	}): Promise<Result<Extension.AdminDeleteFeedbackApi>>;
+	adminGetStats(userId: number): Promise<Result<Extension.AdminStatsApi>>;
 	reportError(entry: Omit<KilnErrorLogEntry, "timestamp">): void;
 
 	getAvatarOutfits(userId: number): Promise<Result<Extension.AvatarOutfitsApi>>;
@@ -437,6 +462,19 @@ export interface ProtocolMap {
 		order: "highest" | "lowest",
 	): Promise<Result<Extension.RatedWorldsLeaderboardApi>>;
 	setNativeRankingsLoadingPaused(paused: boolean): void;
+
+	getMigratablePlaceReviews(
+		userId: number,
+	): Promise<Result<Extension.MigratablePlaceReviewsApi>>;
+	markPlaceReviewMigrated(data: {
+		userId: number;
+		reviewId: string;
+	}): Promise<Result<Extension.MigratePlaceReviewApi>>;
+	createPolytoriaPlaceReview(data: {
+		placeId: number;
+		value: "like" | "dislike";
+		content: string;
+	}): Promise<Result<{ id: string | null }>>;
 
 	getKilnNotifications(
 		userId: number,

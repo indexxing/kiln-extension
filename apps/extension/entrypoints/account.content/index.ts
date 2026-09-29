@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import { runFeature } from "@/utils/runFeature";
 import { _showKilnDisclosures, preferences } from "@/utils/storage";
 import * as avatar from "./avatar";
 import * as friends from "./friends";
@@ -34,57 +35,71 @@ export default defineContentScript({
 				}
 
 				if (window.location.pathname.includes("settings")) {
-					settings.injectKilnTab();
+					runFeature("injectKilnTab", () => settings.injectKilnTab());
 					if (window.location.pathname.includes("kiln-debug")) {
-						settings.kilnDebug();
+						runFeature("kilnDebug", () => settings.kilnDebug());
 					} else if (window.location.pathname.includes("kiln")) {
-						settings.kilnSettings();
+						runFeature("kilnSettings", () => settings.kilnSettings());
 					} else if (
 						window.location.pathname.includes("account") &&
 						values.enabled.includes("securityKeyRenaming")
 					) {
-						settings.securityKeyRenaming();
+						runFeature("securityKeyRenaming", () =>
+							settings.securityKeyRenaming(),
+						);
 					} else if (
 						window.location.pathname.includes("transactions") &&
 						values.enabled.includes("irlBrickPrice")
 					) {
-						transactions.irlBrickPrice(
-							values.config.irlBrickPrice.currency,
-							showDisclosures,
+						runFeature("irlBrickPrice", () =>
+							transactions.irlBrickPrice(
+								values.config.irlBrickPrice.currency,
+								showDisclosures,
+							),
 						);
 					} else {
-						settings.checkForVerificationCode(user.userId);
+						runFeature("checkForVerificationCode", () =>
+							settings.checkForVerificationCode(user.userId),
+						);
 					}
 				} else if (window.location.pathname.includes("friends")) {
 					if (values.enabled.includes("improvedFriendLists")) {
-						friends.actions(showDisclosures);
+						runFeature("improvedFriendLists", () =>
+							friends.actions(showDisclosures),
+						);
 					}
 				} else if (window.location.pathname.includes("avatar")) {
 					if (values.enabled.includes("avatarSandbox")) {
 						if (new URLSearchParams(window.location.search).has("sandbox")) {
 							document.title = "Kiln Character Sandbox";
-							avatar.avatarSandbox();
+							runFeature("avatarSandbox", () => avatar.avatarSandbox());
 
 							return;
 						} else {
-							const sandboxButton = document.createElement("a");
-							sandboxButton.classList.value =
-								"btn btn-outline-success w-100 mt-3";
-							sandboxButton.href = "?sandbox=true";
-							sandboxButton.innerHTML =
-								'<i class="fas fa-shirt"></i> Kiln Character Sandbox';
-							document
-								.getElementById("cont-move")!
-								.parentElement!.appendChild(sandboxButton);
+							runFeature("avatarSandboxButton", () => {
+								const contMove = document.getElementById("cont-move");
+								if (!contMove?.parentElement) return;
+								const sandboxButton = document.createElement("a");
+								sandboxButton.classList.value =
+									"btn btn-outline-success w-100 mt-3";
+								sandboxButton.href = "?sandbox=true";
+								sandboxButton.innerHTML =
+									'<i class="fas fa-shirt"></i> Kiln Character Sandbox';
+								contMove.parentElement.appendChild(sandboxButton);
+							});
 						}
 					}
 
 					if (values.enabled.includes("customBodyColorHexCodes")) {
-						avatar.customBodyColorHexCodes(showDisclosures);
+						runFeature("customBodyColorHexCodes", () =>
+							avatar.customBodyColorHexCodes(showDisclosures),
+						);
 					}
 
 					if (values.enabled.includes("outfitManagement")) {
-						avatar.outfitManagement(showDisclosures);
+						runFeature("outfitManagement", () =>
+							avatar.outfitManagement(showDisclosures),
+						);
 					}
 				}
 			});

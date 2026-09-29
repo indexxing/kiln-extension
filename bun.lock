@@ -16,6 +16,7 @@
       "name": "@kiln/api",
       "dependencies": {
         "@aws-sdk/client-s3": "^3.1103.0",
+        "@elysia/openapi": "^1.4.16",
         "@elysiajs/cors": "^1.4.1",
         "@elysiajs/eden": "^1.4.6",
         "@elysiajs/jwt": "^1.4.0",
@@ -47,7 +48,7 @@
     },
     "apps/extension": {
       "name": "@kiln/extension",
-      "version": "2.11.0",
+      "version": "2.13.0",
       "dependencies": {
         "@kiln/schemas": "workspace:*",
         "@types/bun": "^1.3.13",
@@ -189,6 +190,8 @@
     "@dimforge/rapier3d-compat": ["@dimforge/rapier3d-compat@0.12.0", "", {}, "sha512-uekIGetywIgopfD97oDL5PfeezkFpNhwlzlaEYNOA0N6ghdsOvh/HYjSMek5Q2O1PYvRSDFcqFVJl4r4ZBwOow=="],
 
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
+
+    "@elysia/openapi": ["@elysia/openapi@1.4.16", "", { "peerDependencies": { "@sinclair/typebox": ">= 0.34.0 < 1", "elysia": ">= 1.4.0", "typescript": ">= 5.0.0" } }, "sha512-bAaU1yOn8oxTv+EdzrW8z7RccUQ/y9zeMEPLz+K6lyc4KJ2MLTT0QI9H7Inh2O6N8PDv2nfXGFH8YDfJUOLPOQ=="],
 
     "@elysiajs/cors": ["@elysiajs/cors@1.4.1", "", { "peerDependencies": { "elysia": ">= 1.4.0" } }, "sha512-lQfad+F3r4mNwsxRKbXyJB8Jg43oAOXjRwn7sKUL6bcOW3KjUqUimTS+woNpO97efpzjtDE0tEjGk9DTw8lqTQ=="],
 

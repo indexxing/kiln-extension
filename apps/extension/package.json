@@ -2,7 +2,7 @@
 	"name": "@kiln/extension",
 	"description": "Polytoria QOL browser extension",
 	"license": "GPL-3.0-only",
-	"version": "2.13.0",
+	"version": "2.13.2",
 	"type": "module",
 	"scripts": {
 		"predev": "bun scripts/gen-feature-ids.ts && bun scripts/gen-feature-paths.ts",

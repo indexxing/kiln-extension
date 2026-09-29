@@ -15,12 +15,18 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { Extension } from "@kiln/schemas";
+import type { Runtime } from "webextension-polyfill";
 import type z from "zod";
 import fallbackConfig from "@/utils/static/fallbackConfig.json";
 import metadata from "@/utils/static/metadata.json";
 import { apiSessions } from "@/utils/storage";
 import type { ApiTypes, Result } from "@/utils/types";
-import { getFlag, pullCache, withJitter } from "@/utils/utilities";
+import {
+	expireKVCache,
+	getFlag,
+	pullCache,
+	withJitter,
+} from "@/utils/utilities";
 import { logError } from "./errors";
 
 export const KILN_API_BASE = metadata.endpoints.extension;
@@ -197,14 +203,18 @@ export async function fetchConfig(): Promise<FetchedConfig> {
 	);
 }
 
+export async function requireApi(apiName: ApiTypes): Promise<FetchedConfig> {
+	const config = await fetchConfig();
+	if (!config.apiAvailability[apiName]) throw new ApiDisabledError(apiName);
+	return config;
+}
+
 export async function withApi(
 	rateKey: string,
 	apiName: ApiTypes,
 ): Promise<FetchedConfig> {
 	checkRateLimit(rateKey, 100);
-	const config = await fetchConfig();
-	if (!config.apiAvailability[apiName]) throw new ApiDisabledError(apiName);
-	return config;
+	return requireApi(apiName);
 }
 
 export async function handle<T>(fn: () => Promise<T>): Promise<Result<T>> {
@@ -238,13 +248,7 @@ export async function withAuthSession<T>(
 	try {
 		return await fn(session.accessToken, config);
 	} catch (err) {
-		if (
-			!(
-				err instanceof ApiHttpError &&
-				(err.status === 401 || err.status === 403)
-			)
-		)
-			throw err;
+		if (!(err instanceof ApiHttpError && err.status === 401)) throw err;
 		if (!session.refreshToken) throw new NoSessionError();
 
 		const refreshed = await dedupe(`refreshSession:${userId}`, async () => {
@@ -252,29 +256,53 @@ export async function withAuthSession<T>(
 			const latestSession = latestStore.find((s) => s.userId == userId);
 			if (!latestSession?.refreshToken) throw new NoSessionError();
 
-			const result = await safeFetch(
-				`${config.resolvedUrls.extension}auth/refresh`,
-				Extension.RefreshTokenApi,
-				{
-					method: "POST",
-					headers: { "x-kiln-refresh-token": latestSession.refreshToken },
-				},
-			);
+			try {
+				const result = await safeFetch(
+					`${config.resolvedUrls.extension}auth/refresh`,
+					Extension.RefreshTokenApi,
+					{
+						method: "POST",
+						headers: { "x-kiln-refresh-token": latestSession.refreshToken },
+					},
+				);
 
-			const updatedStore = latestStore.map((s) =>
-				s.userId == userId
-					? {
-							...s,
-							accessToken: result.data.accessToken,
-							refreshToken: result.data.refreshToken,
-						}
-					: s,
-			);
-			await apiSessions.setValue(updatedStore);
+				const updatedStore = latestStore.map((s) =>
+					s.userId == userId
+						? {
+								...s,
+								accessToken: result.data.accessToken,
+								refreshToken: result.data.refreshToken,
+							}
+						: s,
+				);
+				await apiSessions.setValue(updatedStore);
 
-			return result.data;
+				return result.data;
+			} catch (refreshErr) {
+				if (
+					refreshErr instanceof ApiHttpError &&
+					(refreshErr.status === 401 || refreshErr.status === 403)
+				) {
+					await apiSessions.setValue(
+						latestStore.filter((s) => s.userId != userId),
+					);
+					await expireKVCache("currentSession", String(userId));
+					throw new NoSessionError();
+				}
+				throw refreshErr;
+			}
 		});
 
 		return fn(refreshed.accessToken, config);
 	}
+}
+
+export async function resolveInjectableTabId(
+	sender?: Runtime.MessageSender,
+): Promise<number | null> {
+	if (sender?.tab?.id != null) return sender.tab.id;
+
+	const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+	if (tab?.id == null || !/^https?:/.test(tab.url ?? "")) return null;
+	return tab.id;
 }

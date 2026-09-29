@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import type { Extension } from "@kiln/schemas";
+import { escapeHtml, safeHttpUrl } from "@/utils/escapeHtml";
 import fallbackConfig from "./static/fallbackConfig.json";
 import fallbackCurrencyRates from "./static/fallbackCurrencyRates.json";
 import staticMetadata from "./static/metadata.json";
@@ -318,7 +319,9 @@ export async function injectVerificationBanner() {
 
 	const mainContent = document.querySelector(
 		'#main-content div[style^="min-height"]',
-	)!;
+	);
+	if (!mainContent) return;
+
 	const banner = document.createElement("div");
 	banner.classList.add(
 		"alert",
@@ -365,7 +368,7 @@ export async function injectVerificationBanner() {
 }
 
 function isNewerVersion(latest: string, current: string): boolean {
-	const parse = (v: string) => v.split(".").map(Number);
+	const parse = (v: string) => v.split("-")[0].split(".").map(Number);
 	const [lMaj, lMin, lPat] = parse(latest);
 	const [cMaj, cMin, cPat] = parse(current);
 	if (lMaj !== cMaj) return lMaj > cMaj;
@@ -585,17 +588,22 @@ export async function migrateLegacySettings(): Promise<boolean> {
 
 	if (!legacy || typeof legacy !== "object") return false;
 
-	const current = await preferences.getPreferences();
+	const current = await preferences.getValue();
 	const enabledSet = new Set(current.enabled);
+	const disabledSet = new Set(current.disabled ?? []);
 
 	for (const [oldKey, featureId] of Object.entries(legacyEnabledMap)) {
 		if (oldKey in legacy) {
 			if (legacy[oldKey]) {
 				//@ts-expect-error
 				enabledSet.add(featureId);
+				//@ts-expect-error
+				disabledSet.delete(featureId);
 			} else {
 				//@ts-expect-error
 				enabledSet.delete(featureId);
+				//@ts-expect-error
+				disabledSet.add(featureId);
 			}
 		}
 	}
@@ -603,8 +611,10 @@ export async function migrateLegacySettings(): Promise<boolean> {
 	if (legacy.TheGreatDivide && typeof legacy.TheGreatDivide === "object") {
 		if (legacy.TheGreatDivide.UserStatsOn) {
 			enabledSet.add("tgdStats");
+			disabledSet.delete("tgdStats");
 		} else {
 			enabledSet.delete("tgdStats");
+			disabledSet.add("tgdStats");
 		}
 	}
 
@@ -654,7 +664,7 @@ export async function migrateLegacySettings(): Promise<boolean> {
 	await preferences.setValue({
 		enabled: [...enabledSet],
 		config,
-		disabled: [],
+		disabled: [...disabledSet],
 	});
 	await browser.storage.sync.remove("PolyPlus_Settings");
 
@@ -694,10 +704,13 @@ export async function pullCache(
 
 		const replenishedCache = await replenish();
 		if (replenishedCache !== "unavailable") {
-			cacheStorage[key] = replenishedCache;
-			metadata[key] = Date.now();
-			await cache.setValue(cacheStorage);
-			await cache.setMeta(metadata);
+			const freshStorage: CacheInterface = await cache.getValue();
+			const freshMeta = (await cache.getMeta()) as { [key: string]: number };
+			freshStorage[key] = replenishedCache;
+			freshMeta[key] = Date.now();
+			await cache.setValue(freshStorage);
+			await cache.setMeta(freshMeta);
+			return replenishedCache;
 		} else {
 			return "unavailable";
 		}
@@ -825,7 +838,7 @@ export async function expireCache(key: string) {
 
 	const metadata = (await cache.getMeta()) as { [key: string]: number };
 	metadata[key] = 0;
-	cache.setMeta(metadata);
+	await cache.setMeta(metadata);
 }
 
 export async function expireKVCache(store: string, key: string) {
@@ -836,7 +849,7 @@ export async function expireKVCache(store: string, key: string) {
 	};
 	if (!metadata[store]) metadata[store] = {};
 	metadata[store][key] = 0;
-	cache.setMeta(metadata);
+	await cache.setMeta(metadata);
 }
 
 function timeAgo(overlap: number) {
@@ -857,8 +870,37 @@ function timeAgo(overlap: number) {
 	return "just now";
 }
 
+function parseBricksAmount(raw: string, suffix?: string): number {
+	const base = Number.parseFloat(raw.replace(/,/g, ""));
+	if (Number.isNaN(base)) return 0;
+
+	const multiplier =
+		suffix?.toLowerCase() === "k"
+			? 1_000
+			: suffix?.toLowerCase() === "m"
+				? 1_000_000
+				: suffix?.toLowerCase() === "b"
+					? 1_000_000_000
+					: 1;
+
+	return Math.round(base * multiplier);
+}
+
+const GET_USER_DETAILS_TIMEOUT = 15_000;
+
 export function getUserDetails(): Promise<UserDetails | null> {
 	return new Promise((resolve) => {
+		let settled = false;
+		let observer: MutationObserver | null = null;
+		let timeoutId: ReturnType<typeof setTimeout> | null = null;
+		const finish = (value: UserDetails | null) => {
+			if (settled) return;
+			settled = true;
+			observer?.disconnect();
+			if (timeoutId !== null) clearTimeout(timeoutId);
+			resolve(value);
+		};
+
 		function tryResolve() {
 			const profileLink = document.querySelector<HTMLLinkElement>(
 				'.navbar a.text-reset[href^="/users/"]',
@@ -872,15 +914,15 @@ export function getUserDetails(): Promise<UserDetails | null> {
 			const title =
 				brickBalance.getAttribute("data-bs-original-title") ??
 				brickBalance.getAttribute("data-bs-title");
-			const match = title?.match(/([\d,]+)\s*Bricks/);
+			if (!title) return false;
 
-			if (!match) return false;
+			const match = title.match(/([\d,]+(?:\.\d+)?)\s*([kKmMbB])?\s*Bricks/);
 
 			const userId = parseInt(profileLink.href.split("/")[4], 10);
-			resolve({
+			finish({
 				username: profileLink.innerText.trim(),
 				userId,
-				bricks: parseInt(match[1].replace(/,/g, ""), 10),
+				bricks: match ? parseBricksAmount(match[1], match[2]) : 0,
 				//@ts-expect-error: TODO: look into type error
 				getAvatar: async () => {
 					const r = await sendMessage("getUserAvatar", userId);
@@ -893,8 +935,8 @@ export function getUserDetails(): Promise<UserDetails | null> {
 
 		if (tryResolve()) return;
 
-		const observer = new MutationObserver(() => {
-			if (tryResolve()) observer.disconnect();
+		observer = new MutationObserver(() => {
+			tryResolve();
 		});
 
 		const navbar =
@@ -906,10 +948,11 @@ export function getUserDetails(): Promise<UserDetails | null> {
 			attributeFilter: ["data-bs-original-title", "data-bs-title"],
 		});
 
+		timeoutId = setTimeout(() => finish(null), GET_USER_DETAILS_TIMEOUT);
+
 		const giveUpIfLoggedOut = () => {
 			if (!document.querySelector('.navbar a.text-reset[href^="/users/"]')) {
-				observer.disconnect();
-				resolve(null);
+				finish(null);
 			}
 		};
 		if (document.readyState === "complete") {
@@ -984,7 +1027,7 @@ export async function bricksToCurrency(
 
 function _parseBrickValue(el: Element | null): number {
 	if (!el) return 0;
-	return parseInt(el.textContent?.trim() ?? "0", 10) || 0;
+	return parseFormattedNumber(el.textContent?.trim() ?? "0") || 0;
 }
 
 function _parseTradeSide(card: Element): TradeSide {
@@ -1205,9 +1248,9 @@ export function injectNotification(notification: FabricatedNotification): void {
 	anchor.className = "text-reset";
 	anchor.innerHTML = `
 		<div class="notification-item ${notification.unread ? "unread" : ""}">
-			<img src="${notification.avatarUrl}" class="rounded-circle border border-2 border-secondary" height="38">
+			<img src="${escapeHtml(safeHttpUrl(notification.avatarUrl))}" class="rounded-circle border border-2 border-secondary" height="38">
 			<div>
-				<div>${notification.message}</div>
+				<div>${escapeHtml(notification.message)}</div>
 				<div class="small text-muted">${formatNotificationRelativeTime(notification.date)}</div>
 			</div>
 		</div>
@@ -1234,6 +1277,8 @@ export interface KilnNotificationInput {
 	dedupeValue?: string;
 }
 
+const KILN_NOTIFICATIONS_LIMIT = 500;
+
 export async function fireKilnNotification(
 	input: KilnNotificationInput,
 ): Promise<void> {
@@ -1254,6 +1299,17 @@ export async function fireKilnNotification(
 				? existing.notifiedAt
 				: new Date().toISOString(),
 	};
+
+	const entries = Object.entries(notifications);
+	if (entries.length > KILN_NOTIFICATIONS_LIMIT) {
+		entries.sort(
+			([, a], [, b]) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+		);
+		await _kilnNotifications.setValue(
+			Object.fromEntries(entries.slice(0, KILN_NOTIFICATIONS_LIMIT)),
+		);
+		return;
+	}
 
 	await _kilnNotifications.setValue(notifications);
 }

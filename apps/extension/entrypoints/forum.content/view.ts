@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import type { PolyTrack } from "@kiln/schemas";
+import { escapeHtml } from "@/utils/escapeHtml";
 import { sendMessage } from "@/utils/messaging";
 import config from "@/utils/static/fallbackConfig.json";
 import {
@@ -24,20 +26,26 @@ import {
 	type BookmarkedThread,
 	setForumImageStarred,
 } from "@/utils/storage";
+import type { Result } from "@/utils/types";
 import {
 	applyKilnDisclosureTitle,
 	formatNotificationRelativeTime,
 	getConfig,
 	kilnDisclosureBadgeHtml,
 } from "@/utils/utilities";
-import { CATEGORIES, getOrCreateForumToolbar } from "./search";
+import { CATEGORIES, getOrCreateForumToolbar, renderEntry } from "./search";
 
 export function forumMentions(showDisclosures: boolean) {
 	const textBlocks = document.querySelectorAll("p:not(.text-muted):not(.mb-0)");
-	const regex = /@([\w.]+)/g;
+	const regex = /(?<!\w)@([\w.]*\w)/g;
 
 	textBlocks.forEach((block) => {
-		const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+		const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, {
+			acceptNode: (node) =>
+				node.parentElement?.closest("a, code, pre")
+					? NodeFilter.FILTER_REJECT
+					: NodeFilter.FILTER_ACCEPT,
+		});
 		const nodes = [];
 
 		let currentNode = walker.nextNode();
@@ -309,13 +317,6 @@ function nodeToMarkdown(node: Node): string {
 	}
 }
 
-function escapeHtml(value: string): string {
-	return value
-		.replaceAll("&", "&amp;")
-		.replaceAll("<", "&lt;")
-		.replaceAll(">", "&gt;");
-}
-
 function getForumBasePath(): string {
 	const path = window.location.pathname;
 	return path === "/forum" ? "/forum/" : path;
@@ -365,7 +366,10 @@ export async function bookmarkedThreads(showDisclosures: boolean) {
 
 					return result.data.entries.find((entry) => entry.id === threadId)
 						?.categoryId;
-				})();
+				})().catch((err) => {
+					categoryIdPromise = undefined;
+					throw err;
+				});
 			}
 			return categoryIdPromise;
 		};
@@ -396,11 +400,13 @@ export async function bookmarkedThreads(showDisclosures: boolean) {
 					await _bookmarkedThreads.setValue(rest);
 					render(false);
 				} else {
+					const categoryId = await resolveCategoryId();
+					const latest = await _bookmarkedThreads.getValue();
 					await _bookmarkedThreads.setValue({
-						...current,
+						...latest,
 						[threadId]: {
 							threadId,
-							categoryId: await resolveCategoryId(),
+							categoryId,
 							title: getThreadTitle(),
 							url: window.location.pathname,
 							bookmarkedAt: new Date().toISOString(),
@@ -448,12 +454,14 @@ export async function bookmarkedThreads(showDisclosures: boolean) {
 						await _bookmarkedReplies.setValue(rest);
 						render(false);
 					} else {
+						const categoryId = await resolveCategoryId();
+						const latest = await _bookmarkedReplies.getValue();
 						await _bookmarkedReplies.setValue({
-							...current,
+							...latest,
 							[replyId]: {
 								replyId,
 								threadId,
-								categoryId: await resolveCategoryId(),
+								categoryId,
 								title: getThreadTitle(),
 								author,
 								content: htmlToMarkdown(contentEl).slice(0, 280),
@@ -693,5 +701,215 @@ export async function bookmarkedThreads(showDisclosures: boolean) {
 
 	if (new URLSearchParams(window.location.search).has("bookmarked-threads")) {
 		await showBookmarks();
+	}
+}
+
+const KILN_UPDATES_USER_ID = 2782;
+const KILN_UPDATES_QUERY_PARAM = "kiln-updates";
+const KILN_UPDATE_TITLE_REGEX = /^Kiln v\d+\.\d+\.\d+ - .+/;
+
+export async function kilnUpdatesCategory(showDisclosures: boolean) {
+	const [, , second] = window.location.pathname.split("/");
+	if (second && second !== "category") return;
+
+	let view: { elements: HTMLElement[]; hidden: HTMLElement[] } | null = null;
+	let openedViaPush = false;
+
+	const closeKilnUpdates = () => {
+		if (!view) return;
+		for (const element of view.elements) element.remove();
+		for (const child of view.hidden) child.style.display = "";
+		view = null;
+	};
+
+	const showKilnUpdates = async () => {
+		if (view) return;
+
+		const firstCategory = document.querySelector<HTMLElement>(
+			".container.p-0.p-md-2.p-lg-3.p-xl-4",
+		);
+		const container = firstCategory?.closest<HTMLElement>(".container");
+		if (!container) return;
+
+		const hidden = Array.from(container.children) as HTMLElement[];
+		for (const child of hidden) child.style.display = "none";
+
+		const categoryHeader = document.createElement("div");
+		categoryHeader.className = "forum-category-container mb-3";
+		categoryHeader.style.borderColor = "#FF9255";
+		categoryHeader.innerHTML = `
+			<h2 class="text-shadow">Kiln Updates${kilnDisclosureBadgeHtml(showDisclosures)}</h2>
+			<h6 class="mb-0">The latest updates from Kiln.</h6>
+			<span class="forum-category-decorator" style="background-color: #FF9255;opacity:0.5;"><i class="fas fa-fire me-2" style="font-size:.9em"></i></span>
+		`;
+
+		const backRow = document.createElement("div");
+		backRow.className = "row px-3 mb-3";
+		backRow.innerHTML = `
+			<a style="width:130px" class="col-4 btn btn-outline-secondary" href="/forum" data-kiln="kiln-updates-back">
+				<i class="fas fa-arrow-left me-1"></i>
+				Back
+			</a>
+			<div class="col-auto flex-grow-1"></div>
+		`;
+
+		const resultsContainer = document.createElement("div");
+		resultsContainer.className = "kiln-forum-results";
+
+		const note = document.createElement("div");
+		note.className = "text-muted small text-center mt-3";
+		note.innerHTML = `<i class="fas fa-info-circle me-1"></i>Updates prior to v2.3.0 weren't posted as forum posts.`;
+
+		container.prepend(backRow);
+		container.prepend(categoryHeader);
+		backRow.insertAdjacentElement("afterend", resultsContainer);
+		resultsContainer.insertAdjacentElement("afterend", note);
+
+		view = {
+			elements: [categoryHeader, backRow, resultsContainer, note],
+			hidden,
+		};
+
+		backRow
+			.querySelector<HTMLAnchorElement>('[data-kiln="kiln-updates-back"]')!
+			.addEventListener("click", (event) => {
+				event.preventDefault();
+				if (openedViaPush) {
+					window.history.back();
+				} else {
+					closeKilnUpdates();
+					window.history.pushState(null, "", getForumBasePath());
+				}
+			});
+
+		let requestId = 0;
+
+		const loadAllKilnUpdates = async () => {
+			const currentRequest = ++requestId;
+			const MAX_PAGES = 50;
+			let page: number | null = 1;
+			let loadedPages = 0;
+			let matched = 0;
+
+			resultsContainer.innerHTML = `<div class="text-center text-muted p-4"><span class="spinner-border spinner-border-sm"></span> Loading Kiln updates...</div>`;
+
+			while (page !== null && loadedPages < MAX_PAGES) {
+				const result: Result<PolyTrack.ForumSearchApi> = await sendMessage(
+					"getForumSearch",
+					{
+						page,
+						search: "",
+						sort: "newest",
+						type: "thread",
+						authorIds: [KILN_UPDATES_USER_ID],
+						categoryIds: [],
+						postedAfter: "",
+						postedBefore: "",
+					},
+				);
+				if (currentRequest !== requestId || !view) return;
+
+				if (!result.ok) {
+					if (matched === 0) {
+						resultsContainer.innerHTML = `<div class="alert alert-danger">Failed to load Kiln updates: ${escapeHtml(result.message)}</div>`;
+					}
+					return;
+				}
+
+				const entries = result.data.entries.filter((entry) =>
+					KILN_UPDATE_TITLE_REGEX.test(entry.title),
+				);
+
+				if (entries.length > 0) {
+					if (matched === 0) resultsContainer.innerHTML = "";
+					for (const entry of entries) {
+						resultsContainer.appendChild(renderEntry(entry));
+					}
+					matched += entries.length;
+				}
+
+				page = result.data.nextPage;
+				loadedPages++;
+			}
+
+			if (matched === 0) {
+				resultsContainer.innerHTML = `<div class="text-center text-muted border border-secondary rounded p-2">No Kiln updates have been posted yet.</div>`;
+			}
+		};
+
+		await loadAllKilnUpdates();
+	};
+
+	const openKilnUpdates = () => {
+		openedViaPush = true;
+		window.history.pushState(
+			null,
+			"",
+			`${getForumBasePath()}?${KILN_UPDATES_QUERY_PARAM}`,
+		);
+		showKilnUpdates();
+	};
+
+	const updatesEntry = Array.from(
+		document.querySelectorAll<HTMLAnchorElement>('a[href="/forum/category/3"]'),
+	)
+		.map((anchor) => anchor.closest<HTMLElement>(".forum-entry"))
+		.find((entry): entry is HTMLElement => entry !== null);
+
+	if (updatesEntry) {
+		const href = `${getForumBasePath()}?${KILN_UPDATES_QUERY_PARAM}`;
+		const entry = document.createElement("div");
+		entry.className = "forum-entry";
+		entry.style.borderColor = "#FF9255";
+		entry.innerHTML = `
+			<div class="row">
+				<div class="col-10 col-lg-8 d-flex gap-3">
+					<div class="col-auto ms-1" style="display:flex;justify-content:center;align-items:center">
+						<a href="${href}" data-kiln="kiln-updates-open">
+							<i class="fas fa-fire" style="font-size:2em; color: #FF9255"></i>
+						</a>
+					</div>
+					<div class="col">
+						<h6 class="mb-1">
+							<a href="${href}" class="text-reset" data-kiln="kiln-updates-open">
+								Kiln Updates${kilnDisclosureBadgeHtml(showDisclosures)}
+							</a>
+						</h6>
+						<small class="text-muted">
+							<a href="${href}" class="text-reset" data-kiln="kiln-updates-open">
+								The latest updates from Kiln.
+							</a>
+						</small>
+					</div>
+				</div>
+			</div>
+		`;
+		entry.addEventListener("click", (event) => {
+			if (
+				!(event.target as HTMLElement).closest(
+					'[data-kiln="kiln-updates-open"]',
+				)
+			)
+				return;
+			event.preventDefault();
+			openKilnUpdates();
+		});
+		updatesEntry.insertAdjacentElement("afterend", entry);
+	}
+
+	window.addEventListener("popstate", () => {
+		if (
+			new URLSearchParams(window.location.search).has(KILN_UPDATES_QUERY_PARAM)
+		) {
+			showKilnUpdates();
+		} else {
+			closeKilnUpdates();
+		}
+	});
+
+	if (
+		new URLSearchParams(window.location.search).has(KILN_UPDATES_QUERY_PARAM)
+	) {
+		await showKilnUpdates();
 	}
 }

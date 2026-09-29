@@ -85,7 +85,7 @@ await $`bun run zip`.cwd(root);
 console.log("\nBuilding Firefox zip...");
 await $`bun run zip:firefox`.cwd(root);
 
-console.log(`\n✓ Done — v${newVersion} zips are in .output/`);
+console.log(`\n✓ Done! v${newVersion} zips are in .output/`);
 console.log(
 	"  → Nothing staged, committed, or pushed. Review the changes, then commit/tag the monorepo yourself.",
 );

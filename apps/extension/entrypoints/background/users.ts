@@ -23,6 +23,7 @@ import {
 	checkRateLimit,
 	fetchConfig,
 	handle,
+	resolveInjectableTabId,
 	safeFetch,
 	withApi,
 	withAuthSession,
@@ -53,13 +54,13 @@ onMessage("findUserByUsername", ({ data: username }) =>
 			username,
 			async () => {
 				const resolution = await safeFetch(
-					`${config.resolvedUrls.public}users/find?username=${username}`,
+					`${config.resolvedUrls.public}users/find?username=${encodeURIComponent(username)}`,
 					Polytoria.FindUserByUsernameApiSchema,
 				);
 				if ("id" in resolution) return resolution.id as number;
 				throw new Error("Failed to resolve user");
 			},
-			-1,
+			24 * 60 * 60 * 1000,
 			false,
 		);
 	}),
@@ -91,9 +92,8 @@ onMessage("getBestFriends", ({ data: userIds }) =>
 					z.array(Polytoria.UserApiSchema),
 				);
 				return Object.values(
-					res.reduce((acc: Record<string, any>, batchReq: any) => {
-						const item = batchReq.data;
-						if (item?.id) acc[item.id] = item;
+					res.reduce((acc: Record<string, any>, user: any) => {
+						if (user?.id) acc[user.id] = user;
 						return acc;
 					}, {}),
 				);
@@ -125,20 +125,28 @@ onMessage(
 						);
 					}
 
+					const offset = (resolvedPage - 1) * limit;
+					const skip = offset % BATCH_LIMIT;
+					let batchPage = Math.floor(offset / BATCH_LIMIT) + 1;
+
 					const finalResults = { inventory: [] as any[], pages: 0, total: 0 };
 
-					let batchPage = resolvedPage;
-					for (let fetched = 0; fetched < limit; fetched += BATCH_LIMIT) {
-						const currentBatchSize = Math.min(BATCH_LIMIT, limit - fetched);
+					while (finalResults.inventory.length < skip + limit) {
 						const res = await safeFetch(
-							`${config.resolvedUrls.public}users/${userId}/inventory?limit=${currentBatchSize}&page=${batchPage}${suffix}`,
+							`${config.resolvedUrls.public}users/${userId}/inventory?limit=${BATCH_LIMIT}&page=${batchPage}${suffix}`,
 							Polytoria.InventoryApiSchema,
 						);
 						finalResults.inventory.push(...res.inventory);
 						finalResults.pages = res.pages;
 						finalResults.total = res.total;
+						if (res.inventory.length < BATCH_LIMIT) break;
 						batchPage++;
 					}
+
+					finalResults.inventory = finalResults.inventory.slice(
+						skip,
+						skip + limit,
+					);
 
 					return finalResults;
 				},
@@ -153,22 +161,26 @@ onMessage("getOwnedAssetMap", ({ data: userId }) =>
 		const config = await withApi("public_api", "public");
 		const inventoryResult = await pullKVCache(
 			"inventory",
-			`${userId}-600-1-false`,
+			`${userId}-all`,
 			async () => {
 				const BATCH_LIMIT = 100;
-				const finalResults = { inventory: [] as any[], pages: 0, total: 0 };
+				const firstPage = await safeFetch(
+					`${config.resolvedUrls.public}users/${userId}/inventory?limit=${BATCH_LIMIT}&page=1`,
+					Polytoria.InventoryApiSchema,
+				);
 
-				let batchPage = 1;
-				for (let fetched = 0; fetched < 600; fetched += BATCH_LIMIT) {
-					const currentBatchSize = Math.min(BATCH_LIMIT, 600 - fetched);
+				const finalResults = {
+					inventory: [...firstPage.inventory],
+					pages: firstPage.pages,
+					total: firstPage.total,
+				};
+
+				for (let page = 2; page <= firstPage.pages; page++) {
 					const res = await safeFetch(
-						`${config.resolvedUrls.public}users/${userId}/inventory?limit=${currentBatchSize}&page=${batchPage}`,
+						`${config.resolvedUrls.public}users/${userId}/inventory?limit=${BATCH_LIMIT}&page=${page}`,
 						Polytoria.InventoryApiSchema,
 					);
 					finalResults.inventory.push(...res.inventory);
-					finalResults.pages = res.pages;
-					finalResults.total = res.total;
-					batchPage++;
 				}
 
 				return finalResults;
@@ -205,16 +217,13 @@ onMessage("getUserAvatar", ({ data: userId }) =>
 	}),
 );
 
-onMessage("manageFriendRequests", ({ data: action }) => {
+onMessage("manageFriendRequests", ({ data: action, sender }) =>
 	handle(async () => {
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		if (!tabs[0]) return;
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) return;
 
-		browser.scripting.executeScript({
-			target: { tabId: tabs[0].id! },
+		await browser.scripting.executeScript({
+			target: { tabId },
 			world: "MAIN",
 			func: async (action: "acceptAll" | "declineAll") => {
 				const getCookie = (name: string) => {
@@ -251,7 +260,7 @@ onMessage("manageFriendRequests", ({ data: action }) => {
 
 				let xsrfToken = decodeURIComponent(getCookie("XSRF-TOKEN")!);
 
-				await Promise.all(
+				await Promise.allSettled(
 					requests.map(async (r) => {
 						const res = await fetch(endpoint, {
 							method: "POST",
@@ -262,8 +271,8 @@ onMessage("manageFriendRequests", ({ data: action }) => {
 							body: JSON.stringify({ userID: String(r.senderID) }),
 						});
 
-						const json = await res.json();
-						const isCsrfError = json.errors?.some(
+						const json = await res.json().catch(() => null);
+						const isCsrfError = json?.errors?.some(
 							(e: { code: string }) => e.code === "E_BAD_CSRF_TOKEN",
 						);
 
@@ -285,19 +294,16 @@ onMessage("manageFriendRequests", ({ data: action }) => {
 			},
 			args: [action],
 		});
-	});
-});
+	}),
+);
 
-onMessage("acceptFriendRequest", ({ data: senderUserId }) =>
+onMessage("acceptFriendRequest", ({ data: senderUserId, sender }) =>
 	handle(async () => {
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		if (!tabs[0]) throw new Error("No active tab");
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) throw new Error("No active tab");
 
 		await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id! },
+			target: { tabId },
 			world: "MAIN",
 			args: [senderUserId],
 			func: async (senderUserId: number) => {
@@ -322,16 +328,13 @@ onMessage("acceptFriendRequest", ({ data: senderUserId }) =>
 	}),
 );
 
-onMessage("declineFriendRequest", ({ data: senderUserId }) =>
+onMessage("declineFriendRequest", ({ data: senderUserId, sender }) =>
 	handle(async () => {
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		if (!tabs[0]) throw new Error("No active tab");
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) throw new Error("No active tab");
 
 		await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id! },
+			target: { tabId },
 			world: "MAIN",
 			args: [senderUserId],
 			func: async (senderUserId: number) => {
@@ -391,16 +394,16 @@ onMessage("getUserCreations", ({ data: { userId, page, limit } }) =>
 	}),
 );
 
-onMessage("updateBodyColor", async ({ data: { bodyPart, color } }) => {
+onMessage("updateBodyColor", async ({ data: { bodyPart, color }, sender }) => {
 	checkRateLimit("internal_api", 100);
 	const config = await fetchConfig();
 	if (!config.apiAvailability.internal) throw new ApiDisabledError("internal");
 
-	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-	if (!tabs[0]) return;
+	const tabId = await resolveInjectableTabId(sender);
+	if (tabId == null) return;
 
 	await browser.scripting.executeScript({
-		target: { tabId: tabs[0].id! },
+		target: { tabId },
 		world: "MAIN",
 		args: [bodyPart, color],
 		func: async (bodyPart: string, color: string) => {
@@ -409,8 +412,6 @@ onMessage("updateBodyColor", async ({ data: { bodyPart, color } }) => {
 				const parts = value.split(`; ${name}=`);
 				if (parts.length === 2) return parts.pop()!.split(";").shift();
 			};
-
-			console.log("running!!!!!", bodyPart, color);
 
 			const xsrfToken = decodeURIComponent(getCookie("XSRF-TOKEN")!);
 
@@ -431,16 +432,13 @@ onMessage("updateBodyColor", async ({ data: { bodyPart, color } }) => {
 	});
 });
 
-onMessage("updateOutfit", ({ data: { id, name } }) =>
+onMessage("updateOutfit", ({ data: { id, name }, sender }) =>
 	handle(async () => {
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		if (!tabs[0]) return;
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) return;
 
 		await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id! },
+			target: { tabId },
 			world: "MAIN",
 			args: [id, name],
 			func: async (outfitId: number, outfitName: string) => {
@@ -452,6 +450,22 @@ onMessage("updateOutfit", ({ data: { id, name } }) =>
 
 				const xsrfToken = decodeURIComponent(getCookie("XSRF-TOKEN")!);
 
+				const createResponse = await fetch(
+					"https://polytoria.com/api/avatar/outfits/create",
+					{
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+							"X-XSRF-TOKEN": xsrfToken,
+						},
+						body: JSON.stringify({ name: outfitName }),
+						credentials: "include",
+					},
+				);
+				if (!createResponse.ok) {
+					throw new Error("Failed to create outfit");
+				}
+
 				const deleteResponse = await fetch(`/api/avatar/outfits/delete`, {
 					method: "POST",
 					credentials: "include",
@@ -462,35 +476,20 @@ onMessage("updateOutfit", ({ data: { id, name } }) =>
 					body: JSON.stringify({ id: outfitId }),
 				});
 				if (!deleteResponse.ok) {
-					throw new Error("Failed to delete outfit");
+					throw new Error("Failed to delete old outfit");
 				}
-
-				await fetch("https://polytoria.com/api/avatar/outfits/create", {
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						"X-XSRF-TOKEN": xsrfToken,
-					},
-					body: JSON.stringify({ name: outfitName }),
-					credentials: "include",
-				});
 			},
 		});
 	}),
 );
 
-onMessage("changeUserAlias", ({ data: { userId, currentAlias } }) => {
+onMessage("changeUserAlias", ({ data: { userId, currentAlias }, sender }) => {
 	handle(async () => {
-		console.log("aaa");
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		if (!tabs[0]) return;
-		console.log(tabs[0]);
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) return;
 
 		const results = await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id! },
+			target: { tabId },
 			world: "MAIN",
 			args: [currentAlias ?? null],
 			func: async (currentAlias: string) => {
@@ -519,7 +518,7 @@ onMessage("changeUserAlias", ({ data: { userId, currentAlias } }) => {
 		await _userAliases.setValue(aliases);
 
 		await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id! },
+			target: { tabId },
 			world: "MAIN",
 			args: [newAlias],
 			func: (newAlias: string) => {

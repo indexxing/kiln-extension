@@ -74,6 +74,5 @@ export default defineConfig({
 			firefox: "/Applications/Zen.app/Contents/MacOS/zen",
 		},
 		firefoxProfile: "./.wxt/firefox-data",
-		keepProfileChanges: true,
 	},
 });

@@ -16,19 +16,21 @@
 
 import { sendMessage } from "@/utils/messaging";
 
-export const POLYTORIA_CDN_URL =
-	/^https:\/\/cdn\.polytoria\.com\/[A-Za-z0-9._/-]+$/;
-
-export function parseAssetId(raw: string): number | null {
-	const match = raw.trim().match(/(\d+)\/?$/) ?? raw.match(/(\d+)/);
-	const id = match ? Number(match[1]) : Number.NaN;
-	return Number.isInteger(id) && id > 0 ? id : null;
+function report(name: string, err: unknown) {
+	console.error(`[Kiln] Feature "${name}" failed:`, err);
+	sendMessage("reportError", {
+		type: "content",
+		message: `${name}: ${err instanceof Error ? err.message : String(err)}`,
+		stack: err instanceof Error ? err.stack : undefined,
+		url: location.href,
+	}).catch(() => {});
 }
 
-export async function resolveDecalUrl(raw: string): Promise<string | null> {
-	const id = parseAssetId(raw);
-	if (id === null) return null;
-	const result = await sendMessage("getItemTexture", id).catch(() => null);
-	const url = result?.ok && result.data.success ? result.data.url : undefined;
-	return url && POLYTORIA_CDN_URL.test(url) ? url : null;
+export function runFeature(name: string, fn: () => unknown): void {
+	try {
+		const result = fn();
+		if (result instanceof Promise) result.catch((err) => report(name, err));
+	} catch (err) {
+		report(name, err);
+	}
 }

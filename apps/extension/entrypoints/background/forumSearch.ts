@@ -16,7 +16,7 @@
 
 import { PolyTrack } from "@kiln/schemas";
 import { onMessage } from "@/utils/messaging";
-import { handle, safeFetch } from "./shared";
+import { handle, resolveInjectableTabId, safeFetch } from "./shared";
 
 onMessage("getForumSearch", ({ data: filters }) =>
 	handle(async () => {
@@ -53,16 +53,13 @@ onMessage("getForumReplyRedirect", ({ data: replyId }) =>
 	}),
 );
 
-onMessage("showHiddenCategoryAlert", () => {
+onMessage("showHiddenCategoryAlert", ({ sender }) => {
 	handle(async () => {
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		if (!tabs[0]?.id) return;
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) return;
 
 		await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id },
+			target: { tabId },
 			world: "MAIN",
 			func: () => {
 				//@ts-expect-error

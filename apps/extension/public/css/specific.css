@@ -213,6 +213,16 @@ body:has(.kiln-extension-modal[open]) {
 /* ------------------------------------------ */
 
 /*
+    TEXT TRUNCATE FIX
+*/
+
+body[data-kiln-text-truncate-fix="true"] .text-truncate {
+	white-space: normal !important;
+}
+
+/* ------------------------------------------ */
+
+/*
     IMPROVED FORUM COMPOSER
 */
 
@@ -249,4 +259,192 @@ body:has(.kiln-extension-modal[open]) {
 .kiln-image-star-wrapper:hover .kiln-image-star-btn,
 .kiln-image-star-btn.kiln-image-starred {
 	opacity: 1;
+}
+
+/* ------------------------------------------ */
+
+body:has(.nav-sidebar-cont) #main-content:not(.logged-out):not(.no-sidebar) {
+	max-width: 100vw;
+}
+@media (min-width: 992px) {
+	body:has(.nav-sidebar-cont)
+		#main-content:not(.logged-out):not(.no-sidebar) {
+		max-width: calc(100vw - 5.3rem);
+	}
+}
+
+.nav-sidebar-cont {
+	min-width: 5.3rem;
+	position: relative;
+}
+
+.nav-sidebar-cont .nav-sidebar {
+	background-color: #262626;
+	bottom: 0;
+	box-shadow: 5px 0 5px rgba(0, 0, 0, 0.1);
+	overflow-x: hidden;
+	overflow-y: auto;
+	position: fixed;
+	top: 0;
+	width: 5.3rem;
+	z-index: 10000;
+	-ms-overflow-style: none;
+	max-height: 100vh;
+	scrollbar-width: none;
+}
+
+.nav-sidebar::-webkit-scrollbar {
+	display: none;
+}
+
+.nav-sidebar a:active,
+.nav-sidebar a:focus,
+.nav-sidebar a:hover {
+	color: #ddd;
+}
+
+.nav-sidebar-button {
+	background: #3c3c3c;
+	border: 2px solid #484848;
+	border-radius: 10px;
+	box-sizing: border-box;
+	height: 3.2rem;
+	margin: 0 auto;
+	transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+	transition-property: background-color, border-color, color, transform;
+	vertical-align: middle;
+	width: 3.2rem;
+}
+
+.nav-sidebar-button:hover {
+	background-color: #484848;
+	border: 2px solid #5c5c5c;
+	color: #fff;
+	transform: scale(1.15);
+}
+
+.nav-sidebar-button > i {
+	font-size: 1.3rem;
+	margin-top: 0.85rem;
+}
+
+.nav-sidebar .nav-item {
+	width: 100%;
+}
+
+.nav-sidebar .nav-item .nav-link {
+	margin-bottom: 0;
+	margin-left: 2px;
+	position: relative;
+}
+
+.nav-sidebar .nav-item .nav-link .nav-sidebar-text {
+	margin-left: -10px;
+	margin-right: -10px;
+}
+
+.nav-sidebar-text {
+	color: #cacaca;
+	font-size: 12px;
+	font-weight: 500;
+	margin-top: 6px;
+}
+
+.nav-sidebar-upgrade-button {
+	background: linear-gradient(180deg, #2accff, #1c66d6);
+	background-origin: border-box;
+	border-color: rgba(0, 0, 0, 0.25);
+}
+
+.nav-sidebar-upgrade-button:hover {
+	background: linear-gradient(180deg, #55d6ff, #4985de);
+	background-origin: border-box;
+	border-color: rgba(0, 0, 0, 0.1);
+}
+
+.nav-sidebar-admin-button {
+	background-color: #a5312c;
+	border-color: rgba(0, 0, 0, 0.25);
+}
+
+.nav-sidebar-admin-button:hover {
+	background-color: #b75a56;
+	border-color: rgba(0, 0, 0, 0.1);
+}
+
+.nplus-banner,
+.nplusdx-banner {
+	border: 3px solid;
+	border-radius: 10px;
+	font-weight: 700;
+	line-height: 1.2;
+	margin: -14px -9px;
+	position: relative;
+	text-align: center;
+}
+
+.nplus-banner {
+	background: #136d86;
+	border-color: #164f5f;
+	color: #30bee5;
+}
+
+.nplusdx-banner {
+	background: #260d33;
+	border-color: #491b64;
+	color: #b536ff;
+	font-size: 15px;
+}
+
+.notif-nav {
+	background: #ff1919;
+	border-radius: 9px;
+	height: 25px;
+	width: 25px;
+}
+
+.notif-nav.notif-sidebar {
+	position: absolute;
+	right: 9px;
+	top: 0;
+}
+
+.notif-nav > span {
+	font-size: 13px;
+	text-shadow: 1px 2px 2px rgba(0, 0, 0, 0.349);
+	vertical-align: middle;
+}
+
+.sidebar-label {
+	color: #cacaca;
+	font-size: 10px;
+	font-weight: 600;
+}
+
+.sidebar-plus {
+	background: linear-gradient(rgba(0, 0, 0, 0.45), #163c46) !important;
+}
+
+.sidebar-plus .nav-sidebar-button:not(.nav-sidebar-upgrade-button) {
+	background-color: rgba(71, 224, 255, 0.18) !important;
+	border-color: transparent;
+}
+
+.sidebar-plus .nplus-banner,
+.sidebar-plus .nplusdx-banner {
+	border-color: #000 !important;
+}
+
+.sidebar-plusdx {
+	background: linear-gradient(rgba(0, 0, 0, 0.45), #351648) !important;
+}
+
+.sidebar-plusdx .nav-sidebar-button:not(.nav-sidebar-upgrade-button) {
+	background-color: rgba(188, 72, 255, 0.18) !important;
+	border-color: transparent;
+}
+
+.sidebar-plusdx .nplus-banner,
+.sidebar-plusdx .nplusdx-banner {
+	border-color: #000 !important;
 }

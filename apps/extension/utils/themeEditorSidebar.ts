@@ -14,8 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import type { Extension } from "@kiln/schemas";
 import { POLYTORIA_CDN_URL, resolveDecalUrl } from "@/utils/decal";
+import { escapeHtml } from "@/utils/escapeHtml";
 import { sendMessage } from "@/utils/messaging";
+import { publishedThemeFields } from "@/utils/publishedTheme";
 import { _savedThemes, apiSessions, preferences } from "@/utils/storage";
 import {
 	applyKilnTheme,
@@ -30,20 +33,32 @@ import {
 	THEME_PRESETS,
 } from "@/utils/theme";
 import {
+	confirmPublishRulesSeen,
 	deleteSavedTheme,
 	formatEffectValue,
 	friendlyApiError,
 	generateRandomThemeName,
 	openNewThemeModal,
 	openThemeGallery,
+	parseColorAlpha as parseColorAlphaShared,
+	publishRulesModalBody,
 	readEffectValue,
 	renderEffectValueInput as renderEffectValueInputShared,
 	renderSelectorReference,
 	showConfirmImport,
 } from "@/utils/themeEditorShared";
 import type { EffectType, ThemeEffect } from "@/utils/types";
-import { getConfig } from "@/utils/utilities";
+import { getConfig, getUserDetails } from "@/utils/utilities";
 import { createVisualCssEditor } from "@/utils/visualCssEditor";
+import {
+	AMBIENT_TYPES,
+	type Ambient,
+	type AmbientType,
+	CARD_PRESET_OPACITY,
+	type CardStyle,
+	NO_POINTER_EFFECTS_ATTR,
+	type PointerEffects,
+} from "@/utils/visualEffects";
 
 interface TeWindowState {
 	isOpen?: boolean;
@@ -116,7 +131,10 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 	let workingCursorScale = 32;
 	let workingCursor = "";
 	let workingColorTokens: Record<string, string> = {};
-	let appliedOnce = false;
+	let workingAmbient: Ambient | undefined;
+	let workingCardStyle: CardStyle | undefined;
+	let workingPointerEffects: PointerEffects | undefined;
+	let clonePresetPromise: Promise<void> | null = null;
 
 	function getCurrentSavedTheme() {
 		if (currentId.startsWith("__")) return null;
@@ -133,6 +151,7 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 
 	function applyIdToState(id: string) {
 		currentId = id;
+		clonePresetPromise = null;
 		if (id === "__default__") {
 			workingName = "Default (Polytoria)";
 			workingAccent = "#3bafff";
@@ -148,6 +167,9 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			workingCursorScale = 32;
 			workingCursor = "";
 			workingColorTokens = {};
+			workingAmbient = undefined;
+			workingCardStyle = undefined;
+			workingPointerEffects = undefined;
 		} else if (id.startsWith("__preset__:")) {
 			const key = id.slice(11);
 			const p = THEME_PRESETS[key];
@@ -165,6 +187,9 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			workingCursorScale = 32;
 			workingCursor = "";
 			workingColorTokens = {};
+			workingAmbient = undefined;
+			workingCardStyle = undefined;
+			workingPointerEffects = undefined;
 		} else if (id === "__new__") {
 			workingName = generateRandomThemeName();
 			workingAccent = "#3bafff";
@@ -180,6 +205,9 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			workingCursorScale = 32;
 			workingCursor = "";
 			workingColorTokens = {};
+			workingAmbient = undefined;
+			workingCardStyle = undefined;
+			workingPointerEffects = undefined;
 		} else {
 			const t = savedThemes.find((t) => t.id === id);
 			workingName = t?.name ?? "";
@@ -196,7 +224,20 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			workingCursorScale = t?.cursorScale ?? 32;
 			workingCursor = "";
 			workingColorTokens = t?.colorTokens ? { ...t.colorTokens } : {};
+			workingAmbient = t?.ambient;
+			workingCardStyle = t?.cardStyle;
+			workingPointerEffects = t?.pointerEffects;
 		}
+	}
+
+	async function setActiveThemeId(id: string) {
+		const raw = await preferences.getValue();
+		raw.config = {
+			...raw.config,
+			themeCreator: { activeThemeId: id },
+		} as any;
+		await preferences.setValue(raw);
+		(values.config as any).themeCreator = { activeThemeId: id };
 	}
 
 	applyIdToState(currentId);
@@ -248,7 +289,7 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			border-top: 1px solid rgba(128,128,128,0.15);
 		}
 		body.kiln-te-sidebar-open {
-			margin-right: 380px !important;
+			margin-right: var(--kiln-te-width, 380px) !important;
 		}
 		#kiln-te-sidebar .kiln-te-color-picker {
 			width: 34px;
@@ -266,6 +307,9 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		}
 		#kiln-te-publish-status:empty {
 			display: none;
+		}
+		.kiln-te-fields-disabled {
+			opacity: 0.5;
 		}
 		#kiln-te-resize-handle {
 			position: absolute;
@@ -308,13 +352,13 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 
 	const sidebar = document.createElement("div");
 	sidebar.id = "kiln-te-sidebar";
+	sidebar.setAttribute(NO_POINTER_EFFECTS_ATTR, "");
 	sidebar.innerHTML = `
 		<div id="kiln-te-resize-handle"></div>
 		<div id="kiln-te-sidebar-content">
 		<div id="kiln-te-sidebar-header" class="d-flex justify-content-between align-items-center mb-2">
 			<div class="d-flex align-items-center gap-2">
 				<span class="fw-bold" style="font-size:1rem;">Theme Editor</span>
-				<span class="badge bg-success" style="font-size:0.6em;vertical-align:middle;">Live Preview</span>
 			</div>
 			<div class="d-flex align-items-center gap-1">
 				<button id="kiln-te-float-btn" title="Float as window"
@@ -467,6 +511,131 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		</div>
 
 		<div class="card mb-2">
+			<div class="card-header fw-semibold d-flex justify-content-between align-items-center kiln-te-section-hdr" style="cursor:pointer;border-radius:inherit;border:none;" data-body="kiln-te-ambient-body">
+				<span>Ambient Effects</span><i class="fas fa-chevron-down"></i>
+			</div>
+			<div class="card-body" id="kiln-te-ambient-body" style="display:none;">
+				<div class="row g-2 mb-2">
+					<div class="col-6">
+						<label class="form-label small text-muted mb-1">Effect</label>
+						<select id="kiln-te-ambient-type" class="form-select form-select-sm">
+							<option value="">None</option>
+							${AMBIENT_TYPES.map((t) => `<option value="${t.key}">${t.label}</option>`).join("")}
+						</select>
+					</div>
+					<div class="col-6">
+						<label class="form-label small text-muted mb-1">Density</label>
+						<select id="kiln-te-ambient-density" class="form-select form-select-sm">
+							<option value="1">Light</option>
+							<option value="2">Medium</option>
+							<option value="3">Heavy</option>
+						</select>
+					</div>
+				</div>
+				<div class="d-flex align-items-center gap-2">
+					<input type="color" id="kiln-te-ambient-color" class="kiln-te-color-picker" />
+					<div class="form-check mb-0">
+						<input type="checkbox" id="kiln-te-ambient-color-auto" class="form-check-input" />
+						<label for="kiln-te-ambient-color-auto" class="form-check-label small text-muted">Default color</label>
+					</div>
+				</div>
+				<div class="small text-muted mt-2">Skipped for visitors whose system asks for reduced motion.</div>
+			</div>
+		</div>
+
+		<div class="card mb-2">
+			<div class="card-header fw-semibold d-flex justify-content-between align-items-center kiln-te-section-hdr" style="cursor:pointer;border-radius:inherit;border:none;" data-body="kiln-te-cards-body">
+				<span>Cards</span>
+				<div class="d-flex align-items-center gap-2">
+					<div class="form-check form-switch mb-0">
+						<input type="checkbox" id="kiln-te-cards-enabled" class="form-check-input" aria-label="Restyle cards sitewide" />
+					</div>
+					<i class="fas fa-chevron-down"></i>
+				</div>
+			</div>
+			<div class="card-body" id="kiln-te-cards-body" style="display:none;">
+				<div id="kiln-te-cards-fields">
+					<div class="row g-2 mb-2">
+						<div class="col-6">
+							<label class="form-label small text-muted mb-1">Style</label>
+							<select id="kiln-te-cards-preset" class="form-select form-select-sm">
+								<option value="solid">Solid</option>
+								<option value="glass">Glass</option>
+								<option value="outline">Outline</option>
+								<option value="gradient">Gradient</option>
+							</select>
+						</div>
+						<div class="col-6">
+							<label class="form-label small text-muted mb-1">On Hover</label>
+							<select id="kiln-te-cards-hover" class="form-select form-select-sm">
+								<option value="none">Nothing</option>
+								<option value="lift">Lift</option>
+								<option value="glow">Glow</option>
+								<option value="tilt">Tilt</option>
+							</select>
+						</div>
+					</div>
+					<label class="form-label small text-muted mb-1">Tint</label>
+					<div class="d-flex align-items-center gap-2 mb-2">
+						<input type="color" id="kiln-te-cards-tint" class="kiln-te-color-picker" />
+						<div class="form-check mb-0">
+							<input type="checkbox" id="kiln-te-cards-tint-auto" class="form-check-input" />
+							<label for="kiln-te-cards-tint-auto" class="form-check-label small text-muted">Use theme colors</label>
+						</div>
+					</div>
+					<label class="form-label small text-muted mb-1">Opacity</label>
+					<div class="d-flex align-items-center gap-2 mb-2">
+						<input type="range" id="kiln-te-cards-opacity" min="0" max="100" step="1" class="flex-fill" style="min-width:0;" />
+						<span id="kiln-te-cards-opacity-label" class="small text-muted" style="min-width:2.5em;text-align:right;"></span>
+					</div>
+					<label class="form-label small text-muted mb-1">Corner Roundness</label>
+					<div class="d-flex align-items-center gap-2">
+						<input type="range" id="kiln-te-cards-radius" min="0" max="32" step="1" class="flex-fill" style="min-width:0;" />
+						<span id="kiln-te-cards-radius-label" class="small text-muted" style="min-width:2.5em;text-align:right;"></span>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<div class="card mb-2">
+			<div class="card-header fw-semibold d-flex justify-content-between align-items-center kiln-te-section-hdr" style="cursor:pointer;border-radius:inherit;border:none;" data-body="kiln-te-pointer-body">
+				<span>Click &amp; Cursor Effects</span><i class="fas fa-chevron-down"></i>
+			</div>
+			<div class="card-body" id="kiln-te-pointer-body" style="display:none;">
+				<div class="row g-2 mb-2">
+					<div class="col-6">
+						<label class="form-label small text-muted mb-1">On Click</label>
+						<select id="kiln-te-pointer-click" class="form-select form-select-sm">
+							<option value="">Nothing</option>
+							<option value="sparkles">Sparkles</option>
+							<option value="hearts">Hearts</option>
+							<option value="ripples">Ripples</option>
+							<option value="confetti">Confetti</option>
+						</select>
+					</div>
+					<div class="col-6">
+						<label class="form-label small text-muted mb-1">Cursor Trail</label>
+						<select id="kiln-te-pointer-trail" class="form-select form-select-sm">
+							<option value="">None</option>
+							<option value="sparkles">Sparkles</option>
+							<option value="dots">Dots</option>
+							<option value="hearts">Hearts</option>
+							<option value="glow">Glow</option>
+						</select>
+					</div>
+				</div>
+				<div class="d-flex align-items-center gap-2">
+					<input type="color" id="kiln-te-pointer-color" class="kiln-te-color-picker" />
+					<div class="form-check mb-0">
+						<input type="checkbox" id="kiln-te-pointer-color-auto" class="form-check-input" />
+						<label for="kiln-te-pointer-color-auto" class="form-check-label small text-muted">Use accent color</label>
+					</div>
+				</div>
+				<div class="small text-muted mt-2">Skipped for visitors whose system asks for reduced motion.</div>
+			</div>
+		</div>
+
+		<div class="card mb-2">
 			<div class="card-header fw-semibold d-flex justify-content-between align-items-center kiln-te-section-hdr" style="cursor:pointer;border-radius:inherit;border:none;" data-body="kiln-te-effects-body">
 				<span>Effects</span><i class="fas fa-chevron-down"></i>
 			</div>
@@ -585,6 +754,16 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			</div>
 		</div>
 
+		<div id="kiln-te-publish-rules-overlay" style="display:none;position:absolute;inset:0;z-index:11;background:rgba(0,0,0,0.55);flex-direction:column;padding:16px;overflow-y:auto;">
+			<div style="background:var(--bs-body-bg,#212529);border:1px solid rgba(128,128,128,0.3);border-radius:8px;padding:16px;width:100%;margin:auto;">
+				${publishRulesModalBody()}
+				<div class="d-flex gap-2 justify-content-end mt-3">
+					<button class="btn btn-sm btn-secondary" id="kiln-te-publish-rules-cancel">Cancel</button>
+					<button class="btn btn-sm btn-primary" id="kiln-te-publish-rules-continue">I Understand, Publish</button>
+				</div>
+			</div>
+		</div>
+
 	`;
 
 	document.body.classList.add("kiln-te-sidebar-open");
@@ -595,6 +774,13 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 	)!;
 	let isResizing = false;
 	let resizeAnchorRight = 0;
+
+	function setSidebarWidthVar(px: number | null) {
+		if (px === null)
+			document.documentElement.style.removeProperty("--kiln-te-width");
+		else
+			document.documentElement.style.setProperty("--kiln-te-width", `${px}px`);
+	}
 
 	function onResizeMouseMove(e: MouseEvent) {
 		if (!isResizing) return;
@@ -611,7 +797,7 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 				Math.min(window.innerWidth * 0.8, window.innerWidth - e.clientX),
 			);
 			sidebar.style.width = `${newWidth}px`;
-			document.body.style.marginRight = `${newWidth}px`;
+			setSidebarWidthVar(newWidth);
 		}
 	}
 	function onResizeMouseUp() {
@@ -671,7 +857,7 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			sidebar.style.top = `${rect.top}px`;
 			sidebar.style.height = `${Math.min(window.innerHeight * 0.85, 680)}px`;
 			document.body.classList.remove("kiln-te-sidebar-open");
-			document.body.style.marginRight = "";
+			setSidebarWidthVar(null);
 			floatBtn.innerHTML = '<i class="fas fa-compress"></i>';
 			floatBtn.title = "Dock to side";
 			saveTeState({
@@ -688,7 +874,7 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			sidebar.style.top = "";
 			sidebar.style.height = "";
 			sidebar.style.width = "";
-			document.body.style.marginRight = "";
+			setSidebarWidthVar(null);
 			document.body.classList.add("kiln-te-sidebar-open");
 			floatBtn.innerHTML = '<i class="fas fa-expand"></i>';
 			floatBtn.title = "Float as window";
@@ -841,6 +1027,60 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		"#kiln-te-icon-picker",
 	)!;
 	const iconHex = sidebar.querySelector<HTMLInputElement>("#kiln-te-icon-hex")!;
+	const ambientType = sidebar.querySelector<HTMLSelectElement>(
+		"#kiln-te-ambient-type",
+	)!;
+	const ambientDensity = sidebar.querySelector<HTMLSelectElement>(
+		"#kiln-te-ambient-density",
+	)!;
+	const ambientColor = sidebar.querySelector<HTMLInputElement>(
+		"#kiln-te-ambient-color",
+	)!;
+	const ambientColorAuto = sidebar.querySelector<HTMLInputElement>(
+		"#kiln-te-ambient-color-auto",
+	)!;
+	const cardsEnabled = sidebar.querySelector<HTMLInputElement>(
+		"#kiln-te-cards-enabled",
+	)!;
+	const cardsFields = sidebar.querySelector<HTMLElement>(
+		"#kiln-te-cards-fields",
+	)!;
+	const cardsPreset = sidebar.querySelector<HTMLSelectElement>(
+		"#kiln-te-cards-preset",
+	)!;
+	const cardsHover = sidebar.querySelector<HTMLSelectElement>(
+		"#kiln-te-cards-hover",
+	)!;
+	const cardsTint = sidebar.querySelector<HTMLInputElement>(
+		"#kiln-te-cards-tint",
+	)!;
+	const cardsTintAuto = sidebar.querySelector<HTMLInputElement>(
+		"#kiln-te-cards-tint-auto",
+	)!;
+	const cardsOpacity = sidebar.querySelector<HTMLInputElement>(
+		"#kiln-te-cards-opacity",
+	)!;
+	const cardsOpacityLabel = sidebar.querySelector<HTMLElement>(
+		"#kiln-te-cards-opacity-label",
+	)!;
+	const cardsRadius = sidebar.querySelector<HTMLInputElement>(
+		"#kiln-te-cards-radius",
+	)!;
+	const cardsRadiusLabel = sidebar.querySelector<HTMLElement>(
+		"#kiln-te-cards-radius-label",
+	)!;
+	const pointerClick = sidebar.querySelector<HTMLSelectElement>(
+		"#kiln-te-pointer-click",
+	)!;
+	const pointerTrail = sidebar.querySelector<HTMLSelectElement>(
+		"#kiln-te-pointer-trail",
+	)!;
+	const pointerColor = sidebar.querySelector<HTMLInputElement>(
+		"#kiln-te-pointer-color",
+	)!;
+	const pointerColorAuto = sidebar.querySelector<HTMLInputElement>(
+		"#kiln-te-pointer-color-auto",
+	)!;
 	const publishStatus = sidebar.querySelector<HTMLElement>(
 		"#kiln-te-publish-status",
 	)!;
@@ -858,20 +1098,17 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 	)!;
 
 	function closeSidebar() {
-		if (!appliedOnce) {
-			const activeId =
-				(values.config.themeCreator as any).activeThemeId ?? "default";
-			if (activeId === "default") applyKilnTheme(null);
-			else if (activeId in THEME_PRESETS)
-				applyKilnTheme(THEME_PRESETS[activeId]);
-			else applyKilnTheme(savedThemes.find((t) => t.id === activeId) ?? null);
-		}
+		const activeId =
+			(values.config.themeCreator as any).activeThemeId ?? "default";
+		if (activeId === "default") applyKilnTheme(null);
+		else if (activeId in THEME_PRESETS) applyKilnTheme(THEME_PRESETS[activeId]);
+		else applyKilnTheme(savedThemes.find((t) => t.id === activeId) ?? null);
 		visualCss.destroy();
 		document.removeEventListener("mousemove", onResizeMouseMove);
 		document.removeEventListener("mouseup", onResizeMouseUp);
 		document.removeEventListener("mousemove", onWindowDragMove);
 		document.removeEventListener("mouseup", onWindowDragUp);
-		document.body.style.marginRight = "";
+		setSidebarWidthVar(null);
 		document.body.style.userSelect = "";
 		saveTeState({ isOpen: false });
 		sidebar.remove();
@@ -912,7 +1149,14 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			workingNavbar === "#1a1a1a" &&
 			workingFont === "default" &&
 			!workingCss &&
-			!workingCursorSrc
+			!workingBg &&
+			!workingCursorSrc &&
+			!workingIconColor &&
+			workingEffects.length === 0 &&
+			Object.keys(workingColorTokens).length === 0 &&
+			!workingAmbient &&
+			!workingCardStyle &&
+			!workingPointerEffects
 		) {
 			applyKilnTheme(null);
 			return;
@@ -928,10 +1172,14 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			effects: workingEffects,
 			navbarIconColor: workingIconColor || undefined,
 			cursorUrl: workingCursor || undefined,
+			cursorScale: workingCursorScale,
 			colorTokens:
 				Object.keys(workingColorTokens).length > 0
 					? workingColorTokens
 					: undefined,
+			ambient: workingAmbient,
+			cardStyle: workingCardStyle,
+			pointerEffects: workingPointerEffects,
 		});
 	}
 
@@ -942,16 +1190,22 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			return;
 		}
 		list.innerHTML = workingEffects
-			.map(
-				(effect) => `
-				<div class="d-flex align-items-center gap-2 mb-1" data-effect-id="${effect.id}">
-					<span class="badge bg-secondary" style="font-size:0.65em;flex-shrink:0;">${EFFECT_SLOTS[effect.slot].label}</span>
-					<span class="small flex-fill" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${EFFECT_TYPE_CONFIGS[effect.type].label}: <span class="text-muted">${formatEffectValue(effect)}</span></span>
-					<button class="kiln-te-effect-remove" data-id="${effect.id}"
+			.map((effect) => {
+				const slotLabel = EFFECT_SLOTS[effect.slot]?.label ?? effect.slot;
+				const typeCfg = EFFECT_TYPE_CONFIGS[effect.type];
+				const typeLabel = typeCfg?.label ?? effect.type;
+				const value = typeCfg
+					? formatEffectValue(effect)
+					: String(effect.value);
+				return `
+				<div class="d-flex align-items-center gap-2 mb-1" data-effect-id="${escapeHtml(effect.id)}">
+					<span class="badge bg-secondary" style="font-size:0.65em;flex-shrink:0;">${escapeHtml(slotLabel)}</span>
+					<span class="small flex-fill" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(typeLabel)}: <span class="text-muted">${escapeHtml(value)}</span></span>
+					<button class="kiln-te-effect-remove" data-id="${escapeHtml(effect.id)}"
 					        style="background:none;border:none;padding:0 2px;cursor:pointer;color:rgba(255,255,255,0.4);font-size:0.8rem;line-height:1;flex-shrink:0;"
 					        title="Remove">✕</button>
-				</div>`,
-			)
+				</div>`;
+			})
 			.join("");
 		list
 			.querySelectorAll<HTMLButtonElement>(".kiln-te-effect-remove")
@@ -1018,6 +1272,49 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		imageStatus.textContent = "";
 		renderEffectsList();
 		closeAddEffectForm();
+		syncVisualEffectsInputs();
+	}
+
+	function setFieldsEnabled(container: HTMLElement, enabled: boolean) {
+		container.classList.toggle("kiln-te-fields-disabled", !enabled);
+		for (const input of container.querySelectorAll<
+			HTMLInputElement | HTMLSelectElement | HTMLButtonElement
+		>("input, select, button"))
+			input.disabled = !enabled;
+	}
+
+	function syncVisualEffectsInputs() {
+		ambientType.value = workingAmbient?.type ?? "";
+		ambientDensity.value = String(workingAmbient?.density ?? 2);
+		ambientColorAuto.checked = !workingAmbient?.color;
+		ambientColor.value =
+			workingAmbient?.color ??
+			AMBIENT_TYPES.find((t) => t.key === workingAmbient?.type)?.color ??
+			"#ffffff";
+		ambientColor.disabled = !workingAmbient?.color;
+		ambientDensity.disabled = !workingAmbient;
+		ambientColorAuto.disabled = !workingAmbient;
+
+		cardsEnabled.checked = !!workingCardStyle;
+		setFieldsEnabled(cardsFields, !!workingCardStyle);
+		cardsPreset.value = workingCardStyle?.preset ?? "glass";
+		cardsHover.value = workingCardStyle?.hover ?? "none";
+		cardsTintAuto.checked = !workingCardStyle?.tint;
+		cardsTint.value = workingCardStyle?.tint ?? workingNavbar;
+		cardsTint.disabled = !workingCardStyle?.tint;
+		const opacity =
+			workingCardStyle?.opacity ??
+			CARD_PRESET_OPACITY[cardsPreset.value as CardStyle["preset"]];
+		cardsOpacity.value = String(opacity);
+		cardsOpacityLabel.textContent = `${opacity}%`;
+		cardsRadius.value = String(workingCardStyle?.radius ?? 12);
+		cardsRadiusLabel.textContent = `${workingCardStyle?.radius ?? 12}px`;
+
+		pointerClick.value = workingPointerEffects?.click ?? "";
+		pointerTrail.value = workingPointerEffects?.trail ?? "";
+		pointerColorAuto.checked = !workingPointerEffects?.color;
+		pointerColor.value = workingPointerEffects?.color ?? workingAccent;
+		pointerColor.disabled = !workingPointerEffects?.color;
 	}
 
 	function updateNameUI() {
@@ -1093,18 +1390,34 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			});
 	}
 
+	async function findVerifiedSession() {
+		const sessions = await apiSessions.getValue();
+		const currentUser = await getUserDetails();
+		return sessions.find(
+			(s) =>
+				s.state === "verified" &&
+				s.accessToken &&
+				(!currentUser || s.userId === currentUser.userId),
+		);
+	}
+
 	async function attemptPublish(
 		savedTheme: NonNullable<ReturnType<typeof getCurrentSavedTheme>>,
 		mode: "publish" | "update",
 		button: HTMLButtonElement,
 	) {
-		const sessions = await apiSessions.getValue();
 		const verified =
-			sessions.find((s) => s.state === "verified" && s.accessToken) ??
-			(await showVerificationModal());
+			(await findVerifiedSession()) ?? (await showVerificationModal());
 		if (!verified) return;
 
 		if (mode === "publish") {
+			const acknowledged = await confirmPublishRulesSeen(
+				publishRulesOverlay,
+				publishRulesContinueBtn,
+				publishRulesCancelBtn,
+			);
+			if (!acknowledged) return;
+
 			const publishedCount = savedThemes.filter((t) => t.publishedSlug).length;
 			const cfg = await getConfig();
 			if (publishedCount >= cfg.limits.maxPublishedThemes) {
@@ -1130,10 +1443,22 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			...(workingFont !== "default" ? { fontFamily: workingFont } : {}),
 			...(workingCss ? { customCss: workingCss } : {}),
 			...(workingBg ? { backgroundImage: workingBg } : {}),
+			...(workingBg && workingOverlayOpacity > 0
+				? {
+						backgroundOverlayColor: workingOverlayColor,
+						backgroundOverlayOpacity: workingOverlayOpacity,
+					}
+				: {}),
+			...(workingCursor ? { cursorUrl: workingCursor } : {}),
 			...(workingEffects.length ? { effects: workingEffects } : {}),
 			...(workingIconColor ? { navbarIconColor: workingIconColor } : {}),
 			...(Object.keys(workingColorTokens).length
 				? { colorTokens: workingColorTokens }
+				: {}),
+			...(workingAmbient ? { ambient: workingAmbient } : {}),
+			...(workingCardStyle ? { cardStyle: workingCardStyle } : {}),
+			...(workingPointerEffects
+				? { pointerEffects: workingPointerEffects }
 				: {}),
 			...(existingId ? { existingId } : {}),
 		});
@@ -1221,10 +1546,8 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 					"text-warning",
 				);
 				unpublishBtn.addEventListener("click", async () => {
-					const sessions = await apiSessions.getValue();
 					const verified =
-						sessions.find((s) => s.state === "verified" && s.accessToken) ??
-						(await showVerificationModal());
+						(await findVerifiedSession()) ?? (await showVerificationModal());
 					if (!verified) return;
 					unpublishBtn.disabled = true;
 					publishStatus.textContent = "Unpublishing…";
@@ -1292,7 +1615,6 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 	}
 
 	async function handleImported(localId: string) {
-		appliedOnce = true;
 		savedThemes = await _savedThemes.getValue();
 		switchTheme(localId);
 	}
@@ -1321,56 +1643,72 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			return;
 		}
 		const img = new Image();
-		img.src = workingCursorSrc;
-		await new Promise<void>((r) => {
-			if (img.complete) {
-				r();
-				return;
-			}
-			img.onload = () => r();
-			img.onerror = () => r();
+		const loaded = await new Promise<boolean>((resolve) => {
+			img.onload = () => resolve(true);
+			img.onerror = () => resolve(false);
+			img.src = workingCursorSrc;
+			if (img.complete && img.naturalWidth > 0) resolve(true);
 		});
-		const canvas = document.createElement("canvas");
-		canvas.width = workingCursorScale;
-		canvas.height = workingCursorScale;
-		canvas
-			.getContext("2d")!
-			.drawImage(img, 0, 0, workingCursorScale, workingCursorScale);
-		workingCursor = canvas.toDataURL("image/png");
+		if (!loaded) {
+			cursorNameEl.textContent = "Couldn't load that image. Try again.";
+			refreshPreview();
+			return;
+		}
+		try {
+			const canvas = document.createElement("canvas");
+			canvas.width = workingCursorScale;
+			canvas.height = workingCursorScale;
+			canvas
+				.getContext("2d")!
+				.drawImage(img, 0, 0, workingCursorScale, workingCursorScale);
+			workingCursor = canvas.toDataURL("image/png");
+		} catch {
+			cursorNameEl.textContent = "Couldn't process that image. Try again.";
+		}
 		refreshPreview();
 	}
 
-	async function clonePresetIfNeeded() {
-		if (!currentId.startsWith("__preset__:")) return;
+	function clonePresetIfNeeded(): Promise<void> {
+		if (!currentId.startsWith("__preset__:"))
+			return clonePresetPromise ?? Promise.resolve();
+		if (clonePresetPromise) return clonePresetPromise;
 		const themeId = crypto.randomUUID();
-		const current = await _savedThemes.getValue();
-		current.push({
-			id: themeId,
-			name: workingName,
-			accentColor: workingAccent,
-			navbarColor: workingNavbar,
-			fontFamily: workingFont !== "default" ? workingFont : undefined,
-			customCss: workingCss || undefined,
-			backgroundImage: workingBg || undefined,
-			backgroundOverlayColor:
-				workingOverlayOpacity > 0 ? workingOverlayColor : undefined,
-			backgroundOverlayOpacity:
-				workingOverlayOpacity > 0 ? workingOverlayOpacity : undefined,
-			effects: workingEffects.length > 0 ? workingEffects : undefined,
-			navbarIconColor: workingIconColor || undefined,
-			cursorUrl: workingCursorSrc || undefined,
-			cursorScale: workingCursorSrc ? workingCursorScale : undefined,
-			colorTokens:
-				Object.keys(workingColorTokens).length > 0
-					? workingColorTokens
-					: undefined,
-		});
-		await _savedThemes.setValue(current);
-		savedThemes = current;
 		currentId = themeId;
-		buildSelect();
-		updateNameUI();
-		refreshLeftActions();
+		clonePresetPromise = (async () => {
+			const current = await _savedThemes.getValue();
+			current.push({
+				id: themeId,
+				name: workingName,
+				accentColor: workingAccent,
+				navbarColor: workingNavbar,
+				fontFamily: workingFont !== "default" ? workingFont : undefined,
+				customCss: workingCss || undefined,
+				backgroundImage: workingBg || undefined,
+				backgroundOverlayColor:
+					workingOverlayOpacity > 0 ? workingOverlayColor : undefined,
+				backgroundOverlayOpacity:
+					workingOverlayOpacity > 0 ? workingOverlayOpacity : undefined,
+				effects: workingEffects.length > 0 ? workingEffects : undefined,
+				navbarIconColor: workingIconColor || undefined,
+				cursorUrl: workingCursorSrc || undefined,
+				cursorScale: workingCursorSrc ? workingCursorScale : undefined,
+				colorTokens:
+					Object.keys(workingColorTokens).length > 0
+						? workingColorTokens
+						: undefined,
+				ambient: workingAmbient,
+				cardStyle: workingCardStyle,
+				pointerEffects: workingPointerEffects,
+			});
+			await _savedThemes.setValue(current);
+			savedThemes = current;
+			buildSelect();
+			updateNameUI();
+			refreshLeftActions();
+		})().finally(() => {
+			clonePresetPromise = null;
+		});
+		return clonePresetPromise;
 	}
 
 	const renameOverlay = sidebar.querySelector<HTMLElement>(
@@ -1543,8 +1881,7 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		await deleteSavedTheme(savedTheme);
 		const activeId = (values.config.themeCreator as any).activeThemeId;
 		if (activeId === savedTheme.id) {
-			(values.config as any).themeCreator = { activeThemeId: "default" };
-			await preferences.setValue(values);
+			await setActiveThemeId("default");
 			applyKilnTheme(null);
 		}
 		savedThemes = await _savedThemes.getValue();
@@ -1656,12 +1993,10 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 				cursorNameEl.textContent = "Couldn't load that image. Try again.";
 				return;
 			}
-			// An <img> rather than fetch(): the page's CSP allows data: images.
 			const img = new Image();
 			img.src = image.data;
 			await img.decode();
 			await clonePresetIfNeeded();
-			// Browsers ignore cursors over 128px, and decals are usually bigger.
 			const srcCanvas = document.createElement("canvas");
 			srcCanvas.width = 128;
 			srcCanvas.height = 128;
@@ -1786,6 +2121,76 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		});
 	}
 
+	async function readAmbient() {
+		const type = ambientType.value as AmbientType | "";
+		await clonePresetIfNeeded();
+		workingAmbient = type
+			? {
+					type,
+					density: Number(ambientDensity.value),
+					...(ambientColorAuto.checked ? {} : { color: ambientColor.value }),
+				}
+			: undefined;
+		if (ambientColorAuto.checked)
+			ambientColor.value =
+				AMBIENT_TYPES.find((t) => t.key === type)?.color ?? "#ffffff";
+		ambientColor.disabled = !type || ambientColorAuto.checked;
+		ambientDensity.disabled = !type;
+		ambientColorAuto.disabled = !type;
+		refreshPreview();
+	}
+	for (const input of [ambientType, ambientDensity, ambientColorAuto])
+		input.addEventListener("change", readAmbient);
+	ambientColor.addEventListener("input", readAmbient);
+
+	async function readCardStyle() {
+		setFieldsEnabled(cardsFields, cardsEnabled.checked);
+		cardsTint.disabled = !cardsEnabled.checked || cardsTintAuto.checked;
+		cardsOpacityLabel.textContent = `${cardsOpacity.value}%`;
+		cardsRadiusLabel.textContent = `${cardsRadius.value}px`;
+		await clonePresetIfNeeded();
+		workingCardStyle = cardsEnabled.checked
+			? {
+					preset: cardsPreset.value as CardStyle["preset"],
+					hover: cardsHover.value as CardStyle["hover"],
+					opacity: Number(cardsOpacity.value),
+					radius: Number(cardsRadius.value),
+					...(cardsTintAuto.checked ? {} : { tint: cardsTint.value }),
+				}
+			: undefined;
+		refreshPreview();
+	}
+	cardsPreset.addEventListener("change", () => {
+		const opacity =
+			CARD_PRESET_OPACITY[cardsPreset.value as CardStyle["preset"]];
+		cardsOpacity.value = String(opacity);
+		void readCardStyle();
+	});
+	for (const input of [cardsEnabled, cardsHover, cardsTintAuto])
+		input.addEventListener("change", readCardStyle);
+	for (const input of [cardsTint, cardsOpacity, cardsRadius])
+		input.addEventListener("input", readCardStyle);
+
+	async function readPointerEffects() {
+		pointerColor.disabled = pointerColorAuto.checked;
+		const effects: PointerEffects = {
+			...(pointerClick.value
+				? { click: pointerClick.value as PointerEffects["click"] }
+				: {}),
+			...(pointerTrail.value
+				? { trail: pointerTrail.value as PointerEffects["trail"] }
+				: {}),
+			...(pointerColorAuto.checked ? {} : { color: pointerColor.value }),
+		};
+		await clonePresetIfNeeded();
+		workingPointerEffects =
+			effects.click || effects.trail ? effects : undefined;
+		refreshPreview();
+	}
+	for (const input of [pointerClick, pointerTrail, pointerColorAuto])
+		input.addEventListener("change", readPointerEffects);
+	pointerColor.addEventListener("input", readPointerEffects);
+
 	exportJsonBtn.addEventListener("click", () => {
 		const data: Record<string, unknown> = {
 			name: workingName,
@@ -1807,6 +2212,9 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		}
 		if (Object.keys(workingColorTokens).length > 0)
 			data.colorTokens = workingColorTokens;
+		if (workingAmbient) data.ambient = workingAmbient;
+		if (workingCardStyle) data.cardStyle = workingCardStyle;
+		if (workingPointerEffects) data.pointerEffects = workingPointerEffects;
 		const blob = new Blob([JSON.stringify(data, null, 2)], {
 			type: "application/json",
 		});
@@ -1817,6 +2225,121 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		a.click();
 		URL.revokeObjectURL(url);
 	});
+
+	function sanitizeImportedEffects(raw: unknown): ThemeEffect[] {
+		if (!Array.isArray(raw)) return [];
+		const result: ThemeEffect[] = [];
+		for (const item of raw) {
+			if (!item || typeof item !== "object") continue;
+			const slot = (item as any).slot;
+			const type = (item as any).type;
+			if (typeof slot !== "string" || !(slot in EFFECT_SLOTS)) continue;
+			const slotCfg = EFFECT_SLOTS[slot as keyof typeof EFFECT_SLOTS];
+			if (
+				typeof type !== "string" ||
+				!slotCfg.types.includes(type as EffectType)
+			)
+				continue;
+			const cfg = EFFECT_TYPE_CONFIGS[type as EffectType].input;
+			const rawValue = (item as any).value;
+			let value: string | number | null = null;
+			if (cfg.kind === "slider" || cfg.kind === "number") {
+				const n = Number(rawValue);
+				if (!Number.isFinite(n)) continue;
+				value = Math.min(cfg.max, Math.max(cfg.min, n));
+			} else if (cfg.kind === "select") {
+				if (
+					typeof rawValue !== "string" ||
+					!cfg.options.some((o) => o.value === rawValue)
+				)
+					continue;
+				value = rawValue;
+			} else if (cfg.kind === "color") {
+				if (typeof rawValue !== "string" || !isValidHex(rawValue)) continue;
+				value = rawValue;
+			} else if (cfg.kind === "color-alpha") {
+				if (typeof rawValue !== "string") continue;
+				const [hex, alpha] = parseColorAlphaShared(rawValue);
+				const [r, g, b] = hexToRgb(hex);
+				value = `rgba(${r},${g},${b},${(alpha / 100).toFixed(2)})`;
+			} else if (cfg.kind === "url") {
+				if (typeof rawValue !== "string" || rawValue.length > 2000) continue;
+				value = rawValue;
+			} else if (cfg.kind === "audio-volume") {
+				if (typeof rawValue !== "string" || !parseAssetVolume(rawValue))
+					continue;
+				value = rawValue;
+			}
+			if (value === null) continue;
+			const rawId = (item as any).id;
+			const id =
+				typeof rawId === "string" && rawId ? rawId : crypto.randomUUID();
+			result.push({
+				id,
+				slot: slot as ThemeEffect["slot"],
+				type: type as EffectType,
+				value,
+			});
+		}
+		return result;
+	}
+
+	function sanitizeImportedAmbient(raw: unknown): Ambient | undefined {
+		if (!raw || typeof raw !== "object") return undefined;
+		const type = (raw as any).type;
+		if (typeof type !== "string" || !AMBIENT_TYPES.some((t) => t.key === type))
+			return undefined;
+		const density = Number((raw as any).density);
+		const color = (raw as any).color;
+		return {
+			type: type as AmbientType,
+			density: Number.isFinite(density) ? Math.min(3, Math.max(1, density)) : 2,
+			...(typeof color === "string" && isValidHex(color) ? { color } : {}),
+		};
+	}
+
+	function sanitizeImportedCardStyle(raw: unknown): CardStyle | undefined {
+		if (!raw || typeof raw !== "object") return undefined;
+		const preset = (raw as any).preset;
+		if (typeof preset !== "string" || !(preset in CARD_PRESET_OPACITY))
+			return undefined;
+		const hover = (raw as any).hover;
+		const tint = (raw as any).tint;
+		const opacity = Number((raw as any).opacity);
+		const radius = Number((raw as any).radius);
+		return {
+			preset: preset as CardStyle["preset"],
+			...(["none", "lift", "glow", "tilt"].includes(hover) ? { hover } : {}),
+			...(typeof tint === "string" && isValidHex(tint) ? { tint } : {}),
+			...(Number.isFinite(opacity)
+				? { opacity: Math.min(100, Math.max(0, opacity)) }
+				: {}),
+			...(Number.isFinite(radius)
+				? { radius: Math.min(32, Math.max(0, radius)) }
+				: {}),
+			...(typeof (raw as any).liquidGlass === "boolean"
+				? { liquidGlass: (raw as any).liquidGlass }
+				: {}),
+		};
+	}
+
+	function sanitizeImportedPointerEffects(
+		raw: unknown,
+	): PointerEffects | undefined {
+		if (!raw || typeof raw !== "object") return undefined;
+		const click = (raw as any).click;
+		const trail = (raw as any).trail;
+		const color = (raw as any).color;
+		const validClick = ["sparkles", "hearts", "ripples", "confetti"];
+		const validTrail = ["sparkles", "dots", "hearts", "glow"];
+		const result: PointerEffects = {};
+		if (typeof click === "string" && validClick.includes(click))
+			result.click = click as PointerEffects["click"];
+		if (typeof trail === "string" && validTrail.includes(trail))
+			result.trail = trail as PointerEffects["trail"];
+		if (typeof color === "string" && isValidHex(color)) result.color = color;
+		return result.click || result.trail ? result : undefined;
+	}
 
 	jsonImportInput.addEventListener("change", async () => {
 		const file = jsonImportInput.files?.[0];
@@ -1847,32 +2370,55 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			workingBg =
 				typeof data.backgroundImage === "string" ? data.backgroundImage : "";
 			workingOverlayColor =
-				typeof data.backgroundOverlayColor === "string"
+				typeof data.backgroundOverlayColor === "string" &&
+				isValidHex(data.backgroundOverlayColor)
 					? data.backgroundOverlayColor
 					: "#000000";
 			workingOverlayOpacity =
 				typeof data.backgroundOverlayOpacity === "number"
-					? data.backgroundOverlayOpacity
+					? Math.min(100, Math.max(0, data.backgroundOverlayOpacity))
 					: 0;
-			workingEffects = Array.isArray(data.effects) ? data.effects : [];
+			workingEffects = sanitizeImportedEffects(data.effects);
+			const droppedEffects = Array.isArray(data.effects)
+				? data.effects.length - workingEffects.length
+				: 0;
 			workingIconColor =
-				typeof data.navbarIconColor === "string" ? data.navbarIconColor : "";
+				typeof data.navbarIconColor === "string" &&
+				isValidHex(data.navbarIconColor)
+					? data.navbarIconColor
+					: "";
 			workingCursorSrc =
 				typeof data.cursorUrl === "string" ? data.cursorUrl : "";
 			workingCursorScale =
-				typeof data.cursorScale === "number" ? data.cursorScale : 32;
+				typeof data.cursorScale === "number"
+					? Math.min(128, Math.max(16, data.cursorScale))
+					: 32;
 			workingCursor = "";
 			workingColorTokens =
 				data.colorTokens &&
 				typeof data.colorTokens === "object" &&
 				!Array.isArray(data.colorTokens)
-					? { ...data.colorTokens }
+					? (Object.fromEntries(
+							Object.entries(data.colorTokens).filter(
+								(entry): entry is [string, string] =>
+									typeof entry[1] === "string" && isValidHex(entry[1]),
+							),
+						) as Record<string, string>)
 					: {};
+			workingAmbient = sanitizeImportedAmbient(data.ambient);
+			workingCardStyle = sanitizeImportedCardStyle(data.cardStyle);
+			workingPointerEffects = sanitizeImportedPointerEffects(
+				data.pointerEffects,
+			);
 			buildSelect();
 			syncInputsToState();
 			updateNameUI();
 			refreshLeftActions();
 			await applyScaledCursor();
+			publishStatus.textContent =
+				droppedEffects > 0
+					? `Imported. ${droppedEffects} invalid effect${droppedEffects === 1 ? "" : "s"} were skipped.`
+					: "";
 		} catch {
 			publishStatus.textContent = "Failed to parse JSON file.";
 		}
@@ -1914,16 +2460,12 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 
 	saveBtn.addEventListener("click", async () => {
 		if (currentId === "__default__") {
-			(values.config as any).themeCreator = { activeThemeId: "default" };
-			await preferences.setValue(values);
+			await setActiveThemeId("default");
 			applyKilnTheme(null);
-			appliedOnce = true;
 		} else if (currentId.startsWith("__preset__:")) {
 			const key = currentId.slice(11);
-			(values.config as any).themeCreator = { activeThemeId: key };
-			await preferences.setValue(values);
+			await setActiveThemeId(key);
 			applyKilnTheme(THEME_PRESETS[key]);
-			appliedOnce = true;
 		} else {
 			const name = workingName || "My Theme";
 			const current = await _savedThemes.getValue();
@@ -1950,6 +2492,9 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 						Object.keys(workingColorTokens).length > 0
 							? workingColorTokens
 							: undefined,
+					ambient: workingAmbient,
+					cardStyle: workingCardStyle,
+					pointerEffects: workingPointerEffects,
 				});
 			} else {
 				themeId = currentId;
@@ -1975,11 +2520,13 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 							Object.keys(workingColorTokens).length > 0
 								? workingColorTokens
 								: undefined,
+						ambient: workingAmbient,
+						cardStyle: workingCardStyle,
+						pointerEffects: workingPointerEffects,
 					};
 			}
 			await _savedThemes.setValue(current);
-			(values.config as any).themeCreator = { activeThemeId: themeId };
-			await preferences.setValue(values);
+			await setActiveThemeId(themeId);
 			applyKilnTheme({
 				accentColor: workingAccent,
 				navbarColor: workingNavbar,
@@ -1991,12 +2538,15 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 				effects: workingEffects,
 				navbarIconColor: workingIconColor || undefined,
 				cursorUrl: workingCursor || undefined,
+				cursorScale: workingCursorScale,
 				colorTokens:
 					Object.keys(workingColorTokens).length > 0
 						? workingColorTokens
 						: undefined,
+				ambient: workingAmbient,
+				cardStyle: workingCardStyle,
+				pointerEffects: workingPointerEffects,
 			});
-			appliedOnce = true;
 
 			if (isNew()) {
 				savedThemes = await _savedThemes.getValue();
@@ -2042,6 +2592,16 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 	)!;
 	const selRefSearch = sidebar.querySelector<HTMLInputElement>(
 		"#kiln-te-selref-search",
+	)!;
+
+	const publishRulesOverlay = sidebar.querySelector<HTMLElement>(
+		"#kiln-te-publish-rules-overlay",
+	)!;
+	const publishRulesContinueBtn = sidebar.querySelector<HTMLButtonElement>(
+		"#kiln-te-publish-rules-continue",
+	)!;
+	const publishRulesCancelBtn = sidebar.querySelector<HTMLButtonElement>(
+		"#kiln-te-publish-rules-cancel",
 	)!;
 
 	function openSelectorRefOverlay() {
@@ -2183,27 +2743,19 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 	async function syncImportedThemes() {
 		const targets = savedThemes.filter((t) => t.importedSlug && t.autoUpdate);
 		if (targets.length === 0) return;
-		const current = await _savedThemes.getValue();
-		let changed = false;
+		const fetched = new Map<string, Extension.GetPublishedThemeApi["data"]>();
 		for (const t of targets) {
 			const result = await sendMessage("getPublishedTheme", t.importedSlug!);
-			if (!result.ok) continue;
-			const fetched = result.data.data;
-			const idx = current.findIndex((x) => x.id === t.id);
+			if (result.ok) fetched.set(t.id, result.data.data);
+		}
+		if (fetched.size === 0) return;
+
+		const current = await _savedThemes.getValue();
+		let changed = false;
+		for (const [id, data] of fetched) {
+			const idx = current.findIndex((x) => x.id === id);
 			if (idx < 0) continue;
-			const updatedEntry = {
-				...current[idx],
-				name: fetched.name,
-				accentColor: fetched.accentColor,
-				navbarColor: fetched.navbarColor,
-				fontFamily: fetched.fontFamily ?? undefined,
-				customCss: fetched.customCss ?? undefined,
-				backgroundImage: fetched.backgroundImage ?? undefined,
-				effects: fetched.effects?.length ? fetched.effects : undefined,
-				navbarIconColor: fetched.navbarIconColor ?? undefined,
-				cursorUrl: fetched.cursorUrl ?? undefined,
-				colorTokens: fetched.colorTokens ?? undefined,
-			};
+			const updatedEntry = { ...current[idx], ...publishedThemeFields(data) };
 			if (JSON.stringify(updatedEntry) !== JSON.stringify(current[idx])) {
 				current[idx] = updatedEntry;
 				changed = true;
@@ -2211,7 +2763,7 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		}
 		if (!changed) return;
 		await _savedThemes.setValue(current);
-		savedThemes = current;
+		savedThemes = await _savedThemes.getValue();
 		buildSelect();
 	}
 

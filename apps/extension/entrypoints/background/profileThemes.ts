@@ -16,14 +16,33 @@
 
 import { Extension } from "@kiln/schemas";
 import { onMessage } from "@/utils/messaging";
-import { handle, safeFetch, withApi, withAuthSession } from "./shared";
+import { expireKVCache, pullKVCache } from "@/utils/utilities";
+import {
+	dedupe,
+	handle,
+	requireApi,
+	safeFetch,
+	withApi,
+	withAuthSession,
+} from "./shared";
+
+const PROFILE_THEME_CACHE_TTL = 60 * 1000;
 
 onMessage("getProfileTheme", ({ data: userId }) =>
 	handle(async () => {
-		const config = await withApi("kiln_api", "extension");
-		return safeFetch(
-			`${config.resolvedUrls.extension}profile-themes/${userId}`,
-			Extension.ProfileThemeApi,
+		const config = await requireApi("extension");
+		return dedupe(`profileTheme:${userId}`, () =>
+			pullKVCache(
+				"profileThemes",
+				String(userId),
+				() =>
+					safeFetch(
+						`${config.resolvedUrls.extension}profile-themes/${userId}`,
+						Extension.ProfileThemeApi,
+					),
+				PROFILE_THEME_CACHE_TTL,
+				false,
+			),
 		);
 	}),
 );
@@ -41,8 +60,8 @@ onMessage("getMyProfileTheme", ({ data: userId }) =>
 );
 
 onMessage("saveProfileTheme", ({ data }) =>
-	handle(() =>
-		withAuthSession(data.userId, (token, config) =>
+	handle(async () => {
+		const result = await withAuthSession(data.userId, (token, config) =>
 			safeFetch(
 				`${config.resolvedUrls.extension}profile-themes`,
 				Extension.ProfileThemeApi,
@@ -65,7 +84,7 @@ onMessage("saveProfileTheme", ({ data }) =>
 						...(data.backgroundOverlayColor
 							? { backgroundOverlayColor: data.backgroundOverlayColor }
 							: {}),
-						...(data.backgroundOverlayOpacity
+						...(data.backgroundOverlayOpacity !== undefined
 							? { backgroundOverlayOpacity: data.backgroundOverlayOpacity }
 							: {}),
 						...(data.effects?.length ? { effects: data.effects } : {}),
@@ -94,13 +113,15 @@ onMessage("saveProfileTheme", ({ data }) =>
 					}),
 				},
 			),
-		),
-	),
+		);
+		await expireKVCache("profileThemes", String(data.userId));
+		return result;
+	}),
 );
 
 onMessage("setProfileThemeEnabled", ({ data }) =>
-	handle(() =>
-		withAuthSession(data.userId, (token, config) =>
+	handle(async () => {
+		const result = await withAuthSession(data.userId, (token, config) =>
 			safeFetch(
 				`${config.resolvedUrls.extension}profile-themes/me/enabled`,
 				Extension.ProfileThemeOkApi,
@@ -113,13 +134,15 @@ onMessage("setProfileThemeEnabled", ({ data }) =>
 					body: JSON.stringify({ enabled: data.enabled }),
 				},
 			),
-		),
-	),
+		);
+		await expireKVCache("profileThemes", String(data.userId));
+		return result;
+	}),
 );
 
 onMessage("deleteProfileTheme", ({ data: userId }) =>
-	handle(() =>
-		withAuthSession(userId, (token, config) =>
+	handle(async () => {
+		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
 				`${config.resolvedUrls.extension}profile-themes/me`,
 				Extension.ProfileThemeOkApi,
@@ -128,8 +151,10 @@ onMessage("deleteProfileTheme", ({ data: userId }) =>
 					headers: { Authorization: `Bearer ${token}` },
 				},
 			),
-		),
-	),
+		);
+		await expireKVCache("profileThemes", String(userId));
+		return result;
+	}),
 );
 
 onMessage("reportProfileTheme", ({ data }) =>

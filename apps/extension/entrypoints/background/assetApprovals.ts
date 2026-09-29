@@ -24,7 +24,8 @@ const CHECK_INTERVAL_MINUTES = 20;
 const PENDING_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 const PAGE_LIMIT = 100;
 
-export function scheduleAssetApprovalCheck() {
+export async function scheduleAssetApprovalCheck() {
+	if (await browser.alarms.get(ALARM_NAME)) return;
 	browser.alarms.create(ALARM_NAME, {
 		delayInMinutes: 1,
 		periodInMinutes: CHECK_INTERVAL_MINUTES,

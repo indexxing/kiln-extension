@@ -17,7 +17,7 @@
 import { Extension } from "@kiln/schemas";
 import { onMessage } from "@/utils/messaging";
 import { apiSessions } from "@/utils/storage";
-import { pullKVCache } from "@/utils/utilities";
+import { expireKVCache, pullKVCache } from "@/utils/utilities";
 import {
 	handle,
 	NoSessionError,
@@ -25,6 +25,15 @@ import {
 	withApi,
 	withAuthSession,
 } from "./shared";
+
+function isJwtExpired(token: string): boolean {
+	try {
+		const payload = JSON.parse(atob(token.split(".")[1]));
+		return typeof payload.exp !== "number" || Date.now() >= payload.exp * 1000;
+	} catch {
+		return true;
+	}
+}
 
 onMessage("getApiSession", ({ data: userId }) =>
 	handle(() =>
@@ -55,7 +64,13 @@ onMessage("startKilnVerification", ({ data: userId }) =>
 		const config = await withApi("kiln_api", "extension");
 		const sessionStore = await apiSessions.getValue();
 		const session = sessionStore.find((session) => session.userId == userId);
-		if (session) throw new Error("Session already exists for user");
+		const blocked =
+			session &&
+			(session.state === "verified" ||
+				(session.state === "pending" &&
+					!!session.verificationToken &&
+					!isJwtExpired(session.verificationToken)));
+		if (blocked) throw new Error("Session already exists for user");
 		return safeFetch(
 			`${config.resolvedUrls.extension}auth/flow/start`,
 			Extension.AuthStartApi,
@@ -75,7 +90,7 @@ onMessage("finishKilnVerification", ({ data: userId }) =>
 		const session = sessionStore.find((session) => session.userId == userId);
 		if (!session?.verificationToken)
 			throw new Error("No pending verification for user");
-		return safeFetch(
+		const result = await safeFetch(
 			`${config.resolvedUrls.extension}auth/flow/end`,
 			Extension.AuthEndApi,
 			{
@@ -84,6 +99,8 @@ onMessage("finishKilnVerification", ({ data: userId }) =>
 				headers: { Authorization: `Bearer ${session.verificationToken}` },
 			},
 		);
+		await expireKVCache("currentSession", String(userId));
+		return result;
 	}),
 );
 
@@ -102,6 +119,7 @@ onMessage("terminateKilnSession", ({ data: userId }) =>
 			},
 		});
 		await apiSessions.setValue(sessionStore.filter((s) => s.userId != userId));
+		await expireKVCache("currentSession", String(userId));
 		return null;
 	}),
 );
@@ -182,6 +200,18 @@ onMessage("publishTheme", ({ data }) =>
 						...(data.colorTokens && Object.keys(data.colorTokens).length
 							? { colorTokens: data.colorTokens }
 							: {}),
+						...(data.ambient ? { ambient: data.ambient } : {}),
+						...(data.cardStyle ? { cardStyle: data.cardStyle } : {}),
+						...(data.pointerEffects
+							? { pointerEffects: data.pointerEffects }
+							: {}),
+						...(data.cursorUrl ? { cursorUrl: data.cursorUrl } : {}),
+						...(data.backgroundOverlayColor
+							? { backgroundOverlayColor: data.backgroundOverlayColor }
+							: {}),
+						...(data.backgroundOverlayOpacity !== undefined
+							? { backgroundOverlayOpacity: data.backgroundOverlayOpacity }
+							: {}),
 					}),
 				},
 			),
@@ -254,6 +284,48 @@ onMessage("adminReviewTheme", ({ data }) =>
 				Extension.AdminReviewThemeApi,
 				{
 					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			),
+		),
+	),
+);
+
+onMessage("adminGetPendingProfileThemes", ({ data: userId }) =>
+	handle(() =>
+		withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/profile-themes/pending`,
+				Extension.AdminPendingProfileThemesApi,
+				{ headers: { Authorization: `Bearer ${token}` } },
+			),
+		),
+	),
+);
+
+onMessage("adminReviewProfileTheme", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/profile-themes/${data.targetUserId}/${data.action}`,
+				Extension.ProfileThemeOkApi,
+				{
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			),
+		),
+	),
+);
+
+onMessage("adminDeleteProfileTheme", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/profile-themes/${data.targetUserId}`,
+				Extension.ProfileThemeOkApi,
+				{
+					method: "DELETE",
 					headers: { Authorization: `Bearer ${token}` },
 				},
 			),
@@ -409,6 +481,18 @@ onMessage("adminDeleteFeedback", ({ data }) =>
 					method: "DELETE",
 					headers: { Authorization: `Bearer ${token}` },
 				},
+			),
+		),
+	),
+);
+
+onMessage("adminGetStats", ({ data: userId }) =>
+	handle(() =>
+		withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/stats`,
+				Extension.AdminStatsApi,
+				{ headers: { Authorization: `Bearer ${token}` } },
 			),
 		),
 	),

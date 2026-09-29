@@ -24,7 +24,13 @@ import {
 	pullCache,
 	pullKVCache,
 } from "@/utils/utilities";
-import { handle, safeFetch, withApi, withAuthSession } from "./shared";
+import {
+	handle,
+	resolveInjectableTabId,
+	safeFetch,
+	withApi,
+	withAuthSession,
+} from "./shared";
 
 onMessage("getRetroItems", ({ data: page = 1 }) =>
 	handle(async () => {
@@ -149,16 +155,13 @@ onMessage("getAvatarHashes", ({ data: userIds }) =>
 	}),
 );
 
-onMessage("showSecurityKeyRenamePrompt", ({ data: { currentName } }) =>
+onMessage("showSecurityKeyRenamePrompt", ({ data: { currentName }, sender }) =>
 	handle(async () => {
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		if (!tabs[0]?.id) return null;
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) return null;
 
 		const results = await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id },
+			target: { tabId },
 			world: "MAIN",
 			args: [currentName],
 			func: async (currentName: string) => {
@@ -193,36 +196,57 @@ onMessage("showSecurityKeyRenamePrompt", ({ data: { currentName } }) =>
 	}),
 );
 
-function waitForTabLoad(tabId: number): Promise<void> {
-	return new Promise((resolve) => {
-		const listener = (
+function waitForTabLoad(tabId: number, timeoutMs = 15000): Promise<void> {
+	return new Promise((resolve, reject) => {
+		let settled = false;
+
+		const cleanup = () => {
+			browser.tabs.onUpdated.removeListener(updateListener);
+			browser.tabs.onRemoved.removeListener(removeListener);
+			clearTimeout(timer);
+		};
+
+		const updateListener = (
 			updatedTabId: number,
 			changeInfo: { status?: string },
 		) => {
-			if (updatedTabId === tabId && changeInfo.status === "complete") {
-				browser.tabs.onUpdated.removeListener(listener);
-				resolve();
-			}
+			if (settled || updatedTabId !== tabId || changeInfo.status !== "complete")
+				return;
+			settled = true;
+			cleanup();
+			resolve();
 		};
-		browser.tabs.onUpdated.addListener(listener);
+
+		const removeListener = (removedTabId: number) => {
+			if (settled || removedTabId !== tabId) return;
+			settled = true;
+			cleanup();
+			reject(new Error("Tab was closed before it finished loading"));
+		};
+
+		const timer = setTimeout(() => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			reject(new Error("Timed out waiting for tab to load"));
+		}, timeoutMs);
+
+		browser.tabs.onUpdated.addListener(updateListener);
+		browser.tabs.onRemoved.addListener(removeListener);
 	});
 }
 
-onMessage("showBannedUserAlert", ({ data: user }) =>
+onMessage("showBannedUserAlert", ({ data: user, sender }) =>
 	handle(async () => {
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		const tab = tabs[0];
-		if (!tab?.id) throw new Error("No active tab found");
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) throw new Error("No injectable tab found");
 
-		const loadPromise = waitForTabLoad(tab.id);
-		await browser.tabs.update(tab.id, { url: "https://polytoria.com/home" });
+		const loadPromise = waitForTabLoad(tabId);
+		await browser.tabs.update(tabId, { url: "https://polytoria.com/home" });
 		await loadPromise;
 
 		const results = await browser.scripting.executeScript({
-			target: { tabId: tab.id },
+			target: { tabId },
 			world: "MAIN",
 			args: [user],
 			func: async (user: {
@@ -234,6 +258,17 @@ onMessage("showBannedUserAlert", ({ data: user }) =>
 				registeredAt: string;
 				lastSeenAt: string;
 			}) => {
+				const escapeHtml = (value: unknown) => {
+					const div = document.createElement("div");
+					div.textContent = String(value ?? "");
+					return div.innerHTML;
+				};
+
+				const safeHttpsUrl = (value: unknown) => {
+					const url = String(value ?? "").trim();
+					return /^https:\/\//i.test(url) ? url : "";
+				};
+
 				const formatDate = (iso: string) =>
 					new Date(iso).toLocaleDateString(undefined, {
 						year: "numeric",
@@ -241,19 +276,20 @@ onMessage("showBannedUserAlert", ({ data: user }) =>
 						day: "numeric",
 					});
 
+				const thumbnailUrl = safeHttpsUrl(user.thumbnailUrl);
 				const bodyHtml = `
 					<p>This profile leads nowhere, but Kiln's search index still has a record of this exact username, which usually means the account has been permanently banned.</p>
 					<div class="card">
 						<div class="card-body">
 							${
-								user.thumbnailUrl
-									? `<img src="${user.thumbnailUrl}" style="width: 48px; height: 48px; border-radius: 6px;">`
+								thumbnailUrl
+									? `<img src="${escapeHtml(thumbnailUrl)}" style="width: 48px; height: 48px; border-radius: 6px;">`
 									: ""
 							}
-							<p class="mb-2 text-strong">${user.username}</p>
-							<small class="d-block">User ID: ${user.userId}</small>
-							<small class="d-block">Registered: ${formatDate(user.registeredAt)}</small>
-							<small class="d-block">Last seen: ${formatDate(user.lastSeenAt)}</small>
+							<p class="mb-2 text-strong">${escapeHtml(user.username)}</p>
+							<small class="d-block">User ID: ${escapeHtml(user.userId)}</small>
+							<small class="d-block">Registered: ${escapeHtml(formatDate(user.registeredAt))}</small>
+							<small class="d-block">Last seen: ${escapeHtml(formatDate(user.lastSeenAt))}</small>
 						</div>
 					</div>
 				`;
@@ -308,16 +344,13 @@ onMessage("showBannedUserAlert", ({ data: user }) =>
 	}),
 );
 
-onMessage("showHomepageReorderModal", ({ data: { sections } }) =>
+onMessage("showHomepageReorderModal", ({ data: { sections }, sender }) =>
 	handle(async () => {
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		if (!tabs[0]?.id) return null;
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) return null;
 
 		const results = await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id },
+			target: { tabId },
 			world: "MAIN",
 			args: [sections],
 			func: async (

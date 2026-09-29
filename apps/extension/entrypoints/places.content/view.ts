@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import { escapeHtml } from "@/utils/escapeHtml";
 import { sendMessage } from "@/utils/messaging";
 import metadata from "@/utils/static/metadata.json";
 import type { CurrencyCode } from "@/utils/types";
@@ -685,13 +686,15 @@ export async function playtimeTracking(
 }
 
 export function achievementsProgressBar(showDisclosures: boolean) {
-	const tabContents = document.getElementById("achievements-tabpane")!;
+	const tabContents = document.getElementById("achievements-tabpane");
+	if (!tabContents) return;
 
 	const achievements = tabContents.getElementsByClassName("card");
 	const earned = tabContents.querySelectorAll(".fad.fa-check-circle").length;
 
-	const percentage = (earned * 100) / achievements.length;
-	const percentageDisplay = ((earned * 100) / achievements.length).toFixed(0);
+	const percentage =
+		achievements.length > 0 ? (earned * 100) / achievements.length : 0;
+	const percentageDisplay = percentage.toFixed(0);
 
 	const progressBar = document.createElement("div");
 	progressBar.role = "progressbar";
@@ -712,7 +715,8 @@ export function achievementsProgressBar(showDisclosures: boolean) {
 }
 
 export function fadedUnearnedAchievements() {
-	const tab = document.getElementById("achievements-tabpane")!;
+	const tab = document.getElementById("achievements-tabpane");
+	if (!tab) return;
 
 	for (const achievement of tab.getElementsByClassName("card")) {
 		if (!achievement.querySelector(".fad.fa-check-circle")) {
@@ -739,14 +743,17 @@ export async function achievementEarnedPercentages(showDisclosures: boolean) {
 		return "Impossible";
 	};
 
-	const tab = document.getElementById("achievements-tabpane")!;
+	const tab = document.getElementById("achievements-tabpane");
+	if (!tab) return;
 
 	for (const achievement of tab.getElementsByClassName("card")) {
 		const ownerText = achievement.getElementsByClassName(
 			"text-muted small my-0",
 		)[0] as HTMLSpanElement;
 		const owners = parseInt(ownerText.innerText.replace(/[^0-9]/g, ""), 10);
-		const percentage = ((owners * 100) / data.uniqueVisits).toFixed(2);
+		const percentage = (
+			data.uniqueVisits > 0 ? (owners * 100) / data.uniqueVisits : 0
+		).toFixed(2);
 
 		ownerText.innerHTML += ` (${percentage}%, ${getDifficultyLabel(+percentage)}) <i class="fa-solid fa-circle-info kiln-difficulty-info" data-bs-toggle="tooltip" data-bs-title="Freebie: 90-100%<br />Cake Walk: 80-89.9%<br />Easy: 50-79.9%<br />Moderate: 30-49.9%<br />Challenging: 20-29.9%<br />Hard: 10-19.9%<br />Extreme: 5-9.9%<br />Insane: 1-4.9%<br />Impossible: 0-0.9%" data-bs-html="true"></i>`;
 
@@ -796,7 +803,8 @@ export function attachServerShareButtons(
 }
 
 export function serverShareLinks(showDisclosures: boolean) {
-	const tab = document.getElementById("servers-tabpane")!;
+	const tab = document.getElementById("servers-tabpane");
+	if (!tab) return;
 
 	attachServerShareButtons(tab, showDisclosures);
 
@@ -805,14 +813,15 @@ export function serverShareLinks(showDisclosures: boolean) {
 	);
 	if (urlServerId) {
 		const joinBtn = tab.querySelector<HTMLElement>(
-			`[onclick="joinPlace(${urlServerId})"]`,
+			`[onclick="joinPlace(${CSS.escape(urlServerId)})"]`,
 		);
 		joinBtn?.click();
 	}
 }
 
 export function creatorCommentLabels(creatorId: string) {
-	const container = document.getElementById("comments")!;
+	const container = document.getElementById("comments");
+	if (!container) return;
 
 	const tag = (Card: Element): void => {
 		const usernameElement = Card.querySelector<HTMLAnchorElement>(
@@ -860,6 +869,8 @@ export function legacyPlaceViewLayout(
 
 	const hero = container.querySelector<HTMLElement>(".place-hero");
 	if (!hero) return;
+
+	const isV2World = !!hero.querySelector(".badge .fa-gamepad");
 
 	const accessWarningHtml =
 		hero.querySelector<HTMLElement>(".text-warning")?.outerHTML ?? null;
@@ -921,7 +932,7 @@ export function legacyPlaceViewLayout(
 		"beforeend",
 		`<div class="card mcard">
       <div class="card-header">
-        <h1 class="my-0" style="font-weight:800;font-size:1.6em">${title}</h1>
+        <h1 class="my-0" style="font-weight:800;font-size:1.6em">${escapeHtml(title)}</h1>
       </div>
       <div class="card-body p-2">
         <div class="row">
@@ -940,7 +951,7 @@ export function legacyPlaceViewLayout(
               Polytoria Place${kilnDisclosureBadgeHtml(showDisclosures)}
             </div>
             <div class="text-muted">
-              By <a href="${creatorHref}">${creatorName}</a>
+              By <a href="${escapeHtml(creatorHref)}">${escapeHtml(creatorName)}</a>
             </div>
           </div>
         </div>
@@ -1090,7 +1101,7 @@ export function legacyPlaceViewLayout(
               </a>
             </li>
             <li class="breadcrumb-item active" aria-current="page">
-              <span class="text-light">${title}</span>
+              <span class="text-light">${escapeHtml(title)}</span>
             </li>
           </ol>
         </nav>
@@ -1131,11 +1142,30 @@ export function legacyPlaceViewLayout(
 	const mobileNav = document.querySelector<HTMLElement>(".mobile-nav-bottom");
 	if (mobileNav) container.appendChild(mobileNav);
 
-	document.getElementById("btn-play")?.addEventListener("click", async () => {
-		sendMessage("joinPlace", {
+	const playBtn = document.getElementById(
+		"btn-play",
+	) as HTMLButtonElement | null;
+	playBtn?.addEventListener("click", async () => {
+		const original = playBtn.innerHTML;
+		playBtn.disabled = true;
+		playBtn.innerHTML = `<span class="spinner-grow spinner-grow-sm" aria-hidden="true"></span>`;
+
+		const result = await sendMessage("joinPlace", {
 			placeId: placeID,
-			version: document.querySelector(".badge .fa-gamepad") ? 2 : 1,
+			version: isV2World ? 2 : 1,
 		});
+
+		if (!result.ok) {
+			playBtn.innerHTML = `<i class="fas fa-triangle-exclamation"></i>`;
+			setTimeout(() => {
+				playBtn.innerHTML = original;
+				playBtn.disabled = false;
+			}, 2500);
+			return;
+		}
+
+		playBtn.innerHTML = original;
+		playBtn.disabled = false;
 	});
 }
 
@@ -1248,14 +1278,14 @@ export async function detailedPlaceReviews(
 				${
 					masked
 						? renderAnonymousAvatar(28)
-						: `<img src="${reply.thumbnail ?? ""}" alt="${reply.username}" class="rounded-circle border border-secondary" width="28" height="28">`
+						: `<img src="${escapeHtml(reply.thumbnail ?? "")}" alt="${escapeHtml(reply.username)}" class="rounded-circle border border-secondary" width="28" height="28">`
 				}
 				<div class="flex-grow-1">
 					<div class="small">
 						${
 							masked
-								? `<a href="#" class="text-reset"><span class="userlink-default fst-italic">${reply.username}</span></a>`
-								: `<a href="/u/${reply.username}" class="text-reset"><span class="userlink-default">${reply.username}</span></a>`
+								? `<a href="#" class="text-reset"><span class="userlink-default fst-italic">${escapeHtml(reply.username)}</span></a>`
+								: `<a href="/u/${escapeHtml(reply.username)}" class="text-reset"><span class="userlink-default">${escapeHtml(reply.username)}</span></a>`
 						}
 						${reply.anonymous && !masked ? anonymousBadge : ""}
 						${
@@ -1265,7 +1295,7 @@ export async function detailedPlaceReviews(
 						}
 						<span class="text-muted ms-1">${date}</span>
 					</div>
-					<div class="small">${reply.body}</div>
+					<div class="small">${escapeHtml(reply.body)}</div>
 					${
 						reply.userId === userId
 							? `<button class="btn btn-link btn-sm p-0 text-danger kiln-reply-delete" data-reply-id="${reply.id}">Delete</button>`
@@ -1322,15 +1352,15 @@ export async function detailedPlaceReviews(
 						${
 							masked
 								? `<a href="#" class="flex-shrink-0">${renderAnonymousAvatar(40)}</a>`
-								: `<a href="/u/${review.username}" class="flex-shrink-0">
-							<img src="${review.thumbnail ?? ""}" alt="${review.username}" class="rounded-circle border border-2 border-secondary" width="40" height="40">
+								: `<a href="/u/${escapeHtml(review.username)}" class="flex-shrink-0">
+							<img src="${escapeHtml(review.thumbnail ?? "")}" alt="${escapeHtml(review.username)}" class="rounded-circle border border-2 border-secondary" width="40" height="40">
 						</a>`
 						}
 						<div class="min-w-0 flex-grow-1">
 							${
 								masked
-									? `<a href="#" class="text-reset"><span class="userlink-default fw-bold fst-italic">${review.username}</span></a>`
-									: `<a href="/u/${review.username}" class="text-reset"><span class="userlink-default fw-bold">${review.username}</span></a>`
+									? `<a href="#" class="text-reset"><span class="userlink-default fw-bold fst-italic">${escapeHtml(review.username)}</span></a>`
+									: `<a href="/u/${escapeHtml(review.username)}" class="text-reset"><span class="userlink-default fw-bold">${escapeHtml(review.username)}</span></a>`
 							}
 							${review.anonymous && !masked ? anonymousBadge : ""}
 							<div class="text-muted small">
@@ -1351,8 +1381,8 @@ export async function detailedPlaceReviews(
 					</div>
 					${
 						editing
-							? `<textarea class="form-control form-control-sm bg-dark text-light border-secondary kiln-review-body mb-2" rows="2" placeholder="Optional comment..." style="resize:vertical;font-size:0.85rem;">${review.body ?? ""}</textarea>`
-							: `<p class="mb-2 feed-post-text">${review.body ?? ""}</p>`
+							? `<textarea class="form-control form-control-sm bg-dark text-light border-secondary kiln-review-body mb-2" rows="2" placeholder="Optional comment..." style="resize:vertical;font-size:0.85rem;"></textarea>`
+							: `<p class="mb-2 feed-post-text">${escapeHtml(review.body ?? "")}</p>`
 					}
 					${
 						editing
@@ -1378,8 +1408,8 @@ export async function detailedPlaceReviews(
 	navItem.className = "nav-item";
 	navItem.setAttribute("role", "presentation");
 	navItem.innerHTML = `
-		<a class="nav-link text-light" href="#!" id="reviews-tab" data-bs-toggle="tab" role="tab"
-		   data-bs-target="#reviews-tabpane" aria-controls="reviews-tabpane" aria-selected="false" tabindex="-1">
+		<a class="nav-link text-light" href="#!" id="kiln-reviews-tab" data-bs-toggle="tab" role="tab"
+		   data-bs-target="#kiln-reviews-tabpane" aria-controls="kiln-reviews-tabpane" aria-selected="false" tabindex="-1">
 			<i class="fas fa-star me-1"></i>
 			Reviews${kilnDisclosureBadgeHtml(showDisclosures)}
 			<span class="kiln-review-avg-badge"></span>
@@ -1389,10 +1419,10 @@ export async function detailedPlaceReviews(
 	if (condensedTabBar) condenseTabBar(tabList);
 
 	const tabPane = document.createElement("div");
-	tabPane.id = "reviews-tabpane";
+	tabPane.id = "kiln-reviews-tabpane";
 	tabPane.className = "tab-pane fade";
 	tabPane.setAttribute("role", "tabpanel");
-	tabPane.setAttribute("aria-labelledby", "reviews-tab");
+	tabPane.setAttribute("aria-labelledby", "kiln-reviews-tab");
 	tabPane.innerHTML = `
 		<div class="d-flex justify-content-center py-3">
 			<div class="spinner-border spinner-border-sm text-secondary" role="status">
@@ -1530,7 +1560,15 @@ export async function detailedPlaceReviews(
 						: `<div class="text-muted fst-italic">No other reviews yet.</div>`
 					: otherReviews.map((r) => renderReviewRow(r, creatorId)).join("");
 
-			cardBody.innerHTML = formHTML + myReviewHTML + othersHTML;
+			const noticeHTML = `
+			<div class="alert alert-dark py-2 px-2 small mb-3 text-warning">
+				<i class="fas fa-triangle-exclamation me-1"></i> Kiln World Reviews will be phased out soon as Polytoria has implemented world reviews natively. If you'd like, you can migrate all of your Kiln reviews to Polytoria's new system in the sync tab.
+				<div class="mt-2">
+					<a href="/my/settings/kiln?tab=sync" class="btn btn-outline-warning btn-sm">Go to Sync Tab</a>
+				</div>
+			</div>`;
+
+			cardBody.innerHTML = noticeHTML + formHTML + myReviewHTML + othersHTML;
 			sendMessage("registerBootstrapElements");
 
 			cardBody
@@ -1654,6 +1692,9 @@ export async function detailedPlaceReviews(
 				cardBody.querySelector<HTMLElement>(".kiln-star-picker")!;
 			const textarea =
 				cardBody.querySelector<HTMLTextAreaElement>(".kiln-review-body")!;
+			if (isEditing && myReview) {
+				textarea.value = myReview.body ?? "";
+			}
 			const submitBtn = cardBody.querySelector<HTMLButtonElement>(
 				".kiln-review-submit",
 			)!;
@@ -1665,6 +1706,29 @@ export async function detailedPlaceReviews(
 				pendingAnonymous = anonymousCheckbox.checked;
 			});
 
+			const bindStarHover = () => {
+				starPicker
+					.querySelectorAll<HTMLElement>(".kiln-review-star")
+					.forEach((s) => {
+						s.addEventListener("mouseenter", () => {
+							const hov = parseInt(s.dataset.star ?? "0", 10);
+							starPicker
+								.querySelectorAll<HTMLElement>(".kiln-review-star")
+								.forEach((st) => {
+									const n = parseInt(st.dataset.star ?? "0", 10);
+									st.className = `${n <= hov ? "fas" : "far"} fa-star kiln-review-star`;
+									(st as HTMLElement).style.color =
+										n <= hov ? "#f0b429" : "#aaa";
+								});
+						});
+					});
+			};
+
+			starPicker.addEventListener("mouseleave", () => {
+				starPicker.innerHTML = renderStars(pendingRating, true);
+				bindStarHover();
+			});
+
 			starPicker.addEventListener("click", (e) => {
 				const star = (e.target as HTMLElement).closest<HTMLElement>(
 					".kiln-review-star",
@@ -1673,50 +1737,10 @@ export async function detailedPlaceReviews(
 				pendingRating = parseInt(star.dataset.star ?? "0", 10);
 				starPicker.innerHTML = renderStars(pendingRating, true);
 				submitBtn.disabled = pendingRating === 0;
-
-				starPicker
-					.querySelectorAll<HTMLElement>(".kiln-review-star")
-					.forEach((s) => {
-						s.addEventListener("mouseenter", () => {
-							const hov = parseInt(s.dataset.star ?? "0", 10);
-							starPicker
-								.querySelectorAll<HTMLElement>(".kiln-review-star")
-								.forEach((st) => {
-									const n = parseInt(st.dataset.star ?? "0", 10);
-									st.className = `${n <= hov ? "fas" : "far"} fa-star kiln-review-star`;
-									(st as HTMLElement).style.color =
-										n <= hov ? "#f0b429" : "#aaa";
-								});
-						});
-					});
-				starPicker.addEventListener("mouseleave", () => {
-					starPicker.innerHTML = renderStars(pendingRating, true);
-					attachStarHover();
-				});
+				bindStarHover();
 			});
 
-			const attachStarHover = () => {
-				starPicker
-					.querySelectorAll<HTMLElement>(".kiln-review-star")
-					.forEach((s) => {
-						s.addEventListener("mouseenter", () => {
-							const hov = parseInt(s.dataset.star ?? "0", 10);
-							starPicker
-								.querySelectorAll<HTMLElement>(".kiln-review-star")
-								.forEach((st) => {
-									const n = parseInt(st.dataset.star ?? "0", 10);
-									st.className = `${n <= hov ? "fas" : "far"} fa-star kiln-review-star`;
-									(st as HTMLElement).style.color =
-										n <= hov ? "#f0b429" : "#aaa";
-								});
-						});
-					});
-				starPicker.addEventListener("mouseleave", () => {
-					starPicker.innerHTML = renderStars(pendingRating, true);
-					attachStarHover();
-				});
-			};
-			attachStarHover();
+			bindStarHover();
 
 			submitBtn.addEventListener("click", async () => {
 				if (isSubmitting || pendingRating === 0) return;
@@ -1741,6 +1765,7 @@ export async function detailedPlaceReviews(
 				}
 
 				const submitted = res.data.data;
+				const wasNew = !myReview;
 				if (myReview) {
 					reviews = reviews.filter((r) => r.userId !== userId);
 				}
@@ -1749,7 +1774,7 @@ export async function detailedPlaceReviews(
 				reviews = [submitted, ...reviews.filter((r) => r.userId !== userId)];
 
 				const prevTotal = totalReviews;
-				if (!myReview || prevTotal === 0) {
+				if (wasNew || prevTotal === 0) {
 					totalReviews = prevTotal + 1;
 				}
 				averageRating =
@@ -1873,9 +1898,8 @@ export async function placeConsumablesTab(
 
 	let loaded = false;
 
-	navItem.querySelector("a")!.addEventListener("click", async () => {
+	const loadConsumables = async () => {
 		if (loaded) return;
-		loaded = true;
 
 		const consumables: {
 			id: number;
@@ -1886,23 +1910,39 @@ export async function placeConsumablesTab(
 		}[] = [];
 
 		let page = 1;
+		let failed = false;
 		while (page <= 10) {
 			const result = await sendMessage("getUserCreations", {
 				userId: +creatorId,
 				page,
 				limit: 100,
 			});
-			if (!result.ok) break;
-			console.log(
-				result.data.assets,
-				...result.data.assets.filter((a) => a.type === "consumable"),
-			);
+			if (!result.ok) {
+				failed = true;
+				break;
+			}
 			consumables.push(
 				...result.data.assets.filter((a) => a.type === "consumable"),
 			);
 			if (result.data.pages <= page) break;
 			page++;
 		}
+
+		if (failed) {
+			tabPane.innerHTML = `
+				<div class="text-center py-3 text-muted">
+					<h1 class="display-3"><i class="fad fa-triangle-exclamation"></i></h1>
+					<h6 class="mb-2">Failed to load consumables.</h6>
+					<button type="button" class="btn btn-sm btn-outline-secondary kiln-consumables-retry">Retry</button>
+				</div>
+			`;
+			tabPane
+				.querySelector(".kiln-consumables-retry")
+				?.addEventListener("click", loadConsumables, { once: true });
+			return;
+		}
+
+		loaded = true;
 
 		if (consumables.length === 0) {
 			tabPane.innerHTML = `
@@ -1923,15 +1963,15 @@ export async function placeConsumablesTab(
 							<div class="col-auto ms-2 px-0 d-flex align-items-center">
 								<div class="m-0 p-1" style="width:96px;justify-content:center">
 									<a href="/store/${item.id}">
-										<img src="${item.thumbnail}" class="img-fluid">
+										<img src="${escapeHtml(item.thumbnail)}" class="img-fluid">
 									</a>
 								</div>
 							</div>
 							<div class="col-10 px-2">
 								<a href="/store/${item.id}" class="text-reset">
-									<h5 class="mb-0">${item.name}</h5>
+									<h5 class="mb-0">${escapeHtml(item.name)}</h5>
 								</a>
-								<p class="my-0 text-truncate">${item.description}</p>
+								<p class="my-0 text-truncate">${escapeHtml(item.description)}</p>
 								<p class="text-muted small my-0">
 									${item.price !== null ? `<i class="pi pi-brick me-1"></i>${item.price.toLocaleString()}` : "Free"}
 								</p>
@@ -1941,7 +1981,9 @@ export async function placeConsumablesTab(
 				</div>`,
 			)
 			.join("");
-	});
+	};
+
+	navItem.querySelector("a")!.addEventListener("click", loadConsumables);
 }
 
 function ensureServerList(tabPane: HTMLElement): HTMLElement {
@@ -1988,7 +2030,8 @@ export function serverRefreshing(
 	onRefresh?: (serverList: Element) => void,
 	showDisclosures = false,
 ) {
-	const tabPane = document.getElementById("servers-tabpane")!;
+	const tabPane = document.getElementById("servers-tabpane");
+	if (!tabPane) return;
 	const serverList = ensureServerList(tabPane);
 
 	const group = ensureServerToolbar(tabPane, serverList);
@@ -2025,7 +2068,8 @@ export function serverRefreshing(
 }
 
 export function serverUserSearch(showDisclosures = false) {
-	const tabPane = document.getElementById("servers-tabpane")!;
+	const tabPane = document.getElementById("servers-tabpane");
+	if (!tabPane) return;
 	const serverList = ensureServerList(tabPane);
 
 	const group = ensureServerToolbar(tabPane, serverList);

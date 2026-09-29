@@ -27,10 +27,11 @@ type CollectibleWithCopies = CollectibleItem & {
 export async function collectibleInventoryCategory(userId: number) {
 	const pageCache = new Map<number, CollectibleItem[]>();
 	let totalPages = 0;
+	let requestId = 0;
 
 	const grid = document.getElementsByClassName("itemgrid")[0];
 	grid.innerHTML = "";
-	document.getElementsByClassName("pagination")[0].remove();
+	document.getElementsByClassName("pagination")[0]?.remove();
 
 	const fetchPage = async (page: number): Promise<CollectibleItem[] | null> => {
 		if (pageCache.has(page)) return pageCache.get(page)!;
@@ -208,18 +209,28 @@ export async function collectibleInventoryCategory(userId: number) {
 	};
 
 	const goToPage = async (page: number) => {
+		const id = ++requestId;
 		const items = await fetchPage(page);
+		if (id !== requestId) return;
 		if (!items) return;
 
 		history.replaceState(null, "", `${window.location.pathname}?page=${page}`);
 		renderItems(items);
 		renderPagination(page);
-		updateHoardedCard([...pageCache.values()].flat());
 		sendMessage("registerBootstrapElements");
 		window.scrollTo({ top: 0, behavior: "smooth" });
+	};
+
+	const loadHoardedItems = async () => {
+		if (totalPages <= 0) return;
+		const pages = await Promise.all(
+			Array.from({ length: totalPages }, (_, i) => fetchPage(i + 1)),
+		);
+		updateHoardedCard(pages.filter((p): p is CollectibleItem[] => !!p).flat());
 	};
 
 	const urlPage =
 		Number(new URLSearchParams(window.location.search).get("page")) || 1;
 	await goToPage(urlPage);
+	await loadHoardedItems();
 }

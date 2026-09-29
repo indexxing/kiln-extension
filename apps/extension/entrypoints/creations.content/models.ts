@@ -49,13 +49,13 @@ export function modelTreeInspector(showDisclosures: boolean) {
 
 	function readVector(el: Element): Vector3 {
 		const tag = (name: string): string =>
-			el.getElementsByTagName(name)[0].innerHTML;
+			el.getElementsByTagName(name)[0].textContent ?? "";
 		return { X: tag("X"), Y: tag("Y"), Z: tag("Z") };
 	}
 
 	function readColor(el: Element): Color {
 		const tag = (name: string): string =>
-			el.getElementsByTagName(name)[0].innerHTML;
+			el.getElementsByTagName(name)[0].textContent ?? "";
 		return { R: tag("R"), G: tag("G"), B: tag("B"), A: tag("A") };
 	}
 
@@ -89,26 +89,52 @@ export function modelTreeInspector(showDisclosures: boolean) {
 		}
 	}
 
-	function getDisplayProperty(prop: Element): string {
+	function getDisplayProperty(prop: Element): HTMLElement {
 		try {
 			if (prop.tagName === "vector3") {
 				const { X, Y, Z } = readVector(prop);
-				return `<input type="text" disabled class="form-control form-control-sm" value="${X}, ${Y}, ${Z}">`;
+				const input = document.createElement("input");
+				input.type = "text";
+				input.disabled = true;
+				input.className = "form-control form-control-sm";
+				input.value = `${X}, ${Y}, ${Z}`;
+				return input;
 			}
 			if (prop.tagName === "color") {
 				const { R, G, B, A } = readColor(prop);
-				return `<input type="text" disabled class="form-control form-control-sm" value="${R}, ${G}, ${B}, ${A}">`;
+				const input = document.createElement("input");
+				input.type = "text";
+				input.disabled = true;
+				input.className = "form-control form-control-sm";
+				input.value = `${R}, ${G}, ${B}, ${A}`;
+				return input;
 			}
 			if (prop.tagName === "boolean") {
 				const id = makeId(8);
-				return `<div class="form-check">
-                    <input class="form-check-input" type="checkbox" disabled id="${id}"${prop.innerHTML === "true" ? " checked" : ""}>
-                    <label class="form-check-label" for="${id}"></label>
-                </div>`;
+				const wrapper = document.createElement("div");
+				wrapper.className = "form-check";
+				const checkbox = document.createElement("input");
+				checkbox.className = "form-check-input";
+				checkbox.type = "checkbox";
+				checkbox.disabled = true;
+				checkbox.id = id;
+				checkbox.checked = prop.textContent === "true";
+				const label = document.createElement("label");
+				label.className = "form-check-label";
+				label.htmlFor = id;
+				wrapper.append(checkbox, label);
+				return wrapper;
 			}
-			return `<input type="text" disabled class="form-control form-control-sm" value="${prop.innerHTML}">`;
+			const input = document.createElement("input");
+			input.type = "text";
+			input.disabled = true;
+			input.className = "form-control form-control-sm";
+			input.value = prop.textContent ?? "";
+			return input;
 		} catch {
-			return "Unable to load property.";
+			const span = document.createElement("span");
+			span.textContent = "Unable to load property.";
+			return span;
 		}
 	}
 
@@ -261,7 +287,7 @@ export function modelTreeInspector(showDisclosures: boolean) {
 			const valTd = document.createElement("td");
 			valTd.style.cssText =
 				"padding:3px 6px; border-bottom:1px solid rgba(255,255,255,0.06); vertical-align:middle;";
-			valTd.innerHTML = getDisplayProperty(prop);
+			valTd.appendChild(getDisplayProperty(prop));
 
 			tr.append(nameTd, valTd);
 			tbody.append(tr);

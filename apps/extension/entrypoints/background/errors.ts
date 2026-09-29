@@ -21,16 +21,23 @@ import type { KilnErrorLogEntry } from "@/utils/types";
 const MAX_ENTRIES = 40;
 const MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 
-export async function logError(
+let writeQueue: Promise<void> = Promise.resolve();
+
+export function logError(
 	entry: Omit<KilnErrorLogEntry, "timestamp">,
 ): Promise<void> {
-	const now = Date.now();
-	const log = await _errorLog.getValue();
-	const trimmed = log
-		.filter((e) => now - e.timestamp < MAX_AGE_MS)
-		.slice(-(MAX_ENTRIES - 1));
-	trimmed.push({ ...entry, timestamp: now });
-	await _errorLog.setValue(trimmed);
+	const run = async () => {
+		const now = Date.now();
+		const log = await _errorLog.getValue();
+		const trimmed = log
+			.filter((e) => now - e.timestamp < MAX_AGE_MS)
+			.slice(-(MAX_ENTRIES - 1));
+		trimmed.push({ ...entry, timestamp: now });
+		await _errorLog.setValue(trimmed);
+	};
+	const next = writeQueue.then(run, run);
+	writeQueue = next.catch(() => {});
+	return next;
 }
 
 export async function purgeOldErrors(): Promise<void> {

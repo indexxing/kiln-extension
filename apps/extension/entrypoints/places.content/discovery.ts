@@ -86,7 +86,12 @@ export function legacyWorldDiscoveryLayout(
 	const container = document.querySelector<HTMLElement>(
 		'div[style*="min-height: 60vh"]',
 	);
-	if (!container) return;
+	if (!container) {
+		console.warn(
+			"[Kiln] Legacy World Discovery Layout: couldn't find the places container.",
+		);
+		return;
+	}
 
 	const iconFallbacks = DEFAULT_PLACE_THUMBNAILS;
 
@@ -306,9 +311,10 @@ export function legacyWorldDiscoveryLayout(
 	const loadingIndicator =
 		container.querySelector<HTMLElement>("#legacy-loading")!;
 
-	let page = 1;
+	let page = 0;
 	let loading = false;
 	let lastPage = false;
+	let loadRequestId = 0;
 
 	const renderCard = (place: PlaceListing): HTMLElement => {
 		const isEvent = place.placeType === "event";
@@ -368,8 +374,8 @@ export function legacyWorldDiscoveryLayout(
 		return link;
 	};
 
-	const readFilters = (): PlacesListingFilters => ({
-		page,
+	const readFilters = (p: number): PlacesListingFilters => ({
+		page: p,
 		search: searchInput.value,
 		genre: genreSelect.value,
 		sort: sortSelect.value,
@@ -377,11 +383,19 @@ export function legacyWorldDiscoveryLayout(
 	});
 
 	const loadPlaces = async (clear: boolean): Promise<boolean> => {
-		if (loading || lastPage) return true;
+		if (!clear && (loading || lastPage)) return true;
+
+		const requestId = ++loadRequestId;
+		const requestPage = clear ? 1 : page + 1;
 		loading = true;
 		loadingIndicator.style.display = "";
 
-		const result = await sendMessage("getPlacesListing", readFilters());
+		const result = await sendMessage(
+			"getPlacesListing",
+			readFilters(requestPage),
+		);
+
+		if (requestId !== loadRequestId) return true;
 
 		if (clear) {
 			placesContainer.innerHTML = "";
@@ -394,6 +408,7 @@ export function legacyWorldDiscoveryLayout(
 			return false;
 		}
 
+		page = requestPage;
 		lastPage = result.data.meta.nextPageURL === null;
 
 		for (const place of result.data.data) {
@@ -406,7 +421,6 @@ export function legacyWorldDiscoveryLayout(
 	};
 
 	const resetAndReload = () => {
-		page = 1;
 		lastPage = false;
 		loadPlaces(true);
 	};
@@ -446,7 +460,6 @@ export function legacyWorldDiscoveryLayout(
 
 		loadMoreButton.addEventListener("click", async () => {
 			if (loading || lastPage) return;
-			page++;
 			setButtonState("loading");
 			const success = await loadPlaces(false);
 			setButtonState(!success ? "error" : lastPage ? "done" : "idle");
@@ -458,7 +471,6 @@ export function legacyWorldDiscoveryLayout(
 				window.scrollY + window.innerHeight >
 				document.documentElement.scrollHeight - 500
 			) {
-				page++;
 				loadPlaces(false);
 			}
 		});

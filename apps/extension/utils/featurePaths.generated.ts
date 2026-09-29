@@ -26,8 +26,18 @@ export const PATH_FEATURES = {
 	],
 	"https://polytoria.com/": [
 		"bestFriends",
-		"condensedJoinedGuildsList",
-		"creatorCommentLabels",
+		"dailyChallengesRefreshing",
+		"disableInfiniteScrolling",
+		"favoritedPlaces",
+		"homeFriendJoins",
+		"irlBrickPrice",
+		"myFeedPosts",
+		"quickCreatorLaunchBtns",
+		"reorderableHomepage",
+		"searchFeedPosts"
+	],
+	"https://polytoria.com/?*": [
+		"bestFriends",
 		"dailyChallengesRefreshing",
 		"disableInfiniteScrolling",
 		"favoritedPlaces",
@@ -105,7 +115,30 @@ export const PATH_FEATURES = {
 		"forumPostPreview",
 		"myPosts"
 	],
+	"https://polytoria.com/forum?*": [
+		"advancedForumSearch",
+		"aiBotForumWarnings",
+		"bookmarkedThreads",
+		"collectibleOwnerLabels",
+		"copyPostContents",
+		"forumCharacterCount",
+		"forumDrafts",
+		"forumFilteredWordHighlight",
+		"forumImageLibrary",
+		"forumMarkdownButtons",
+		"forumMentions",
+		"forumPostPreview",
+		"myPosts"
+	],
+	"https://polytoria.com/guilds": [
+		"condensedJoinedGuildsList",
+		"creatorCommentLabels"
+	],
 	"https://polytoria.com/guilds/*": [
+		"condensedJoinedGuildsList",
+		"creatorCommentLabels"
+	],
+	"https://polytoria.com/guilds?*": [
 		"condensedJoinedGuildsList",
 		"creatorCommentLabels"
 	],
@@ -121,7 +154,22 @@ export const PATH_FEATURES = {
 		"reorderableHomepage",
 		"searchFeedPosts"
 	],
+	"https://polytoria.com/home?*": [
+		"bestFriends",
+		"dailyChallengesRefreshing",
+		"disableInfiniteScrolling",
+		"favoritedPlaces",
+		"homeFriendJoins",
+		"irlBrickPrice",
+		"myFeedPosts",
+		"quickCreatorLaunchBtns",
+		"reorderableHomepage",
+		"searchFeedPosts"
+	],
 	"https://polytoria.com/inbox": [
+		"messagePreviewExpand"
+	],
+	"https://polytoria.com/inbox?*": [
 		"messagePreviewExpand"
 	],
 	"https://polytoria.com/library": [
@@ -192,8 +240,50 @@ export const PATH_FEATURES = {
 		"subtleV2Labels",
 		"worldTrends"
 	],
+	"https://polytoria.com/places?*": [
+		"activeChallengesDisplay",
+		"autoRefreshData",
+		"creatorCommentLabels",
+		"detailedPlaceReviews",
+		"disableInfiniteScrolling",
+		"downloadableCopyableWorlds",
+		"favoritedPlaces",
+		"improvedAchievements",
+		"irlBrickPrice",
+		"legacyWorldDiscoveryLayout",
+		"legacyWorldViewLayout",
+		"placeConsumablesTab",
+		"placeManagement",
+		"placeRevenue",
+		"playtimeTracking",
+		"randomPlace",
+		"serverRefreshing",
+		"serverShareLinks",
+		"serverUserSearch",
+		"subtleV2Labels",
+		"worldTrends"
+	],
 	"https://polytoria.com/rankings*": [
 		"detailedPlaceReviews"
+	],
+	"https://polytoria.com/store": [
+		"accurateOwners",
+		"backClothingView",
+		"clothingUploadBodyPreviews",
+		"collectibleOwnerLabels",
+		"creatorCommentLabels",
+		"disableInfiniteScrolling",
+		"eventItems",
+		"hoardersList",
+		"irlBrickPrice",
+		"itemOwnerCheck",
+		"legacyItemViewLayout",
+		"loveIntegration",
+		"mySerial",
+		"nftItems",
+		"nlfItems",
+		"recentCollectibleTransactions",
+		"storeOwnedTags"
 	],
 	"https://polytoria.com/store/*": [
 		"accurateOwners",
@@ -214,7 +304,46 @@ export const PATH_FEATURES = {
 		"recentCollectibleTransactions",
 		"storeOwnedTags"
 	],
+	"https://polytoria.com/store?*": [
+		"accurateOwners",
+		"backClothingView",
+		"clothingUploadBodyPreviews",
+		"collectibleOwnerLabels",
+		"creatorCommentLabels",
+		"disableInfiniteScrolling",
+		"eventItems",
+		"hoardersList",
+		"irlBrickPrice",
+		"itemOwnerCheck",
+		"legacyItemViewLayout",
+		"loveIntegration",
+		"mySerial",
+		"nftItems",
+		"nlfItems",
+		"recentCollectibleTransactions",
+		"storeOwnedTags"
+	],
+	"https://polytoria.com/trade": [
+		"blockedTraders",
+		"irlBrickPrice",
+		"nftItems",
+		"nlfItems",
+		"quickCancelOutboundTrades",
+		"quickCounterTrades",
+		"tradeManager",
+		"tradeViewedIndicators"
+	],
 	"https://polytoria.com/trade/*": [
+		"blockedTraders",
+		"irlBrickPrice",
+		"nftItems",
+		"nlfItems",
+		"quickCancelOutboundTrades",
+		"quickCounterTrades",
+		"tradeManager",
+		"tradeViewedIndicators"
+	],
+	"https://polytoria.com/trade?*": [
 		"blockedTraders",
 		"irlBrickPrice",
 		"nftItems",
@@ -271,6 +400,29 @@ export const PATH_FEATURES = {
 		"userNotes"
 	],
 	"https://polytoria.com/users/*": [
+		"avatarMeshDownloader",
+		"avatarVersions",
+		"bannedUserDetail",
+		"basicBlockedInfo",
+		"classicAvatarPerspective",
+		"collectibleOwnerLabels",
+		"customProfileThemes",
+		"inventoryCollectibles",
+		"irlBrickPrice",
+		"kilnRegistrationDate",
+		"likeUser",
+		"outfitCost",
+		"pinnedAchievements",
+		"publicAvatarOutfits",
+		"rankingPositions",
+		"tgdStats",
+		"timezoneSharing",
+		"userAliases",
+		"userCreationsTab",
+		"userIdDisplay",
+		"userNotes"
+	],
+	"https://polytoria.com/users?*": [
 		"avatarMeshDownloader",
 		"avatarVersions",
 		"bannedUserDetail",

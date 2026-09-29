@@ -15,9 +15,15 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { Extension, PolyTrack, Polytoria } from "@kiln/schemas";
+import type { Runtime } from "webextension-polyfill";
 import z from "zod";
 import { onMessage, sendMessage } from "@/utils/messaging";
-import { DEFAULT_PLACE_THUMBNAILS, pullKVCache } from "@/utils/utilities";
+import metadata from "@/utils/static/metadata.json";
+import {
+	DEFAULT_PLACE_THUMBNAILS,
+	pullBulkKVCache,
+	pullKVCache,
+} from "@/utils/utilities";
 import { fetchPlacesListing } from "./placesListing";
 import {
 	ApiDisabledError,
@@ -25,6 +31,7 @@ import {
 	checkRateLimit,
 	fetchConfig,
 	handle,
+	resolveInjectableTabId,
 	safeFetch,
 	withApi,
 	withAuthSession,
@@ -210,16 +217,24 @@ onMessage("getPlaceGamepasses", ({ data: placeId }) =>
 	}),
 );
 
-onMessage("downloadPlaceFile", async ({ data: id }) => {
+function bufferToBase64(buffer: ArrayBuffer): string {
+	const bytes = new Uint8Array(buffer);
+	let binary = "";
+	for (let i = 0; i < bytes.length; i += 0x8000)
+		binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+	return btoa(binary);
+}
+
+onMessage("downloadPlaceFile", async ({ data: id, sender }) => {
 	checkRateLimit("internal_api", 100);
 	const config = await fetchConfig();
 	if (!config.apiAvailability.internal) throw new ApiDisabledError("internal");
 
-	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-	if (!tabs[0]) return;
+	const tabId = await resolveInjectableTabId(sender);
+	if (tabId == null) return;
 
 	const injectionResults = await browser.scripting.executeScript({
-		target: { tabId: tabs[0].id! },
+		target: { tabId },
 		world: "MAIN",
 		args: [id],
 		func: async (id: number) => {
@@ -251,7 +266,7 @@ onMessage("downloadPlaceFile", async ({ data: id }) => {
 	if (!creatorToken) throw new Error("Failed to retrieve creator token");
 
 	const result = (await safeFetch(
-		`${config.resolvedUrls.public}places/get-place?id=${id}&tokenType=creator`,
+		`${metadata.endpoints.public}places/get-place?id=${id}&tokenType=creator`,
 		null,
 		{
 			headers: {
@@ -286,14 +301,17 @@ onMessage("downloadPlaceFile", async ({ data: id }) => {
 		ext = "poly";
 	}
 
-	const uint8Array = Array.from(new Uint8Array(finalBuffer));
+	const base64 = bufferToBase64(finalBuffer);
 
 	await browser.scripting.executeScript({
-		target: { tabId: tabs[0].id! },
+		target: { tabId },
 		world: "MAIN",
-		args: [uint8Array, id, ext],
-		func: (bytes: number[], id: number, ext: string) => {
-			const blob = new Blob([new Uint8Array(bytes)], {
+		args: [base64, id, ext],
+		func: (base64: string, id: number, ext: string) => {
+			const binary = atob(base64);
+			const bytes = new Uint8Array(binary.length);
+			for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+			const blob = new Blob([bytes], {
 				type: "application/octet-stream",
 			});
 			const url = URL.createObjectURL(blob);
@@ -323,56 +341,63 @@ onMessage("getModelFile", async ({ data: id }) => {
 	return await result.text();
 });
 
-onMessage("joinPlace", async ({ data: { placeId, serverId, version } }) => {
-	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-	if (!tabs[0]) return;
+onMessage("joinPlace", ({ data: { placeId, serverId, version }, sender }) =>
+	handle(async () => {
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) throw new Error("No active tab");
 
-	browser.scripting.executeScript({
-		target: { tabId: tabs[0].id! },
-		world: "MAIN",
-		args: [placeId, version, serverId ?? 0],
-		func: async (placeID: number, version: 1 | 2, serverID?: number) => {
-			const getCookie = (name: string) => {
-				const value = `; ${document.cookie}`;
-				const parts = value.split(`; ${name}=`);
-				if (parts.length === 2) return parts.pop()!.split(";").shift();
-			};
+		const results = await browser.scripting.executeScript({
+			target: { tabId },
+			world: "MAIN",
+			args: [placeId, version, serverId ?? 0],
+			func: async (placeID: number, version: 1 | 2, serverID?: number) => {
+				const getCookie = (name: string) => {
+					const value = `; ${document.cookie}`;
+					const parts = value.split(`; ${name}=`);
+					if (parts.length === 2) return parts.pop()!.split(";").shift();
+				};
 
-			const xsrfToken = decodeURIComponent(getCookie("XSRF-TOKEN")!);
-			const result = await fetch("/api/places/join", {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"X-XSRF-TOKEN": xsrfToken,
-				},
-				credentials: "include",
-				body: JSON.stringify({
-					placeID,
-					serverID: serverID != 0 ? serverID : null,
-					isBeta: version == 2,
-				}),
-			});
+				const xsrfToken = decodeURIComponent(getCookie("XSRF-TOKEN")!);
+				const result = await fetch("/api/places/join", {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"X-XSRF-TOKEN": xsrfToken,
+					},
+					credentials: "include",
+					body: JSON.stringify({
+						placeID,
+						serverID: serverID != 0 ? serverID : null,
+						isBeta: version == 2,
+					}),
+				});
 
-			const data = await result.json();
-			if (data.token) {
-				window.location.href = `polytoria://${version == 2 ? "clientbeta" : "client"}/${data.token}`;
-			} else {
+				const data = await result.json().catch(() => null);
+				if (data?.token) {
+					window.location.href = `polytoria://${version == 2 ? "clientbeta" : "client"}/${data.token}`;
+					return true;
+				}
 				console.error("Join failed:", data);
-			}
-		},
-	});
-});
+				return false;
+			},
+		});
 
-onMessage("openCreator", async ({ data: version }) => {
+		const ok = results[0]?.result;
+		if (!ok) throw new Error("Failed to join place");
+		return true;
+	}),
+);
+
+onMessage("openCreator", async ({ data: version, sender }) => {
 	checkRateLimit("internal_api", 100);
 	const config = await fetchConfig();
 	if (!config.apiAvailability.internal) throw new ApiDisabledError("internal");
 
-	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-	if (!tabs[0]) return;
+	const tabId = await resolveInjectableTabId(sender);
+	if (tabId == null) return;
 
 	await browser.scripting.executeScript({
-		target: { tabId: tabs[0].id! },
+		target: { tabId },
 		world: "MAIN",
 		args: [version],
 		func: async (version: 1 | 2) => {
@@ -402,16 +427,16 @@ onMessage("openCreator", async ({ data: version }) => {
 	});
 });
 
-onMessage("bulkWhitelist", async ({ data: { placeId, usernames } }) => {
+onMessage("bulkWhitelist", async ({ data: { placeId, usernames }, sender }) => {
 	checkRateLimit("internal_api", 100);
 	const config = await fetchConfig();
 	if (!config.apiAvailability.internal) throw new ApiDisabledError("internal");
 
-	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-	if (!tabs[0]) return;
+	const tabId = await resolveInjectableTabId(sender);
+	if (tabId == null) return;
 
-	browser.scripting.executeScript({
-		target: { tabId: tabs[0].id! },
+	await browser.scripting.executeScript({
+		target: { tabId },
 		world: "MAIN",
 		args: [placeId, usernames],
 		func: async (placeId: number, usernames: string[]) => {
@@ -486,18 +511,15 @@ function isLowQualityPlace(place: Polytoria.PlaceApi): boolean {
 	return false;
 }
 
-onMessage("rollRandomPlace", () =>
+onMessage("rollRandomPlace", ({ sender }) =>
 	handle(async () => {
 		const config = await withApi("public_api", "public");
 
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		const tabId = tabs[0]?.id;
+		const tabId = await resolveInjectableTabId(sender);
 
 		const reportStatus = (status: string) => {
-			if (tabId) sendMessage("rollRandomPlaceStatus", status, tabId).catch(() => {});
+			if (tabId)
+				sendMessage("rollRandomPlaceStatus", status, tabId).catch(() => {});
 		};
 
 		reportStatus("Finding a place...");
@@ -515,13 +537,16 @@ onMessage("rollRandomPlace", () =>
 			const page = 1 + Math.floor(Math.random() * RANDOM_PLACE_POOL_PAGES);
 
 			reportStatus("Browsing places...");
-			const listing = await fetchPlacesListing({
-				page,
-				search: "",
-				genre: "all",
-				sort,
-				branch: "all",
-			}).catch(() => null);
+			const listing = await fetchPlacesListing(
+				{
+					page,
+					search: "",
+					genre: "all",
+					sort,
+					branch: "all",
+				},
+				sender,
+			).catch(() => null);
 			if (!listing?.data.length) continue;
 
 			const candidates = shuffle(
@@ -559,7 +584,6 @@ onMessage("rollRandomPlace", () =>
 			world: "MAIN",
 			args: [place],
 			func: async (place: Polytoria.PlaceApi) => {
-				console.log(place);
 				const card = document.createElement("a");
 
 				card.href = `/places/${place.id}`;
@@ -680,12 +704,15 @@ onMessage(
 		),
 );
 
-async function showReviewErrorAlert(message: string) {
-	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-	if (!tabs[0]?.id) return;
+async function showReviewErrorAlert(
+	message: string,
+	sender?: Runtime.MessageSender,
+) {
+	const tabId = await resolveInjectableTabId(sender);
+	if (tabId == null) return;
 
 	await browser.scripting.executeScript({
-		target: { tabId: tabs[0].id },
+		target: { tabId },
 		world: "MAIN",
 		args: [message],
 		func: (message: string) => {
@@ -701,7 +728,7 @@ async function showReviewErrorAlert(message: string) {
 
 onMessage(
 	"submitPlaceReview",
-	({ data: { placeId, userId, rating, body, anonymous } }) =>
+	({ data: { placeId, userId, rating, body, anonymous }, sender }) =>
 		handle(async () => {
 			try {
 				return await withAuthSession(userId, (token, config) =>
@@ -727,6 +754,7 @@ onMessage(
 					err instanceof ApiHttpError
 						? err.message
 						: "Something went wrong submitting your review.",
+					sender,
 				);
 				throw err;
 			}
@@ -751,7 +779,7 @@ onMessage("deleteMyPlaceReview", ({ data: { placeId, userId } }) =>
 	),
 );
 
-onMessage("submitReviewReply", ({ data: { userId, reviewId, body } }) =>
+onMessage("submitReviewReply", ({ data: { userId, reviewId, body }, sender }) =>
 	handle(async () => {
 		try {
 			return await withAuthSession(userId, (token, config) =>
@@ -773,6 +801,7 @@ onMessage("submitReviewReply", ({ data: { userId, reviewId, body } }) =>
 				err instanceof ApiHttpError
 					? err.message
 					: "Something went wrong submitting your reply.",
+				sender,
 			);
 			throw err;
 		}
@@ -795,6 +824,130 @@ onMessage("deleteReviewReply", ({ data: { userId, replyId } }) =>
 			),
 		),
 	),
+);
+
+onMessage("getMigratablePlaceReviews", ({ data: userId }) =>
+	handle(() =>
+		withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}places/reviews/mine`,
+				Extension.MigratablePlaceReviewsApi,
+				{
+					headers: {
+						Authorization: `Bearer ${token}`,
+						"x-kiln-version": browser.runtime.getManifest().version,
+					},
+				},
+			),
+		),
+	),
+);
+
+onMessage("markPlaceReviewMigrated", ({ data: { userId, reviewId } }) =>
+	handle(() =>
+		withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}places/reviews/${encodeURIComponent(reviewId)}/migrated`,
+				Extension.MigratePlaceReviewApi,
+				{
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${token}`,
+						"x-kiln-version": browser.runtime.getManifest().version,
+					},
+				},
+			),
+		),
+	),
+);
+
+onMessage("createPolytoriaPlaceReview", ({ data, sender }) =>
+	handle(async () => {
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) throw new Error("No active tab to post the review from");
+
+		const results = await browser.scripting.executeScript({
+			target: { tabId },
+			world: "MAIN",
+			args: [data],
+			func: async (data: {
+				placeId: number;
+				value: "like" | "dislike";
+				content: string;
+			}) => {
+				const getCookie = (name: string) => {
+					const value = `; ${document.cookie}`;
+					const parts = value.split(`; ${name}=`);
+					if (parts.length === 2) return parts.pop()!.split(";").shift();
+				};
+
+				const xsrfToken = decodeURIComponent(getCookie("XSRF-TOKEN") ?? "");
+
+				try {
+					const res = await fetch("/api/places/reviews/create", {
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+							"X-XSRF-TOKEN": xsrfToken,
+							Accept: "application/json",
+						},
+						body: JSON.stringify({
+							placeID: data.placeId,
+							value: data.value,
+							content: data.content,
+						}),
+						credentials: "include",
+					});
+
+					const raw = await res.text().catch(() => "");
+					let json: {
+						id?: string | number;
+						message?: string;
+						errors?: { message?: string }[];
+					} | null = null;
+					try {
+						json = JSON.parse(raw);
+					} catch {}
+
+					if (!res.ok) {
+						if (/already rated/i.test(raw)) {
+							return {
+								success: false as const,
+								error:
+									"Either you already made a review on this world yourself, or Polytoria thinks you did (it may be a phantom review on their end)",
+							};
+						}
+						return {
+							success: false as const,
+							error:
+								json?.message ??
+								json?.errors?.[0]?.message ??
+								`Polytoria returned ${res.status} ${res.statusText}`,
+						};
+					}
+
+					return {
+						success: true as const,
+						id: json?.id != null ? String(json.id) : null,
+					};
+				} catch (err) {
+					return {
+						success: false as const,
+						error: err instanceof Error ? err.message : String(err),
+					};
+				}
+			},
+		});
+
+		const result = results[0]?.result as
+			| { success: true; id: string | null }
+			| { success: false; error: string }
+			| undefined;
+		if (!result?.success) {
+			throw new Error(result?.error ?? "Failed to post review to Polytoria");
+		}
+		return { id: result.id };
+	}),
 );
 
 onMessage("getTopReviewers", () =>
@@ -831,83 +984,93 @@ onMessage("getRatedWorldsLeaderboard", ({ data: order }) =>
 	}),
 );
 
-onMessage("setNativeRankingsLoadingPaused", async ({ data: paused }) => {
-	const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-	if (!tabs[0]?.id) return;
+onMessage(
+	"setNativeRankingsLoadingPaused",
+	async ({ data: paused, sender }) => {
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) return;
 
-	await browser.scripting.executeScript({
-		target: { tabId: tabs[0].id },
-		world: "MAIN",
-		args: [paused],
-		func: (paused: boolean) => {
-			const win = window as typeof window & {
-				__kilnRankingsPaused?: boolean;
-				__kilnRankingsPatched?: boolean;
-			};
+		await browser.scripting.executeScript({
+			target: { tabId },
+			world: "MAIN",
+			args: [paused],
+			func: (paused: boolean) => {
+				const win = window as typeof window & {
+					__kilnRankingsPaused?: boolean;
+					__kilnRankingsPatched?: boolean;
+				};
 
-			if (!win.__kilnRankingsPatched) {
-				//@ts-expect-error axios is a global injected by the page
-				const pageAxios = window.axios;
-				if (pageAxios?.get) {
-					const originalGet = pageAxios.get.bind(pageAxios);
-					pageAxios.get = (url: string, config?: unknown) => {
-						if (
-							win.__kilnRankingsPaused &&
-							String(url).startsWith("/api/rankings")
-						) {
-							return Promise.resolve({
-								data: { data: [], meta: { nextPageURL: null } },
-							});
-						}
-						return originalGet(url, config);
-					};
+				if (!win.__kilnRankingsPatched) {
+					//@ts-expect-error axios is a global injected by the page
+					const pageAxios = window.axios;
+					if (pageAxios?.get) {
+						const originalGet = pageAxios.get.bind(pageAxios);
+						pageAxios.get = (url: string, config?: unknown) => {
+							if (
+								win.__kilnRankingsPaused &&
+								String(url).startsWith("/api/rankings")
+							) {
+								return Promise.resolve({
+									data: { data: [], meta: { nextPageURL: null } },
+								});
+							}
+							return originalGet(url, config);
+						};
+					}
+
+					const nav = document.getElementById("ranking-category");
+					nav?.addEventListener(
+						"click",
+						(e) => {
+							const target = (e.target as HTMLElement).closest?.(
+								"a[data-ranking-category]",
+							) as HTMLElement | null;
+							if (
+								target &&
+								!target.dataset.rankingCategory?.startsWith("kiln-")
+							) {
+								win.__kilnRankingsPaused = false;
+							}
+						},
+						true,
+					);
+
+					win.__kilnRankingsPatched = true;
 				}
 
-				const nav = document.getElementById("ranking-category");
-				nav?.addEventListener(
-					"click",
-					(e) => {
-						const target = (e.target as HTMLElement).closest?.(
-							"a[data-ranking-category]",
-						) as HTMLElement | null;
-						if (
-							target &&
-							!target.dataset.rankingCategory?.startsWith("kiln-")
-						) {
-							win.__kilnRankingsPaused = false;
-						}
-					},
-					true,
-				);
-
-				win.__kilnRankingsPatched = true;
-			}
-
-			win.__kilnRankingsPaused = paused;
-		},
-	});
-});
+				win.__kilnRankingsPaused = paused;
+			},
+		});
+	},
+);
 
 onMessage("getWorldVersions", ({ data }) =>
 	handle(async () => {
-		const cacheKey = "data";
-		return (
-			await pullBulkKVCache(
-				"worldVersions",
-				data.map((x) => `world-${x}`),
-				async () => ({
-					[cacheKey]: await safeFetch(
-						`https://polytrack.top/api/worlds/kiln/world-version`,
-						z.record(z.string(), z.enum(["1.0", "2.0"]).nullable()),
-						{
-							method: "POST",
-							body: JSON.stringify(data),
-						},
-					),
-				}),
-				60 * 1000,
-				false,
-			)
-		)[cacheKey];
+		const cached = await pullBulkKVCache(
+			"worldVersions",
+			data.map((x) => `world-${x}`),
+			async (missingKeys) => {
+				const missingIds = missingKeys.map((key) => key.replace(/^world-/, ""));
+				const versions = await safeFetch(
+					`https://polytrack.top/api/worlds/kiln/world-version`,
+					z.record(z.string(), z.enum(["1.0", "2.0"]).nullable()),
+					{
+						method: "POST",
+						body: JSON.stringify(missingIds),
+					},
+				);
+				const result: Record<string, "1.0" | "2.0" | null> = {};
+				for (const key of missingKeys) {
+					result[key] = versions[key.replace(/^world-/, "")] ?? null;
+				}
+				return result;
+			},
+			60 * 1000,
+			false,
+		);
+
+		const result: Record<string, "1.0" | "2.0" | null> = {};
+		for (const id of data) result[id] = cached[`world-${id}`] ?? null;
+		return result;
 	}),
 );

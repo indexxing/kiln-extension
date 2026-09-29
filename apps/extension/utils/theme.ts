@@ -18,6 +18,14 @@ import { Theme } from "@kiln/schemas";
 import { POLYTORIA_CDN_URL } from "@/utils/decal";
 import { sendMessage } from "@/utils/messaging";
 import metadata from "@/utils/static/metadata.json";
+import {
+	type Ambient,
+	applyAmbient,
+	applyCardStyle,
+	applyPointerEffects,
+	type CardStyle,
+	type PointerEffects,
+} from "@/utils/visualEffects";
 import type { ThemeEffect } from "./types";
 
 export const {
@@ -108,12 +116,17 @@ export function parseAssetVolume(
 let bgMusicAudio: HTMLAudioElement | null = null;
 let bgMusicAssetId: number | null = null;
 let bgMusicToken = 0;
+let bgMusicClickListener: (() => void) | null = null;
 
 function stopBackgroundMusic() {
 	bgMusicAudio?.pause();
 	bgMusicAudio?.remove();
 	bgMusicAudio = null;
 	bgMusicAssetId = null;
+	if (bgMusicClickListener) {
+		document.removeEventListener("click", bgMusicClickListener);
+		bgMusicClickListener = null;
+	}
 }
 
 const BG_MUSIC_POSITION_KEY = "kiln-bg-music-position";
@@ -215,8 +228,13 @@ async function startWantedBackgroundMusic() {
 	document.body.appendChild(audio);
 	bgMusicAudio = audio;
 
-	const tryPlay = () => audio.play().catch(() => {});
+	const tryPlay = () => {
+		bgMusicClickListener = null;
+		if (audio !== bgMusicAudio) return;
+		audio.play().catch(() => {});
+	};
 	tryPlay();
+	bgMusicClickListener = tryPlay;
 	document.addEventListener("click", tryPlay, { once: true });
 }
 
@@ -239,6 +257,60 @@ async function applyBackgroundMusic(effects?: ThemeEffect[]) {
 	else requestBgMusicLock();
 }
 
+const SITEWIDE_CARD_SELECTOR =
+	".card:not(#kiln-te-sidebar *):not(#kiln-pte-sidebar *):is(.bg-inset, :not(.card .card))";
+
+function themeHead(): HTMLElement {
+	return document.head ?? document.documentElement;
+}
+
+function whenBodyReady(callback: () => void) {
+	if (document.body) {
+		callback();
+		return;
+	}
+	document.addEventListener("DOMContentLoaded", callback, { once: true });
+}
+
+let cursorApplyToken = 0;
+
+async function applyScaledCursorCSS(rawUrl: string, scale?: number) {
+	const token = ++cursorApplyToken;
+	document.getElementById("kiln-custom-cursor")?.remove();
+	const proxied = proxyThemeImageUrl(rawUrl);
+	let finalUrl = proxied;
+	try {
+		const img = new Image();
+		img.crossOrigin = "anonymous";
+		img.src = proxied;
+		await img.decode();
+		if (token !== cursorApplyToken) return;
+		const size =
+			scale !== undefined
+				? Math.min(128, Math.max(16, Math.round(scale) || 32))
+				: Math.min(128, Math.max(img.naturalWidth, img.naturalHeight));
+		if (img.naturalWidth !== size || img.naturalHeight !== size) {
+			const canvas = document.createElement("canvas");
+			canvas.width = size;
+			canvas.height = size;
+			canvas.getContext("2d")!.drawImage(img, 0, 0, size, size);
+			finalUrl = canvas.toDataURL("image/png");
+		}
+	} catch {
+		finalUrl = proxied;
+	}
+	if (token !== cursorApplyToken) return;
+	const cursorStyle = document.createElement("style");
+	cursorStyle.id = "kiln-custom-cursor";
+	cursorStyle.textContent = `* { cursor: url(${JSON.stringify(finalUrl)}) 0 0, auto !important; }`;
+	themeHead().appendChild(cursorStyle);
+}
+
+function clearScaledCursor() {
+	cursorApplyToken++;
+	document.getElementById("kiln-custom-cursor")?.remove();
+}
+
 export function applyKilnTheme(
 	colors: {
 		accentColor: string;
@@ -251,7 +323,11 @@ export function applyKilnTheme(
 		effects?: ThemeEffect[];
 		navbarIconColor?: string;
 		cursorUrl?: string;
+		cursorScale?: number;
 		colorTokens?: Record<string, string>;
+		ambient?: Ambient;
+		cardStyle?: CardStyle;
+		pointerEffects?: PointerEffects;
 	} | null,
 ) {
 	document.getElementById("kiln-custom-theme")?.remove();
@@ -259,23 +335,47 @@ export function applyKilnTheme(
 	document.getElementById("kiln-custom-effects")?.remove();
 	document.getElementById("kiln-custom-tokens")?.remove();
 	document.getElementById("kiln-custom-css")?.remove();
-	document.getElementById("kiln-custom-font")?.remove();
-	document.getElementById("kiln-custom-cursor")?.remove();
-	applyClickSound(colors?.effects);
-	applyBackgroundMusic(colors?.effects);
-	if (!colors) return;
+
+	const applyEffects = () => {
+		applyClickSound(colors?.effects);
+		applyBackgroundMusic(colors?.effects);
+		applyAmbient("kiln-custom-ambient", colors?.ambient);
+		applyCardStyle(
+			"kiln-custom-cards",
+			colors?.cardStyle,
+			SITEWIDE_CARD_SELECTOR,
+			document.body,
+		);
+		applyPointerEffects("kiln-custom-pointer", colors?.pointerEffects);
+	};
+
+	if (!colors) {
+		document.getElementById("kiln-custom-font")?.remove();
+		clearScaledCursor();
+		whenBodyReady(applyEffects);
+		return;
+	}
 
 	const font =
 		colors.fontFamily && colors.fontFamily !== "default"
 			? FONTS[colors.fontFamily]
 			: null;
 
+	const existingFontLink = document.getElementById(
+		"kiln-custom-font",
+	) as HTMLLinkElement | null;
 	if (font?.googleFamily) {
-		const link = document.createElement("link");
-		link.id = "kiln-custom-font";
-		link.rel = "stylesheet";
-		link.href = `https://fonts.googleapis.com/css2?family=${font.googleFamily}&display=swap`;
-		document.head.appendChild(link);
+		const href = `https://fonts.googleapis.com/css2?family=${font.googleFamily}&display=swap`;
+		if (existingFontLink?.getAttribute("href") !== href) {
+			existingFontLink?.remove();
+			const link = document.createElement("link");
+			link.id = "kiln-custom-font";
+			link.rel = "stylesheet";
+			link.href = href;
+			themeHead().appendChild(link);
+		}
+	} else {
+		existingFontLink?.remove();
 	}
 
 	const themeStyle = document.createElement("style");
@@ -297,7 +397,7 @@ export function applyKilnTheme(
 		css += `\nbody, :root { font-family: ${font.stack} !important; --bs-body-font-family: ${font.stack}; }`;
 	}
 	themeStyle.textContent = css;
-	document.head.appendChild(themeStyle);
+	themeHead().appendChild(themeStyle);
 
 	if (colors.backgroundImage?.trim()) {
 		const bgStyle = document.createElement("style");
@@ -314,14 +414,14 @@ export function applyKilnTheme(
 			bgImage = imgUrl;
 		}
 		bgStyle.textContent = `body { background-image: ${bgImage} !important; background-size: cover !important; background-attachment: fixed !important; background-position: center !important; background-repeat: no-repeat !important; }`;
-		document.head.appendChild(bgStyle);
+		themeHead().appendChild(bgStyle);
 	}
 
 	if (colors.effects?.length) {
 		const effectsStyle = document.createElement("style");
 		effectsStyle.id = "kiln-custom-effects";
 		effectsStyle.textContent = buildEffectsCSS(colors.effects);
-		document.head.appendChild(effectsStyle);
+		themeHead().appendChild(effectsStyle);
 	}
 
 	if (colors.colorTokens && Object.keys(colors.colorTokens).length > 0) {
@@ -332,23 +432,23 @@ export function applyKilnTheme(
 			.map(([k, v]) => COLOR_TOKENS[k]?.apply(v) ?? "")
 			.filter(Boolean)
 			.join("\n");
-		document.head.appendChild(tokensStyle);
+		themeHead().appendChild(tokensStyle);
 	}
 
 	if (colors.customCss?.trim()) {
 		const customStyle = document.createElement("style");
 		customStyle.id = "kiln-custom-css";
 		customStyle.textContent = colors.customCss;
-		document.head.appendChild(customStyle);
+		themeHead().appendChild(customStyle);
 	}
 
 	if (colors.cursorUrl?.trim()) {
-		const cursorStyle = document.createElement("style");
-		cursorStyle.id = "kiln-custom-cursor";
-		const safeUrl = JSON.stringify(colors.cursorUrl.trim());
-		cursorStyle.textContent = `* { cursor: url(${safeUrl}) 0 0, auto !important; }`;
-		document.head.appendChild(cursorStyle);
+		void applyScaledCursorCSS(colors.cursorUrl.trim(), colors.cursorScale);
+	} else {
+		clearScaledCursor();
 	}
+
+	whenBodyReady(applyEffects);
 }
 
 export function extractDominantColor(imageUrl: string): Promise<string> {

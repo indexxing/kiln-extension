@@ -101,6 +101,21 @@ function getComposerEditor(textarea: HTMLTextAreaElement): ComposerEditor {
 	return editor;
 }
 
+function getComposerActionBar(textarea: HTMLTextAreaElement): HTMLElement {
+	const container = getComposerEditor(textarea).container;
+	const existing = container.querySelector<HTMLElement>(
+		".kiln-composer-action-bar",
+	);
+	if (existing) return existing;
+
+	const bar = document.createElement("div");
+	bar.className = "kiln-composer-action-bar d-flex align-items-center gap-1";
+	bar.style.cssText =
+		"position: absolute; right: 0.5rem; bottom: 0.5rem; z-index: 2;";
+	container.appendChild(bar);
+	return bar;
+}
+
 export function forumMarkdownButtons(showDisclosures: boolean) {
 	const textarea = getComposerTextarea();
 	if (!textarea) return;
@@ -158,7 +173,7 @@ export function forumMarkdownButtons(showDisclosures: boolean) {
 	}
 }
 
-export function forumCharacterCount(showDisclosures: boolean) {
+export function forumCharacterCount() {
 	const textarea = getComposerTextarea();
 	if (!textarea) return;
 
@@ -167,6 +182,8 @@ export function forumCharacterCount(showDisclosures: boolean) {
 
 	const counter = document.createElement("span");
 	counter.className = "text-muted small";
+	counter.style.cssText =
+		"position: absolute; left: 0.5rem; bottom: 0.25rem; z-index: 2; pointer-events: none; padding: 0 0.35rem; border-radius: 0.25rem; background-color: rgba(0, 0, 0, 0.45); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);";
 
 	const updateCounter = () => {
 		const len = textarea.value.length;
@@ -180,10 +197,14 @@ export function forumCharacterCount(showDisclosures: boolean) {
 
 	textarea.addEventListener("input", updateCounter);
 	updateCounter();
-	getComposerToolbar(textarea, showDisclosures).end.prepend(counter);
+	getComposerEditor(textarea).container.appendChild(counter);
 }
 
-export function forumPostPreview(autoShow: boolean, showDisclosures: boolean) {
+export function forumPostPreview(
+	autoShow: boolean,
+	showDisclosures: boolean,
+	imageLibraryEnabled: boolean,
+) {
 	const textarea = getComposerTextarea();
 	if (!textarea) return;
 
@@ -192,10 +213,14 @@ export function forumPostPreview(autoShow: boolean, showDisclosures: boolean) {
 
 	const previewBtn = document.createElement("button");
 	previewBtn.type = "button";
-	previewBtn.className = "btn btn-sm btn-outline-secondary";
+	previewBtn.className = "btn btn-secondary";
 	previewBtn.innerHTML = '<i class="fas fa-eye"></i>';
 	previewBtn.title = "Toggle Preview";
-	start.appendChild(previewBtn);
+	if (imageLibraryEnabled) {
+		getComposerActionBar(textarea).prepend(previewBtn);
+	} else {
+		start.appendChild(previewBtn);
+	}
 
 	const preview = document.createElement("div");
 	preview.className =
@@ -223,7 +248,6 @@ export function forumPostPreview(autoShow: boolean, showDisclosures: boolean) {
 		container.style.width = "50%";
 		preview.classList.remove("d-none");
 		preview.style.width = "50%";
-		previewBtn.classList.replace("btn-outline-secondary", "btn-secondary");
 		updatePreview();
 	};
 
@@ -231,16 +255,23 @@ export function forumPostPreview(autoShow: boolean, showDisclosures: boolean) {
 		previewOpen = false;
 		container.style.width = "100%";
 		preview.classList.add("d-none");
-		previewBtn.classList.replace("btn-secondary", "btn-outline-secondary");
 	};
 
+	let userToggledPreview = false;
+
 	if (autoShow) {
+		let autoOpened = false;
 		textarea.addEventListener("input", () => {
-			if (textarea.value.length > 0) openPreview();
+			if (autoOpened || userToggledPreview) return;
+			if (textarea.value.length > 0) {
+				autoOpened = true;
+				openPreview();
+			}
 		});
 	}
 
 	previewBtn.addEventListener("click", () => {
+		userToggledPreview = true;
 		if (previewOpen) closePreview();
 		else openPreview();
 	});
@@ -260,15 +291,13 @@ export function forumImageLibrary() {
 
 	const imageLibraryBtn = document.createElement("button");
 	imageLibraryBtn.type = "button";
-	imageLibraryBtn.className = "btn btn-sm btn-dark border border-secondary";
+	imageLibraryBtn.className = "btn btn-secondary";
 	imageLibraryBtn.innerHTML = '<i class="fas fa-images"></i>';
 	imageLibraryBtn.title = "Starred Images";
-	imageLibraryBtn.style.cssText =
-		"position: absolute; right: 0.5rem; bottom: 0.5rem; z-index: 2;";
 	imageLibraryBtn.addEventListener("click", () => {
 		openImageLibrary(textarea);
 	});
-	getComposerEditor(textarea).container.appendChild(imageLibraryBtn);
+	getComposerActionBar(textarea).appendChild(imageLibraryBtn);
 }
 
 const IMAGES_PER_PAGE = 24;
@@ -414,6 +443,51 @@ function openImageLibrary(textarea: HTMLTextAreaElement) {
 	}
 
 	renderImageLibraryList(textarea).then(() => imageLibraryModal?.showModal());
+}
+
+const FEEDBACK_REDIRECT_KEYWORDS = [
+	"feature suggestion",
+	"feature request",
+	"bug report",
+	"bug",
+	"suggestion",
+	"feedback",
+];
+
+function textSuggestsKilnFeedbackPost(text: string): boolean {
+	const lower = text.toLowerCase();
+	if (!lower.includes("kiln")) return false;
+	return FEEDBACK_REDIRECT_KEYWORDS.some((keyword) => lower.includes(keyword));
+}
+
+export function forumFeedbackRedirectBanner() {
+	const textarea = getComposerTextarea();
+	if (!textarea) return;
+
+	const titleInput = textarea
+		.closest("form")
+		?.querySelector<HTMLInputElement>('input[name="title"]');
+
+	const { wrapper } = getComposerEditor(textarea);
+
+	const banner = document.createElement("div");
+	banner.className = "alert alert-secondary small py-2 px-2 mt-2 mb-0 d-none";
+	banner.innerHTML = `
+		<i class="fas fa-info-circle me-1"></i>
+		Got feedback about Kiln? Submit it through the
+		<a href="https://polytoria.com/my/settings/kiln?tab=about" target="_blank" rel="noopener" class="alert-link text-muted">feedback form</a>
+		instead of posting here.
+	`;
+	wrapper.insertAdjacentElement("afterend", banner);
+
+	const updateBanner = () => {
+		const combined = `${titleInput?.value ?? ""} ${textarea.value}`;
+		banner.classList.toggle("d-none", !textSuggestsKilnFeedbackPost(combined));
+	};
+
+	textarea.addEventListener("input", updateBanner);
+	titleInput?.addEventListener("input", updateBanner);
+	updateBanner();
 }
 
 export function forumDrafts(showDisclosures: boolean, autoRestore: boolean) {
@@ -565,13 +639,17 @@ export function forumDrafts(showDisclosures: boolean, autoRestore: boolean) {
 		modal.showModal();
 	});
 
+	let submitted = false;
 	form.addEventListener("submit", () => {
+		submitted = true;
+		clearTimeout(autosaveTimer);
 		deleteDraft(getDraftId());
 	});
 
 	let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
 	const scheduleAutosave = (): void => {
 		clearTimeout(autosaveTimer);
+		if (submitted) return;
 		autosaveTimer = setTimeout(() => {
 			if (hasUnsavedContent()) writeDraft();
 			else deleteDraft(getDraftId());

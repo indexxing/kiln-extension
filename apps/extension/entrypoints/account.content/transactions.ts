@@ -70,17 +70,21 @@ export async function irlBrickPrice(
 		update();
 	});
 
+	let updateRequestId = 0;
 	const update = async () => {
 		if (input.value === "") {
 			output.value = "";
 			return;
 		}
+		const requestId = ++updateRequestId;
 		const code = /\(([^)]+)\)$/.exec(type.value)?.[1] ?? type.value;
 		const currency = await bricksToCurrency(+input.value, code);
-		if (!currency) {
+		if (requestId !== updateRequestId) return;
+
+		if (currency) {
+			output.value = currency;
+		} else {
 			output.value = "unsure";
 		}
-
-		output.value = currency!;
 	};
 }

@@ -358,7 +358,8 @@ export async function kilnRegistrationDate(
 		".badge.bg-secondary, .badge.bg-warning",
 	);
 	if (localTimeRow) localTimeRow.insertAdjacentElement("afterend", row);
-	else if (activityBadge) activityBadge.insertAdjacentElement("beforebegin", row);
+	else if (activityBadge)
+		activityBadge.insertAdjacentElement("beforebegin", row);
 	else card.children[0].appendChild(row);
 
 	sendMessage("registerBootstrapElements");
@@ -407,7 +408,8 @@ export async function publicTimezone(userId: number, showDisclosures: boolean) {
 		".badge.bg-secondary, .badge.bg-warning",
 	);
 	if (kilnUserRow) kilnUserRow.insertAdjacentElement("beforebegin", row);
-	else if (activityBadge) activityBadge.insertAdjacentElement("beforebegin", row);
+	else if (activityBadge)
+		activityBadge.insertAdjacentElement("beforebegin", row);
 	else card.children[0].appendChild(row);
 
 	const scheduleTick = () => {
@@ -775,6 +777,23 @@ export async function avatarVersions(userId: number, showDisclosures: boolean) {
 
 	const render = document.getElementById("avatar2dImg")! as HTMLImageElement;
 	const originalSrc = render.src;
+	const toggleBtn = document.getElementById(
+		"avatarToggleBtn",
+	) as HTMLButtonElement | null;
+
+	const set3dEnabled = (enabled: boolean) => {
+		if (!toggleBtn) return;
+		toggleBtn.disabled = !enabled;
+		toggleBtn.classList.toggle("disabled", !enabled);
+		toggleBtn.setAttribute("aria-disabled", String(!enabled));
+	};
+
+	const show2d = () => {
+		if (render.style.display == "none" && toggleBtn) {
+			toggleBtn.disabled = false;
+			toggleBtn.click();
+		}
+	};
 
 	const currentLi = document.createElement("li");
 	const currentBtn = document.createElement("button");
@@ -782,9 +801,8 @@ export async function avatarVersions(userId: number, showDisclosures: boolean) {
 	currentBtn.classList.add("dropdown-item");
 	currentBtn.innerHTML = `<span class="badge bg-secondary">current</span> Current`;
 	currentBtn.addEventListener("click", () => {
-		if (render.style.display == "none") {
-			document.getElementById("avatarToggleBtn")!.click();
-		}
+		set3dEnabled(true);
+		show2d();
 		render.src = originalSrc;
 	});
 	currentLi.appendChild(currentBtn);
@@ -806,10 +824,9 @@ export async function avatarVersions(userId: number, showDisclosures: boolean) {
 			minute: "2-digit",
 		});
 		btn.addEventListener("click", () => {
-			if (render.style.display == "none") {
-				document.getElementById("avatarToggleBtn")!.click();
-			}
+			show2d();
 			render.src = avatar.avatarUrl;
+			set3dEnabled(false);
 		});
 
 		if (date < new Date("2026-02-13")) {
@@ -945,9 +962,13 @@ async function showCreationsPage(userId: number) {
 	const container = getProfileContainer();
 	if (!container || container.querySelector(".kiln-creations-page")) return;
 
+	creationsPageOpen = true;
 	releaseProfileThemeHold();
 	clearProfileExtras();
-	if (activeProfileTheme) applyKilnTheme(null);
+	if (activeProfileTheme) {
+		applyKilnTheme(null);
+		clearNavbarFrost();
+	}
 
 	const originalTitle = document.title;
 	const basePath = window.location.pathname;
@@ -1005,6 +1026,7 @@ async function showCreationsPage(userId: number) {
 	hr.insertAdjacentElement("afterend", row);
 
 	const restore = () => {
+		creationsPageOpen = false;
 		window.history.pushState(null, "", basePath);
 		document.title = originalTitle;
 		kilnBadge.remove();
@@ -1013,8 +1035,9 @@ async function showCreationsPage(userId: number) {
 		row.remove();
 		for (const child of existingChildren) child.style.display = "";
 		if (profileThemeStyle) profileThemeStyle.disabled = nativeThemeSuppressed;
-		if (activeProfileTheme) holdProfileTheme(activeProfileTheme);
-		else if (!hadKilnTheme) applyKilnTheme(null);
+		if (!profileThemeEditorOpen && activeProfileTheme)
+			holdProfileTheme(activeProfileTheme);
+		else if (!profileThemeEditorOpen && !hadKilnTheme) applyKilnTheme(null);
 		restoreNavbarBlur?.();
 		activeAudio.current?.pause();
 	};
@@ -1340,26 +1363,29 @@ export async function userAliases(
 		"dropdown-menu dropdown-menu-right",
 	)[0];
 
-	const setAliasItem = document.createElement("a");
-	setAliasItem.classList = "dropdown-item text-primary";
-	setAliasItem.href = "#";
-	setAliasItem.innerHTML = `
+	if (dropdown) {
+		const setAliasItem = document.createElement("a");
+		setAliasItem.classList = "dropdown-item text-primary";
+		setAliasItem.href = "#";
+		setAliasItem.innerHTML = `
     <i class="fa-duotone fa-book"></i>
 	(Kiln) Set Alias
     `;
-	dropdown.appendChild(setAliasItem);
+		dropdown.appendChild(setAliasItem);
 
-	setAliasItem.addEventListener("click", async () => {
-		sendMessage("changeUserAlias", {
-			userId,
-			currentAlias: aliases[userId],
+		setAliasItem.addEventListener("click", async () => {
+			sendMessage("changeUserAlias", {
+				userId,
+				currentAlias: aliases[userId],
+			});
 		});
-	});
+	}
 
 	if (aliases[userId]) {
 		const username = document.querySelector(
 			'.text-themeglow [class^="userlink-"]',
-		) as HTMLSpanElement;
+		) as HTMLSpanElement | null;
+		if (!username) return;
 
 		const usernameLower = username.innerText.trim().toLowerCase();
 
@@ -1418,10 +1444,11 @@ export async function userNotes(userId: number, showDisclosures: boolean) {
 	const notes = await _userNotes.getValue();
 	const savedNote = notes[userId] ?? "";
 
-	pane.innerHTML = `<textarea class="form-control bg-dark mb-3" rows="8" placeholder="Write anything...">${savedNote}</textarea><small class="save-status text-muted"></small>`;
+	pane.innerHTML = `<textarea class="form-control bg-dark mb-3" rows="8" placeholder="Write anything..."></textarea><small class="save-status text-muted"></small>`;
 	tabContent.appendChild(pane);
 
 	const textarea = pane.querySelector<HTMLTextAreaElement>("textarea")!;
+	textarea.value = savedNote;
 	const status = pane.querySelector<HTMLElement>(".save-status")!;
 	let debounce: ReturnType<typeof setTimeout>;
 
@@ -1722,8 +1749,73 @@ const PROFILE_THEME_QUERY_PARAM = "kiln-profile-theme";
 
 type PublicProfileTheme = NonNullable<Extension.ProfileThemeApi["data"]>;
 
+export type ProfileThemePreferences = {
+	viewOthers?: boolean;
+	audio?: boolean;
+	customCss?: boolean;
+	effects?: boolean;
+	animated?: boolean;
+	ambient?: boolean;
+	pointer?: boolean;
+	layout?: boolean;
+	banner?: boolean;
+	stickers?: boolean;
+	notes?: boolean;
+	cards?: boolean;
+	backdrop?: boolean;
+};
+
 let nativeThemeSuppressed = false;
 let activeProfileTheme: PublicProfileTheme | null = null;
+let profileThemeEditorOpen = false;
+let creationsPageOpen = false;
+
+const NAVBAR_FROST_STYLE_ID = "kiln-profile-navbar-frost";
+const NAVBAR_FROST_ALPHA_THRESHOLD = 0.85;
+const NAVBAR_FROST_ALPHA = 0.92;
+const NAVBAR_FROST_FALLBACK: [number, number, number] = [37, 37, 37];
+
+function clearNavbarFrost() {
+	document.getElementById(NAVBAR_FROST_STYLE_ID)?.remove();
+}
+
+function syncNavbarFrost() {
+	clearNavbarFrost();
+
+	const navbars = Array.from(
+		document.querySelectorAll<HTMLElement>(
+			".navbar.nav-topbar, .navbar.nav-secondary",
+		),
+	).filter((el) => el.style.position === "sticky");
+
+	const rules: string[] = [];
+	for (const el of navbars) {
+		const match = getComputedStyle(el).backgroundColor.match(
+			/rgba?\(\s*([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\s*\)/,
+		);
+		if (!match) continue;
+
+		const alpha = match[4] === undefined ? 1 : parseFloat(match[4]);
+		if (alpha >= NAVBAR_FROST_ALPHA_THRESHOLD) continue;
+
+		const [r, g, b] =
+			alpha === 0 && match[1] === "0" && match[2] === "0" && match[3] === "0"
+				? NAVBAR_FROST_FALLBACK
+				: [match[1], match[2], match[3]];
+		const selector = el.classList.contains("nav-topbar")
+			? ".navbar.nav-topbar"
+			: ".navbar.nav-secondary";
+		rules.push(
+			`${selector} { background-color: rgba(${r}, ${g}, ${b}, ${NAVBAR_FROST_ALPHA}) !important; backdrop-filter: blur(18px) !important; -webkit-backdrop-filter: blur(8px) !important; }`,
+		);
+	}
+
+	if (rules.length === 0) return;
+	const style = document.createElement("style");
+	style.id = NAVBAR_FROST_STYLE_ID;
+	style.textContent = rules.join("\n");
+	document.head.appendChild(style);
+}
 
 function suppressNativeProfileTheme(suppress: boolean) {
 	nativeThemeSuppressed = suppress;
@@ -1750,6 +1842,7 @@ function applyProfileTheme(theme: PublicProfileTheme) {
 		.getElementById("kiln-custom-theme")
 		?.setAttribute("data-kiln-profile-theme", "1");
 	applyProfileExtras(extrasFromTheme(theme));
+	syncNavbarFrost();
 }
 
 let profileThemeHold: MutationObserver | null = null;
@@ -1759,12 +1852,50 @@ function releaseProfileThemeHold() {
 	profileThemeHold = null;
 }
 
+const AUDIO_EFFECT_TYPES = new Set(["clicking-sound", "background-music"]);
+
+function withThemePreferences(
+	theme: PublicProfileTheme,
+	prefs: ProfileThemePreferences,
+): PublicProfileTheme {
+	return {
+		...theme,
+		customCss: prefs.customCss === false ? undefined : theme.customCss,
+		effects:
+			theme.effects?.filter((effect) =>
+				AUDIO_EFFECT_TYPES.has(effect.type)
+					? prefs.audio !== false
+					: prefs.effects !== false,
+			) ?? theme.effects,
+		usernameStyle:
+			prefs.animated === false && theme.usernameStyle?.animated
+				? { ...theme.usernameStyle, animated: false }
+				: theme.usernameStyle,
+		ambient: prefs.ambient === false ? undefined : theme.ambient,
+		pointerEffects: prefs.pointer === false ? undefined : theme.pointerEffects,
+		layout: prefs.layout === false ? undefined : theme.layout,
+		banner: prefs.banner === false ? undefined : theme.banner,
+		stickers: prefs.stickers === false ? undefined : theme.stickers,
+		notes: prefs.notes === false ? undefined : theme.notes,
+		cardStyle: prefs.cards === false ? undefined : theme.cardStyle,
+		avatarBackdrop: prefs.backdrop === false ? undefined : theme.avatarBackdrop,
+	};
+}
+
+function preferencesForTarget(
+	prefs: ProfileThemePreferences,
+	isOwnProfile: boolean,
+): ProfileThemePreferences {
+	return isOwnProfile ? { audio: prefs.audio } : prefs;
+}
+
 function holdProfileTheme(theme: PublicProfileTheme) {
 	activeProfileTheme = theme;
 	applyProfileTheme(theme);
 
 	releaseProfileThemeHold();
 	profileThemeHold = new MutationObserver(() => {
+		if (profileThemeEditorOpen) return;
 		const style = document.getElementById("kiln-custom-theme");
 		if (style?.getAttribute("data-kiln-profile-theme") === "1") return;
 		applyProfileTheme(theme);
@@ -1825,7 +1956,7 @@ function showReportThemeModal(userId: number) {
 			return;
 		}
 		status.innerHTML =
-			'<span class="text-success">Thanks — the theme has been reported.</span>';
+			'<span class="text-success">Your report has been submitted, thank you!</span>';
 		setTimeout(() => modal.close(), 1200);
 	});
 
@@ -1864,15 +1995,23 @@ export async function customProfileThemes(
 	selfUserId: number | null,
 	targetUserId: number,
 	showDisclosures: boolean,
-	viewOthers: boolean,
+	prefs: ProfileThemePreferences,
 ) {
 	const isOwnProfile = selfUserId !== null && selfUserId === targetUserId;
+	const viewOthers = prefs.viewOthers !== false;
+	const targetPrefs = preferencesForTarget(prefs, isOwnProfile);
 
 	if (isOwnProfile) {
 		const restore = async () => {
+			profileThemeEditorOpen = false;
 			const fresh = await fetchProfileTheme(targetUserId);
 			if (fresh) {
-				holdProfileTheme(fresh);
+				const preferredFresh = withThemePreferences(fresh, targetPrefs);
+				if (creationsPageOpen) {
+					activeProfileTheme = preferredFresh;
+				} else {
+					holdProfileTheme(preferredFresh);
+				}
 				return;
 			}
 			activeProfileTheme = null;
@@ -1883,6 +2022,7 @@ export async function customProfileThemes(
 		};
 
 		const openEditor = () => {
+			profileThemeEditorOpen = true;
 			releaseProfileThemeHold();
 			suppressNativeProfileTheme(true);
 			window.history.replaceState(
@@ -1890,7 +2030,11 @@ export async function customProfileThemes(
 				"",
 				`${window.location.pathname}?${PROFILE_THEME_QUERY_PARAM}`,
 			);
-			openProfileThemeEditor({ userId: selfUserId, onRestore: restore });
+			openProfileThemeEditor({
+				userId: selfUserId,
+				onRestore: restore,
+				onPreview: syncNavbarFrost,
+			});
 		};
 
 		addProfileThemeButton(openEditor, showDisclosures);
@@ -1907,7 +2051,12 @@ export async function customProfileThemes(
 	const theme = await fetchProfileTheme(targetUserId);
 	if (!theme) return;
 
-	holdProfileTheme(theme);
+	const preferredTheme = withThemePreferences(theme, targetPrefs);
+	if (profileThemeEditorOpen || creationsPageOpen) {
+		activeProfileTheme = preferredTheme;
+	} else {
+		holdProfileTheme(preferredTheme);
+	}
 	if (!isOwnProfile) addReportThemeItem(targetUserId);
 
 	if (!isOwnProfile) {
@@ -1995,6 +2144,9 @@ function showUseThisThemeModal(userId: number, theme: PublicProfileTheme) {
 			navbarIconColor: theme.navbarIconColor ?? undefined,
 			cursorUrl: theme.cursorUrl ?? undefined,
 			colorTokens: theme.colorTokens ?? undefined,
+			ambient: theme.ambient ?? undefined,
+			cardStyle: theme.cardStyle ?? undefined,
+			pointerEffects: theme.pointerEffects ?? undefined,
 			importedFromProfile: userId,
 		};
 		await _savedThemes.setValue(

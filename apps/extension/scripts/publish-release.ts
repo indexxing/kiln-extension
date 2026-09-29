@@ -56,4 +56,4 @@ await $`bunx wrangler kv key put latestVersion ${version} --binding=CONFIG --rem
 );
 console.log(`✓ Updated latestVersion → ${version} in KV`);
 
-console.log(`\n✓ Done — v${version} published.`);
+console.log(`\n✓ Done! v${version} published.`);

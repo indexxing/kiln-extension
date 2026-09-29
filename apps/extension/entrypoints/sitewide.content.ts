@@ -23,15 +23,19 @@ import _preferencesJson from "@/public/preferences.json";
 
 const preferencesData = _preferencesJson.preferences;
 
+import { escapeHtml } from "@/utils/escapeHtml";
 import type { FeatureId } from "@/utils/featureIds.generated";
 import { PATH_FEATURES } from "@/utils/featurePaths.generated";
 import { checkForumMentions } from "@/utils/forumMentionNotifications";
 import { syncPublicOutfits } from "@/utils/publicOutfits";
 import { syncPublicTimezone } from "@/utils/publicTimezone";
+import { runFeature } from "@/utils/runFeature";
 import {
 	_pastNotifications,
 	_savedThemes,
 	_showKilnDisclosures,
+	_textTruncateFix,
+	getEnabledDeprecatedFeatures,
 	type PastNotification,
 	preferences,
 	UNASSIGNED_PAST_NOTIFICATIONS,
@@ -79,8 +83,16 @@ export default defineContentScript({
 			location.pathname,
 		);
 		if (!isProfilePage) {
-			await applyActiveKilnTheme();
-			onMessage("themeAutoUpdated", () => applyActiveKilnTheme());
+			try {
+				await applyActiveKilnTheme();
+			} catch (err) {
+				console.error("[Kiln] Failed to apply active theme", err);
+			}
+			onMessage("themeAutoUpdated", () =>
+				applyActiveKilnTheme().catch((err) =>
+					console.error("[Kiln] Failed to apply active theme", err),
+				),
+			);
 
 			const values = await preferences.getPreferences();
 			if (values.enabled.includes("legacySidebar")) {
@@ -98,7 +110,10 @@ export default defineContentScript({
 						if (!mainContent.parentElement.querySelector(".nav-sidebar-cont")) {
 							mainContent.parentElement.prepend(
 								createSidebarElement(
-									values.config.legacySidebar.membershipStyle,
+									resolveMembershipStyle(
+										values.config.legacySidebar.membershipStyle,
+										detectNativeMembershipStyle(),
+									),
 									values.config.legacySidebar.showUpgradeBtn,
 								),
 							);
@@ -116,16 +131,28 @@ export default defineContentScript({
 					childList: true,
 					subtree: true,
 				});
+				document.addEventListener(
+					"DOMContentLoaded",
+					() => observer.disconnect(),
+					{ once: true },
+				);
 			}
 		}
 
 		const onDOMReady = () => {
 			document.body.setAttribute("data-URL", window.location.pathname);
+			_textTruncateFix.getValue().then((enabled) => {
+				document.body.setAttribute(
+					"data-kiln-text-truncate-fix",
+					String(enabled),
+				);
+			});
+			const nativeMembershipStyle = detectNativeMembershipStyle();
 
-			injectNoticeBanners();
-			injectPostUpdateBanner();
-			injectUpdateBanner();
-			injectKilnSettingsLink();
+			runFeature("noticeBanners", () => injectNoticeBanners());
+			runFeature("postUpdateBanner", () => injectPostUpdateBanner());
+			runFeature("updateBanner", () => injectUpdateBanner());
+			runFeature("kilnSettingsLink", () => injectKilnSettingsLink());
 			getUserDetails().then((user) => {
 				if (!user) {
 					console.warn("[Kiln] Failure to get logged in user details.");
@@ -147,66 +174,79 @@ export default defineContentScript({
 					preferences.getPreferences(),
 					_showKilnDisclosures.getValue(),
 				]).then(async ([values, showDisclosures]) => {
-					footerInjectionInfo(values.enabled);
-
-					syncPublicTimezone(
-						user.userId,
-						values.enabled.includes("timezoneSharing") &&
-							(values.config.timezoneSharing?.shareTimezone ?? false),
+					runFeature("deprecatedFeaturesBanner", () =>
+						injectDeprecatedFeaturesBanner(values.enabled),
+					);
+					runFeature("footerInjectionInfo", () =>
+						footerInjectionInfo(values.enabled),
 					);
 
-					syncPublicOutfits(
-						user.userId,
-						values.enabled.includes("publicAvatarOutfits") &&
-							(values.config.publicAvatarOutfits?.shareOutfits ?? false),
+					runFeature("timezoneSharing", () =>
+						syncPublicTimezone(
+							user.userId,
+							values.enabled.includes("timezoneSharing") &&
+								(values.config.timezoneSharing?.shareTimezone ?? false),
+						),
 					);
+
+					const isSharingOutfits = (prefs: typeof values) =>
+						prefs.enabled.includes("publicAvatarOutfits") &&
+						(prefs.config.publicAvatarOutfits?.shareOutfits ?? false);
+
+					let sharingOutfits = isSharingOutfits(values);
+					runFeature("publicAvatarOutfits", () =>
+						syncPublicOutfits(user.userId, sharingOutfits),
+					);
+
+					if (window.location.pathname.startsWith("/my/settings/kiln")) {
+						preferences.watch(async () => {
+							const next = isSharingOutfits(await preferences.getPreferences());
+							if (next === sharingOutfits) return;
+							sharingOutfits = next;
+							syncPublicOutfits(user.userId, next, { force: true });
+						});
+					}
 
 					if (values.enabled.includes("localizedTimestamps")) {
-						localizedTimestamps(showDisclosures);
+						runFeature("localizedTimestamps", () =>
+							localizedTimestamps(showDisclosures),
+						);
 					}
 
 					if (values.enabled.includes("stickyNavbar")) {
-						stickyNavbar();
+						runFeature("stickyNavbar", () => stickyNavbar());
 					}
 
 					if (values.enabled.includes("hideNotificationBadges")) {
-						const badges = document.querySelectorAll(
-							".nav-secondary .nav-link .badge",
-						);
-						for (const badge of Array.from(badges)) {
-							badge.remove();
-						}
+						runFeature("hideNotificationBadges", () => {
+							const badges = document.querySelectorAll(
+								".nav-secondary .nav-link .badge",
+							);
+							for (const badge of Array.from(badges)) {
+								badge.remove();
+							}
+						});
 					}
 
 					if (values.enabled.includes("hideUserAds")) {
-						const adSelectors = [
-							{ enabled: values.config.hideUserAds.banners, width: "728px" },
-							{ enabled: values.config.hideUserAds.rectangles, width: "300px" },
-						];
+						runFeature("hideUserAds", () => {
+							const adSelectors = [
+								{ enabled: values.config.hideUserAds.banners, width: "728px" },
+								{
+									enabled: values.config.hideUserAds.rectangles,
+									width: "300px",
+								},
+							];
 
-						for (const { enabled, width } of adSelectors) {
-							if (!enabled) continue;
-							for (const a of document.querySelectorAll(
-								`div[style^="max-width: ${width};"] a[href^="/ads"]`,
-							)) {
-								a.closest(`div[style^="max-width: ${width};"]`)?.remove();
+							for (const { enabled, width } of adSelectors) {
+								if (!enabled) continue;
+								for (const a of document.querySelectorAll(
+									`div[style^="max-width: ${width};"] a[href^="/ads"]`,
+								)) {
+									a.closest(`div[style^="max-width: ${width};"]`)?.remove();
+								}
 							}
-						}
-					}
-
-					if (values.enabled.includes("membershipThemes")) {
-						membershipThemes(values.config.membershipThemes.themeId);
-					}
-
-					if (values.enabled.includes("disableMembershipThemes")) {
-						disableMembershipThemes();
-					}
-
-					if (values.enabled.includes("legacySidebar")) {
-						legacySidebar(
-							values.config.legacySidebar.membershipStyle,
-							values.config.legacySidebar.showUpgradeBtn,
-						);
+						});
 					}
 
 					const isProfilePage = /^\/(u\/[^/]+|users\/\d+)\/?$/.test(
@@ -216,9 +256,10 @@ export default defineContentScript({
 						values.enabled.includes("themeCreator") &&
 						(!isProfilePage || !profileBlocksTheme())
 					) {
-						const activeId =
-							values.config.themeCreator.activeThemeId || "default";
-						if (activeId !== "default") {
+						runFeature("themeCreator", async () => {
+							const activeId =
+								values.config.themeCreator.activeThemeId || "default";
+							if (activeId === "default") return;
 							if (activeId in THEME_PRESETS) {
 								applyKilnTheme(THEME_PRESETS[activeId]);
 							} else {
@@ -226,16 +267,42 @@ export default defineContentScript({
 								const theme = saved.find((t) => t.id === activeId);
 								applyKilnTheme(theme ?? null);
 							}
-						}
+						});
+					}
+
+					if (values.enabled.includes("membershipThemes")) {
+						runFeature("membershipThemes", () =>
+							membershipThemes(values.config.membershipThemes.themeId),
+						);
+					}
+
+					if (values.enabled.includes("disableMembershipThemes")) {
+						runFeature("disableMembershipThemes", () =>
+							disableMembershipThemes(),
+						);
+					}
+
+					if (values.enabled.includes("legacySidebar")) {
+						runFeature("legacySidebar", () =>
+							legacySidebar(
+								resolveMembershipStyle(
+									values.config.legacySidebar.membershipStyle,
+									nativeMembershipStyle,
+								),
+								values.config.legacySidebar.showUpgradeBtn,
+							),
+						);
 					}
 
 					if (values.enabled.includes("irlBrickPrice")) {
-						const currency = await bricksToCurrency(
-							user.bricks,
-							values.config.irlBrickPrice.currency as CurrencyCode,
-						);
+						runFeature("irlBrickPrice", async () => {
+							const currency = await bricksToCurrency(
+								user.bricks,
+								values.config.irlBrickPrice.currency as CurrencyCode,
+							);
 
-						if (currency) {
+							if (!currency) return;
+
 							const brickBalance = document
 								.querySelector('.navbar [data-bs-html="true"]')!
 								.getElementsByTagName("span")[0]!;
@@ -249,51 +316,60 @@ export default defineContentScript({
 								"IRL currency conversion",
 							);
 							brickBalance.append(" ", currencySpan);
-						}
+						});
 					}
 
 					if (values.enabled.includes("userAliases")) {
-						_userAliases.getValue().then((aliases) => {
+						runFeature("userAliases", async () => {
+							const aliases = await _userAliases.getValue();
 							userAliases(user.userId, aliases, showDisclosures);
 						});
 					}
 
 					if (values.enabled.includes("friendReqNotifActions")) {
-						friendReqNotifActions(showDisclosures);
+						runFeature("friendReqNotifActions", () =>
+							friendReqNotifActions(showDisclosures),
+						);
 					}
 
 					if (values.enabled.includes("reenableSearch")) {
-						reenableSearch();
+						runFeature("reenableSearch", () => reenableSearch());
 					}
 
 					if (values.enabled.includes("advancedForumSearch")) {
-						linkForumSearchToAdvanced();
+						runFeature("advancedForumSearch", () =>
+							linkForumSearchToAdvanced(),
+						);
 					}
 
 					if (values.enabled.includes("streakFreezeDisplay")) {
-						streakFreezeDisplay(showDisclosures);
+						runFeature("streakFreezeDisplay", () =>
+							streakFreezeDisplay(showDisclosures),
+						);
 					}
 
 					if (
 						values.enabled.includes("forumMentions") &&
 						values.config.forumMentions.notifications
 					) {
-						checkForumMentions(user).catch((err) =>
-							console.warn("[Kiln] Failed to check forum mentions", err),
-						);
+						runFeature("forumMentions", () => checkForumMentions(user));
 					}
 
 					if (values.enabled.includes("pastNotifications")) {
-						pastNotifications(user.userId, showDisclosures);
+						runFeature("pastNotifications", () =>
+							pastNotifications(user.userId, showDisclosures),
+						);
 					}
 
 					const screenNFT = values.enabled.includes("nftItems");
 					const screenNLF = values.enabled.includes("nlfItems");
 					if (screenNFT || screenNLF) {
-						screenTradeNotifications(
-							user,
-							{ nft: screenNFT, nlf: screenNLF },
-							showDisclosures,
+						runFeature("tradeScreening", () =>
+							screenTradeNotifications(
+								user,
+								{ nft: screenNFT, nlf: screenNLF },
+								showDisclosures,
+							),
 						);
 					}
 				});
@@ -360,6 +436,22 @@ const THEME_BLOCKING_ITEM_IDS = new Set([
 	34389, 34380, 34379,
 ]);
 
+function detectNativeMembershipStyle(): "free" | "plus" | "plusdx" {
+	const navbar = document.querySelector(
+		".navbar.navbar-expand-lg.navbar-light.bg-navbar.nav-topbar",
+	);
+	if (navbar?.classList.contains("navbar-plusdx")) return "plusdx";
+	if (navbar?.classList.contains("navbar-plus")) return "plus";
+	return "free";
+}
+
+function resolveMembershipStyle(
+	style: "auto" | "free" | "plus" | "plusdx",
+	native: "free" | "plus" | "plusdx",
+): "free" | "plus" | "plusdx" {
+	return style === "auto" ? native : style;
+}
+
 function profileBlocksTheme(): boolean {
 	const card = document.querySelector("#user-equipped-items-card");
 	if (!card) return false;
@@ -386,6 +478,38 @@ function injectKilnSettingsLink() {
 			</li>
 		</a>`,
 	);
+}
+
+function injectDeprecatedFeaturesBanner(enabled: FeatureId[]) {
+	const count = getEnabledDeprecatedFeatures(enabled).length;
+	if (count === 0) return;
+
+	const mainContent = document.querySelector(
+		'#main-content div[style^="min-height"]',
+	);
+	if (!mainContent) return;
+
+	const banner = document.createElement("div");
+	banner.classList.add(
+		"alert",
+		"alert-warning",
+		"d-flex",
+		"align-items-center",
+		"gap-2",
+		"p-3",
+		"rounded-0",
+		"border-0",
+		"text-dark",
+	);
+	banner.style.cssText =
+		"background-image: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.05) 10px, rgba(0,0,0,0.05) 20px); margin: 0;";
+	banner.role = "alert";
+
+	const verb = count === 1 ? "is" : "are";
+	const pronoun = count === 1 ? "it" : "them";
+	banner.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i><span>You have <b>${count}</b> feature${count === 1 ? "" : "s"} enabled that ${verb} deprecated. It is recommended you <a href="/my/settings/kiln?tab=prefs&category=deprecated" class="alert-link text-black">disable ${pronoun}</a>.</span>`;
+
+	mainContent.prepend(banner);
 }
 
 function membershipThemes(themeId: "plus" | "plusdx") {
@@ -563,8 +687,12 @@ function legacySidebar(
 	showUpgradeBtn: boolean = false,
 ) {
 	if (!document.querySelector(".nav-sidebar-cont")) {
-		const pageContent = document.getElementById("main-content")!.parentElement;
-		pageContent!.prepend(createSidebarElement(membershipStyle, showUpgradeBtn));
+		const pageContent = document.getElementById("main-content")?.parentElement;
+		if (!pageContent) {
+			console.warn("[Kiln] #main-content not found");
+			return;
+		}
+		pageContent.prepend(createSidebarElement(membershipStyle, showUpgradeBtn));
 	}
 
 	if (!document.getElementById("kiln-legacy-sidebar-style")) {
@@ -579,8 +707,8 @@ function legacySidebar(
 
 	const navbar = document.querySelector(
 		".navbar.navbar-expand-lg.navbar-light.bg-navbar.nav-topbar",
-	)!;
-	navbar.getElementsByClassName("navbar-brand")[0].remove();
+	);
+	navbar?.getElementsByClassName("navbar-brand")[0]?.remove();
 
 	document
 		.querySelector(
@@ -668,13 +796,13 @@ function userAliases(
 	const getUserId = (link: HTMLElement): number | null => {
 		const ownHref = link.getAttribute("href");
 		if (ownHref) {
-			const match = ownHref.match(/^\/users\/(\d+)/);
+			const match = ownHref.match(/^\/users\/(\d+)\/?$/);
 			if (match) return +match[1];
 		}
 
 		const ancestorHref = link.closest("a")?.getAttribute("href");
 		if (ancestorHref) {
-			const match = ancestorHref.match(/^\/users\/(\d+)/);
+			const match = ancestorHref.match(/^\/users\/(\d+)\/?$/);
 			if (match) return +match[1];
 		}
 
@@ -1206,15 +1334,6 @@ function stickyNavbar() {
 	resizeObserver.observe(navbar);
 	if (secondaryNavbar) resizeObserver.observe(secondaryNavbar);
 	for (const banner of siteBanners) resizeObserver.observe(banner);
-}
-
-function escapeHtml(value: string): string {
-	return value
-		.replaceAll("&", "&amp;")
-		.replaceAll("<", "&lt;")
-		.replaceAll(">", "&gt;")
-		.replaceAll('"', "&quot;")
-		.replaceAll("'", "&#39;");
 }
 
 function createSearchResultItem(user: {

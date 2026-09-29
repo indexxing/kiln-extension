@@ -14,8 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import type { PolyTrack } from "@kiln/schemas";
 import { _forumMentionChecks, _kilnNotifications } from "@/utils/storage";
-import type { UserDetails } from "@/utils/types";
+import type { Result, UserDetails } from "@/utils/types";
 import {
 	fireKilnNotification,
 	injectNotification,
@@ -23,15 +24,7 @@ import {
 } from "@/utils/utilities";
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
-
-function escapeHtml(value: string): string {
-	return value
-		.replaceAll("&", "&amp;")
-		.replaceAll("<", "&lt;")
-		.replaceAll(">", "&gt;")
-		.replaceAll('"', "&quot;")
-		.replaceAll("'", "&#39;");
-}
+const MAX_MENTION_PAGES = 10;
 
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -49,19 +42,6 @@ export async function checkForumMentions(user: UserDetails): Promise<void> {
 		[user.userId]: { since, checkedAt: now },
 	});
 
-	const result = await sendMessage("getForumSearch", {
-		page: 1,
-		search: `@${user.username}`,
-		sort: "newest",
-		type: "both",
-		authorIds: [],
-		categoryIds: [],
-		postedAfter: "",
-		postedBefore: "",
-		literal: true,
-	});
-	if (!result.ok) return;
-
 	const mention = new RegExp(
 		`(?<!\\w)@${escapeRegExp(user.username)}(?!\\w)`,
 		"i",
@@ -69,42 +49,72 @@ export async function checkForumMentions(user: UserDetails): Promise<void> {
 	const sinceDate = new Date(since);
 	const existing = await _kilnNotifications.getValue();
 
-	for (const entry of result.data.entries) {
-		if (entry.author.polytoriaId === user.userId) continue;
+	let page: number | null = 1;
+	let pagesFetched = 0;
+	let reachedSeen = false;
 
-		const postedAt = new Date(entry.postedAt);
-		if (postedAt < sinceDate) continue;
+	while (page !== null && pagesFetched < MAX_MENTION_PAGES && !reachedSeen) {
+		const currentPage: number = page;
+		pagesFetched++;
 
-		const id = `forum-mention-${entry.kind}-${entry.id}`;
-		if (id in existing) continue;
+		const result: Result<PolyTrack.ForumSearchApi> = await sendMessage(
+			"getForumSearch",
+			{
+				page: currentPage,
+				search: `@${user.username}`,
+				sort: "newest",
+				type: "both",
+				authorIds: [],
+				categoryIds: [],
+				postedAfter: "",
+				postedBefore: "",
+				literal: true,
+			},
+		);
+		if (!result.ok) return;
 
-		if (!mention.test(`${entry.title}\n${entry.content}`)) continue;
+		for (const entry of result.data.entries) {
+			if (entry.author.polytoriaId === user.userId) continue;
 
-		const title =
-			(entry.kind === "reply" ? entry.thread.title : entry.title) ||
-			"Untitled thread";
-		const url =
-			entry.kind === "reply"
-				? `/forum/post/${entry.threadId}#reply-${entry.id}`
-				: `/forum/post/${entry.id}`;
-		const message = `${escapeHtml(entry.author.username)} mentioned you in "${escapeHtml(title)}"`;
+			const postedAt = new Date(entry.postedAt);
+			if (postedAt < sinceDate) {
+				reachedSeen = true;
+				break;
+			}
 
-		await fireKilnNotification({
-			userId: user.userId,
-			id,
-			message,
-			date: postedAt,
-			url,
-			avatarUrl: entry.author.avatarUrl,
-		});
-		injectNotification({
-			message,
-			date: postedAt,
-			url,
-			avatarUrl: entry.author.avatarUrl,
-			unread: true,
-			lightBell: true,
-			onClick: () => markKilnNotificationRead(id),
-		});
+			const id = `forum-mention-${entry.kind}-${entry.id}`;
+			if (id in existing) continue;
+
+			if (!mention.test(`${entry.title}\n${entry.content}`)) continue;
+
+			const title =
+				(entry.kind === "reply" ? entry.thread.title : entry.title) ||
+				"Untitled thread";
+			const url =
+				entry.kind === "reply"
+					? `/forum/post/${entry.threadId}#reply-${entry.id}`
+					: `/forum/post/${entry.id}`;
+			const message = `${entry.author.username} mentioned you in "${title}"`;
+
+			await fireKilnNotification({
+				userId: user.userId,
+				id,
+				message,
+				date: postedAt,
+				url,
+				avatarUrl: entry.author.avatarUrl,
+			});
+			injectNotification({
+				message,
+				date: postedAt,
+				url,
+				avatarUrl: entry.author.avatarUrl,
+				unread: true,
+				lightBell: true,
+				onClick: () => markKilnNotificationRead(id),
+			});
+		}
+
+		page = result.data.nextPage;
 	}
 }

@@ -15,7 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { Polytoria } from "@kiln/schemas";
-import type { Menus, Runtime } from "webextension-polyfill";
+import type { Menus } from "webextension-polyfill";
 import { onMessage } from "@/utils/messaging";
 import { cache, migrateThemesToLocal } from "@/utils/storage";
 import {
@@ -23,6 +23,7 @@ import {
 	ApiHttpError,
 	handle,
 	NoSessionError,
+	resolveInjectableTabId,
 	safeFetch,
 	withApi,
 } from "./background/shared";
@@ -35,6 +36,7 @@ import "./background/profileThemes";
 import "./background/notifications";
 import "./background/trades";
 import "./background/auth";
+import "./background/profileBio";
 import "./background/extension";
 import "./background/timePlayed";
 import "./background/feedback";
@@ -44,7 +46,7 @@ import "./background/placesListing";
 import "./background/forumSearch";
 import "./background/feedSearch";
 import { scheduleAssetApprovalCheck } from "./background/assetApprovals";
-import { purgeOldErrors } from "./background/errors";
+import { logError, purgeOldErrors } from "./background/errors";
 import { scheduleThemeAutoUpdateCheck } from "./background/themeAutoUpdate";
 
 export { ApiDisabledError, ApiHttpError, NoSessionError };
@@ -142,8 +144,34 @@ function setupContextMenus() {
 		const menu = CONTEXT_MENUS.find((m) => m.id === info.menuItemId);
 		if (!menu) return;
 
-		const value = await menu.extract(info);
-		await copyToTab(tab.id, value);
+		try {
+			const value = await menu.extract(info);
+			await copyToTab(tab.id, value);
+		} catch (err) {
+			await logError({
+				type: "content",
+				message: err instanceof Error ? err.message : String(err),
+				source: `contextMenus:${menu.id}`,
+			}).catch(() => {});
+			await browser.scripting
+				.executeScript({
+					target: { tabId: tab.id },
+					world: "MAIN",
+					func: () => {
+						// @ts-expect-error
+						window.Swal?.fire({
+							icon: "error",
+							title: "Couldn't copy ID",
+							toast: true,
+							position: "bottom-end",
+							timer: 3000,
+							timerProgressBar: true,
+							showConfirmButton: false,
+						});
+					},
+				})
+				.catch(() => {});
+		}
 	});
 }
 
@@ -158,29 +186,44 @@ async function trimCacheIfNeeded() {
 	}
 }
 
+function reportStartupError(source: string) {
+	return (err: unknown) =>
+		logError({
+			type: "content",
+			message: err instanceof Error ? err.message : String(err),
+			source,
+		});
+}
+
 export default defineBackground(() => {
 	console.log("Kiln background service worker is running!", {
 		id: browser.runtime.id,
 	});
 
-	trimCacheIfNeeded();
+	trimCacheIfNeeded().catch(reportStartupError("trimCacheIfNeeded"));
 
-	purgeOldErrors();
+	purgeOldErrors().catch(reportStartupError("purgeOldErrors"));
 
-	migrateThemesToLocal();
+	migrateThemesToLocal().catch(reportStartupError("migrateThemesToLocal"));
 
-	scheduleThemeAutoUpdateCheck();
+	scheduleThemeAutoUpdateCheck().catch(
+		reportStartupError("scheduleThemeAutoUpdateCheck"),
+	);
 
-	scheduleAssetApprovalCheck();
+	scheduleAssetApprovalCheck().catch(
+		reportStartupError("scheduleAssetApprovalCheck"),
+	);
 
-	migrateLegacySettings().then((migration) => {
-		if (migration) {
-			browser.tabs.create({
-				url: "https://kiln.indexx.dev/rewrite",
-				active: true,
-			});
-		}
-	});
+	migrateLegacySettings()
+		.then((migration) => {
+			if (migration) {
+				browser.tabs.create({
+					url: "https://kiln.indexx.dev/rewrite",
+					active: true,
+				});
+			}
+		})
+		.catch(reportStartupError("migrateLegacySettings"));
 
 	setupContextMenus();
 });
@@ -228,16 +271,6 @@ browser.runtime.onInstalled.addListener(async ({ reason }) => {
 		console.log("[Kiln] Cache cleared on update.");
 	}
 });
-
-async function resolveInjectableTabId(
-	sender?: Runtime.MessageSender,
-): Promise<number | null> {
-	if (sender?.tab?.id != null) return sender.tab.id;
-
-	const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-	if (tab?.id == null || !/^https?:/.test(tab.url ?? "")) return null;
-	return tab.id;
-}
 
 onMessage("openPreferences", () => {
 	browser.tabs.create({ url: "https://polytoria.com/my/settings/kiln" });

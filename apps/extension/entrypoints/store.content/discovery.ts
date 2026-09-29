@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import { escapeHtml, safeHttpUrl } from "@/utils/escapeHtml";
 import type {
 	CurrencyCode,
 	StoreListingFilters,
@@ -145,19 +146,20 @@ export async function eventItems(showDisclosures: boolean) {
 		const paginationEl = modal.querySelector<HTMLElement>("#p-ei-pagination")!;
 
 		body.innerHTML = groups[page]
-			.map(
-				(event) => `
+			.map((event) => {
+				const link = event.link ? safeHttpUrl(event.link) : "";
+				return `
 			<div class="row px-1 mb-1">
 				<div class="col">
-					${event.date ? `<h6 class="text-muted mb-0" style="font-size:0.75rem;">${event.date}</h6>` : ""}
-					<h5 class="mb-0" style="color: #bfbfbf">${event.name}</h5>
+					${event.date ? `<h6 class="text-muted mb-0" style="font-size:0.75rem;">${escapeHtml(event.date)}</h6>` : ""}
+					<h5 class="mb-0" style="color: #bfbfbf">${escapeHtml(event.name)}</h5>
 				</div>
 				${
-					event.link
+					link
 						? `<div class="col-auto d-flex align-items-center">
-					<a class="text-muted" href="${event.link}" target="_blank">
+					<a class="text-muted" href="${escapeHtml(link)}" target="_blank">
 						<span class="d-none d-lg-inline" style="font-size:0.85rem;">
-							${event.link.includes("/places/") ? "Event Place" : "Blog Post"}
+							${link.includes("/places/") ? "Event Place" : "Blog Post"}
 						</span>
 						<i class="fas fa-angle-right ms-1"></i>
 					</a>
@@ -174,8 +176,8 @@ export async function eventItems(showDisclosures: boolean) {
 						<a href="/store/${item.id}" style="flex:0 0 auto;text-decoration:none;">
 							<div class="card text-center h-100" style="width:110px;background:#1a1a1a;border-color:#444;">
 								<div class="card-body p-2">
-									<img src="${item.thumbnailUrl}" style="width:72px;height:72px;object-fit:contain;">
-									<div class="mt-1" style="font-size:0.65rem;color:#aaa;line-height:1.2;word-break:break-word;">${item.name}</div>
+									<img src="${escapeHtml(safeHttpUrl(item.thumbnailUrl))}" style="width:72px;height:72px;object-fit:contain;">
+									<div class="mt-1" style="font-size:0.65rem;color:#aaa;line-height:1.2;word-break:break-word;">${escapeHtml(item.name)}</div>
 								</div>
 							</div>
 						</a>
@@ -185,8 +187,8 @@ export async function eventItems(showDisclosures: boolean) {
 					</div>
 				</div>
 			</div>
-			`,
-			)
+			`;
+			})
 			.join("");
 
 		paginationEl.style.removeProperty("display");
@@ -588,6 +590,7 @@ export function disableInfiniteScrolling(showDisclosures: boolean) {
 	let page = 1;
 	let loading = false;
 	let finished = false;
+	let generation = 0;
 
 	const button = document.createElement("button");
 	button.type = "button";
@@ -611,6 +614,7 @@ export function disableInfiniteScrolling(showDisclosures: boolean) {
 		if (records.some((record) => record.removedNodes.length > 0)) {
 			page = 1;
 			finished = false;
+			generation++;
 			setButtonState("idle");
 		}
 	}).observe(itemsContainer, { childList: true });
@@ -618,6 +622,7 @@ export function disableInfiniteScrolling(showDisclosures: boolean) {
 	button.addEventListener("click", async () => {
 		if (loading || finished) return;
 		loading = true;
+		const thisGeneration = generation;
 		setButtonState("loading");
 
 		const result = await sendMessage(
@@ -625,6 +630,8 @@ export function disableInfiniteScrolling(showDisclosures: boolean) {
 			readStoreFilters(page + 1),
 		);
 		loading = false;
+
+		if (thisGeneration !== generation) return;
 
 		if (!result.ok) {
 			setButtonState("error");
@@ -642,7 +649,7 @@ export function disableInfiniteScrolling(showDisclosures: boolean) {
 }
 
 const LEGACY_DISCOVERY_HTML = `
-<div class="p-0 mx-2 mt-5">
+<div class="p-0 mx-2 mt-5" data-kiln-legacy>
 	<div class="row mx-auto" style="max-width:1200px">
 		<div class="col-lg-2" style="min-width:225px;">
 			<h3 class="store-title">Browse</h3>
@@ -1079,7 +1086,17 @@ function wireLegacyDiscovery(root: HTMLElement): void {
 		fetchPage(serverLastPage, Number.POSITIVE_INFINITY);
 	};
 
+	const DEFAULT_TYPE_CHECKS = new Set(["hat", "tool", "face", "profileTheme"]);
+
+	const resetCategoryFilters = (): void => {
+		sortSelect.value = "createdDesc";
+		hideNonCollectibleCheck.checked = false;
+		for (const c of typeChecks) c.checked = DEFAULT_TYPE_CHECKS.has(c.value);
+		syncAllItemsCheck();
+	};
+
 	const applyCategoryPreset = (id: string): void => {
+		resetCategoryFilters();
 		switch (id) {
 			case "storecat-featured":
 				sortSelect.value = "trending";
@@ -1239,7 +1256,8 @@ export function legacyStoreLayout(showDisclosures: boolean): void {
 			const found = findMainContainer();
 			if (
 				found &&
-				(found !== appliedContainer || !found.querySelector("#store-items"))
+				(found !== appliedContainer ||
+					!found.querySelector("[data-kiln-legacy]"))
 			) {
 				appliedContainer = found;
 				replaceContainer(found);

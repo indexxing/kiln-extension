@@ -136,9 +136,26 @@ export async function nftItems(showDisclosures: boolean) {
 	const otherItemsContainer = document.getElementById("other-items");
 	if (!otherItemsContainer) return;
 
-	const cards = [...otherItemsContainer.querySelectorAll<Element>(".trd-box")];
-	await resolveHashes(cards);
-	cards.forEach(markCard);
+	const processCards = async (cards: Element[]) => {
+		await resolveHashes(cards);
+		cards.forEach(markCard);
+	};
+
+	await processCards([
+		...otherItemsContainer.querySelectorAll<Element>(".trd-box"),
+	]);
+
+	new MutationObserver((records) => {
+		const added: Element[] = [];
+		for (const record of records) {
+			for (const node of record.addedNodes) {
+				if (!(node instanceof Element)) continue;
+				if (node.matches(".trd-box")) added.push(node);
+				added.push(...node.querySelectorAll<Element>(".trd-box"));
+			}
+		}
+		if (added.length) processCards(added);
+	}).observe(otherItemsContainer, { childList: true, subtree: true });
 }
 
 export async function nlfItems(showDisclosures: boolean) {

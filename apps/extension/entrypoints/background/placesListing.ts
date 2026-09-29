@@ -14,25 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import type { Runtime } from "webextension-polyfill";
 import { onMessage } from "@/utils/messaging";
 import type {
 	FeaturedPlacesApi,
 	PlacesListingApi,
 	PlacesListingFilters,
 } from "@/utils/types";
-import { handle } from "./shared";
+import { handle, resolveInjectableTabId } from "./shared";
 
 export async function fetchPlacesListing(
 	filters: PlacesListingFilters,
+	sender?: Runtime.MessageSender,
 ): Promise<PlacesListingApi> {
-	const tabs = await browser.tabs.query({
-		active: true,
-		currentWindow: true,
-	});
-	if (!tabs[0]?.id) throw new Error("No active tab");
+	const tabId = await resolveInjectableTabId(sender);
+	if (tabId == null) throw new Error("No active tab");
 
 	const results = await browser.scripting.executeScript({
-		target: { tabId: tabs[0].id },
+		target: { tabId },
 		world: "MAIN",
 		args: [filters],
 		func: async (filters: PlacesListingFilters) => {
@@ -81,20 +80,17 @@ export async function fetchPlacesListing(
 	return injected.data;
 }
 
-onMessage("getPlacesListing", ({ data: filters }) =>
-	handle(() => fetchPlacesListing(filters)),
+onMessage("getPlacesListing", ({ data: filters, sender }) =>
+	handle(() => fetchPlacesListing(filters, sender)),
 );
 
-onMessage("getFeaturedPlaces", () =>
+onMessage("getFeaturedPlaces", ({ sender }) =>
 	handle(async () => {
-		const tabs = await browser.tabs.query({
-			active: true,
-			currentWindow: true,
-		});
-		if (!tabs[0]?.id) throw new Error("No active tab");
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) throw new Error("No active tab");
 
 		const results = await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id },
+			target: { tabId },
 			world: "MAIN",
 			func: async () => {
 				try {

@@ -20,6 +20,7 @@ import { getApiSession } from "@/utils/utilities";
 
 const CRAWL_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const REUPLOAD_MS = 7 * 24 * 60 * 60 * 1000;
+const CLAIM_MS = 2 * 60 * 1000;
 
 const MAX_OUTFITS = 100;
 const MAX_PAGES = 20;
@@ -59,29 +60,39 @@ async function signatureOf(outfits: SyncedOutfit[]): Promise<string> {
 	).join("");
 }
 
-export async function syncPublicOutfits(userId: number, share: boolean) {
+export async function syncPublicOutfits(
+	userId: number,
+	share: boolean,
+	{ force = false }: { force?: boolean } = {},
+) {
 	const reported = await _reportedOutfits.getValue();
 	const last = reported[userId];
 
 	if (!share) {
-		if (!last) return;
+		if (!last && !force) return;
 		const result = await sendMessage("clearPublicOutfits", userId);
-		if (result.ok) {
-			const { [userId]: _removed, ...rest } = await _reportedOutfits.getValue();
-			await _reportedOutfits.setValue(rest);
+		if (!result.ok) {
+			console.warn("[Kiln] Failed to stop sharing outfits:", result);
+			return;
 		}
+		const { [userId]: _removed, ...rest } = await _reportedOutfits.getValue();
+		await _reportedOutfits.setValue(rest);
 		return;
 	}
 
-	if (last && Date.now() - last.checkedAt < CRAWL_INTERVAL_MS) return;
+	if (!force && last && Date.now() - last.checkedAt < CRAWL_INTERVAL_MS) return;
 
 	const session = await getApiSession(userId);
-	if (session?.state !== "verified") return;
+	if (session?.state !== "verified") {
+		if (force)
+			console.warn("[Kiln] Not sharing outfits: Kiln account isn't verified");
+		return;
+	}
 
 	const claim = {
 		signature: last?.signature ?? "",
 		uploadedAt: last?.uploadedAt ?? 0,
-		checkedAt: Date.now(),
+		checkedAt: Date.now() - CRAWL_INTERVAL_MS + CLAIM_MS,
 	};
 	await _reportedOutfits.setValue({ ...reported, [userId]: claim });
 
@@ -96,12 +107,22 @@ export async function syncPublicOutfits(userId: number, share: boolean) {
 		const signature = await signatureOf(outfits);
 
 		const unchanged =
+			!force &&
 			last?.signature === signature &&
 			Date.now() - last.uploadedAt < REUPLOAD_MS;
-		if (unchanged) return;
+		if (unchanged) {
+			await _reportedOutfits.setValue({
+				...(await _reportedOutfits.getValue()),
+				[userId]: { ...claim, checkedAt: Date.now() },
+			});
+			return;
+		}
 
 		const result = await sendMessage("syncPublicOutfits", { userId, outfits });
-		if (!result.ok) return await restore();
+		if (!result.ok) {
+			console.warn("[Kiln] Failed to sync public outfits:", result);
+			return await restore();
+		}
 
 		await _reportedOutfits.setValue({
 			...(await _reportedOutfits.getValue()),

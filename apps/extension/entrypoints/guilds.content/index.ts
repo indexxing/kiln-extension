@@ -14,12 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import { runFeature } from "@/utils/runFeature";
 import { _showKilnDisclosures, preferences } from "@/utils/storage";
 import * as discovery from "./discovery";
 import * as view from "./view";
 
 export default defineContentScript({
-	matches: ["https://polytoria.com/guilds/*", "https://polytoria.com/"],
+	matches: [
+		"https://polytoria.com/guilds",
+		"https://polytoria.com/guilds?*",
+		"https://polytoria.com/guilds/*",
+	],
 	main() {
 		Promise.all([
 			preferences.getPreferences(),
@@ -39,9 +44,11 @@ export default defineContentScript({
 				}
 
 				if (values.enabled.includes("condensedJoinedGuildsList")) {
-					discovery.condensedJoinedGuildsList(showDisclosures);
+					runFeature("condensedJoinedGuildsList", () =>
+						discovery.condensedJoinedGuildsList(showDisclosures),
+					);
 				}
-			} else if (!Number.isNaN(Number(second))) {
+			} else if (/^\d+$/.test(second)) {
 				if (import.meta.env.MODE == "development") {
 					console.log("[Kiln] Running view page functions: ", view);
 				}
@@ -50,7 +57,9 @@ export default defineContentScript({
 					values.enabled.includes("creatorCommentLabels") &&
 					values.config.creatorCommentLabels.guilds
 				) {
-					view.creatorCommentLabels(showDisclosures);
+					runFeature("creatorCommentLabels", () =>
+						view.creatorCommentLabels(showDisclosures),
+					);
 				}
 			}
 		});

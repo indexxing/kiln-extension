@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import type { PolyTrack } from "@kiln/schemas";
+import { escapeHtml } from "@/utils/escapeHtml";
 import { sendMessage } from "@/utils/messaging";
 import type { ForumSearchFilters } from "@/utils/types";
 import {
@@ -64,15 +65,6 @@ const DEFAULT_MY_POSTS_SORT = "newest";
 function getForumBasePath(): string {
 	const path = window.location.pathname;
 	return path === "/forum" ? "/forum/" : path;
-}
-
-function escapeHtml(value: string): string {
-	return value
-		.replaceAll("&", "&amp;")
-		.replaceAll("<", "&lt;")
-		.replaceAll(">", "&gt;")
-		.replaceAll('"', "&quot;")
-		.replaceAll("'", "&#39;");
 }
 
 type SearchOperators = {
@@ -126,7 +118,7 @@ function parseSearchOperators(query: string): SearchOperators {
 
 	const typeMatch = cleanQuery.match(/(?:^|\s)type:(\S+)/);
 	if (typeMatch) {
-		type = typeMatch[1];
+		type = typeMatch[1] === "reply" ? "replies" : typeMatch[1];
 		cleanQuery = cleanQuery.replace(typeMatch[0], "").trim();
 	}
 
@@ -135,7 +127,7 @@ function parseSearchOperators(query: string): SearchOperators {
 
 type Chip = { id: number; label: string };
 
-function renderEntry(
+export function renderEntry(
 	entry: PolyTrack.ForumEntry,
 	seen: boolean = false,
 ): HTMLElement {
@@ -194,7 +186,7 @@ function renderEntry(
 				</div>
 				<div class="mb-0 w-100 text-muted">
 					<small>
-						${truncatedPreview}
+						${escapeHtml(truncatedPreview)}
 					</small>
 				</div>
 				<div class="mb-0 w-100 text-muted">
@@ -250,7 +242,7 @@ function renderEntry(
 	return card;
 }
 
-function setLoadMoreState(
+export function setLoadMoreState(
 	button: HTMLButtonElement,
 	state: "idle" | "loading" | "error" | "done" | "hidden",
 ) {
@@ -731,14 +723,20 @@ export async function advancedForumSearch(
 		literal: literalCheckbox.checked,
 	});
 
+	let lastFilters: ForumSearchFilters | null = null;
+	let searchRequestId = 0;
+
 	const runSearch = async () => {
 		const filters = readFilters(1);
+		lastFilters = filters;
+		const requestId = ++searchRequestId;
 		syncFiltersToUrl(filters);
 
 		resultsContainer.innerHTML = `<div class="text-center text-muted p-4"><span class="spinner-border spinner-border-sm"></span> Searching...</div>`;
 		setLoadMoreState(loadMoreButton, "hidden");
 
 		const result = await sendMessage("getForumSearch", filters);
+		if (requestId !== searchRequestId) return;
 		if (!result.ok) {
 			resultsContainer.innerHTML = `<div class="alert alert-danger">Failed to search forums: ${escapeHtml(result.message)}</div>`;
 			return;
@@ -746,6 +744,7 @@ export async function advancedForumSearch(
 
 		resultsContainer.innerHTML = "";
 		const entries = await filterEntries(result.data.entries);
+		if (requestId !== searchRequestId) return;
 		if (entries.length === 0) {
 			resultsContainer.innerHTML = `<div class="text-center text-danger border border-danger rounded p-2">No forum entries matched your search.</div>`;
 		} else {
@@ -761,10 +760,15 @@ export async function advancedForumSearch(
 	};
 
 	loadMoreButton.addEventListener("click", async () => {
-		if (nextPage === null) return;
+		if (nextPage === null || !lastFilters) return;
+		const requestId = ++searchRequestId;
 		setLoadMoreState(loadMoreButton, "loading");
 
-		const result = await sendMessage("getForumSearch", readFilters(nextPage));
+		const result = await sendMessage("getForumSearch", {
+			...lastFilters,
+			page: nextPage,
+		});
+		if (requestId !== searchRequestId) return;
 		if (!result.ok) {
 			setLoadMoreState(loadMoreButton, "error");
 			return;
@@ -870,7 +874,8 @@ export async function advancedForumSearch(
 			sortSelect.value = sortParam;
 		if (typeParam && TYPE_OPTIONS.some((o) => o.value === typeParam))
 			typeSelect.value = typeParam;
-		if (params.get("excludeAiBots") === "1") excludeAiBotsCheckbox.checked = true;
+		if (params.get("excludeAiBots") === "1")
+			excludeAiBotsCheckbox.checked = true;
 		if (params.get("literal") === "1") literalCheckbox.checked = true;
 	};
 
@@ -1011,8 +1016,10 @@ export async function myPosts(showDisclosures: boolean) {
 		repliesCheckbox.checked = initialParams.get("replies") === "1";
 
 		let nextPage: number | null = null;
+		let myPostsRequestId = 0;
 
 		const loadPage = async (page: number) => {
+			const requestId = ++myPostsRequestId;
 			const result = await sendMessage("getForumSearch", {
 				page,
 				search: "",
@@ -1023,6 +1030,7 @@ export async function myPosts(showDisclosures: boolean) {
 				postedAfter: "",
 				postedBefore: "",
 			});
+			if (requestId !== myPostsRequestId) return;
 
 			if (!result.ok) {
 				if (page === 1) {

@@ -15,25 +15,21 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 export function creatorCommentLabels(showDisclosures: boolean) {
-	const creatorId = document
-		.querySelector(
-			'.col-12:has(#guild-btn, #guild-notifications-button) a[class^="userlink-"]',
-		)!
-		.getAttribute("href")!
-		.split("/")[2];
+	const creatorAnchor = document.querySelector(
+		'.col-12:has(#guild-btn, #guild-notifications-button) a[class^="userlink-"]',
+	);
+	const creatorId = creatorAnchor?.getAttribute("href")?.split("/")[2];
+	if (!creatorId) return;
 
-	const container = document.getElementById("wall-posts")!;
+	const container = document.getElementById("wall-posts");
+	if (!container) return;
 
 	const tag = (Card: Element): void => {
-		console.log(Card);
 		const usernameElement =
 			Card.querySelector<HTMLAnchorElement>('[href^="/users/"]');
 		if (!usernameElement) return;
 
-		if (
-			usernameElement.getAttribute("href")?.split("/")[2] !=
-			creatorId.toString()
-		)
+		if (usernameElement.getAttribute("href")?.split("/")[2] != creatorId)
 			return;
 
 		const badge = document.createElement("span");

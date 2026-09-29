@@ -508,6 +508,24 @@ const BLOCKED_EVENTS = [
 	"auxclick",
 ];
 
+const PROTECTED_CONTROLS =
+	"#navbar-dark-dropdown-menu-link, #dropdown-menu-button, .dropdown, .dropdown-menu, .dropdown-menu-end, .dropdown-menu-right, .dropdown-item, .nav-item, .nav-link, .navbar, .navbar-nav";
+const PROTECTED_TRIGGERS =
+	'#navbar-dark-dropdown-menu-link, #dropdown-menu-button, a[href^="/report/user/"]';
+
+const HIDE_VALUE: Record<string, RegExp> = {
+	display: /^none$/i,
+	opacity: /^0(?:\.0+)?%?$/,
+	visibility: /^(?:hidden|collapse)$/i,
+	filter: /opacity\(\s*0(?:\.0+)?%?\s*\)/i,
+	"content-visibility": /^hidden$/i,
+	"clip-path": /(?:circle|ellipse)\(\s*0|inset\(\s*(?:100|[5-9]\d)(?:\.\d+)?%/i,
+	"pointer-events": /^none$/i,
+};
+
+const PROTECTED_HIDE_MESSAGE =
+	"Custom CSS can't hide the account menu or the profile actions menu (where users report a theme or a user). You can still style them, but they have to stay reachable.";
+
 type Row = { el: HTMLElement; props: string[]; sync: () => void };
 
 export function createVisualCssEditor(options: {
@@ -516,6 +534,7 @@ export function createVisualCssEditor(options: {
 	idPrefix: string;
 	getCss: () => string;
 	setCss: (css: string) => void | Promise<void>;
+	onBlocked?: (message: string | null) => void;
 }): VisualCssEditor {
 	const { mount, sidebar, idPrefix } = options;
 
@@ -587,6 +606,7 @@ export function createVisualCssEditor(options: {
 					<button type="button" class="btn btn-outline-secondary" data-pseudo="">Normal</button>
 					<button type="button" class="btn btn-outline-secondary" data-pseudo=":hover">On hover</button>
 				</div>
+				<div data-role="notice" class="alert alert-warning py-2 px-2 small mb-2" style="display:none;" role="alert"></div>
 				<div data-role="fields"></div>
 			</div>
 			<div data-role="list-wrap" style="display:none;" class="mt-2">
@@ -606,6 +626,7 @@ export function createVisualCssEditor(options: {
 	const panelEl = q("[data-role=panel]");
 	const tagEl = q("[data-role=tag]");
 	const targetSelect = q<HTMLSelectElement>("[data-role=target]");
+	const noticeEl = q("[data-role=notice]");
 	const fieldsEl = q("[data-role=fields]");
 	const listWrap = q("[data-role=list-wrap]");
 	const listEl = q("[data-role=list]");
@@ -664,6 +685,25 @@ export function createVisualCssEditor(options: {
 	const currentKey = () => selector + pseudo;
 	const getProp = (prop: string) => model.get(currentKey())?.get(prop);
 
+	function hidesProtectedControl(prop: string, value: string): boolean {
+		if (!selector || !HIDE_VALUE[prop]?.test(value.trim())) return false;
+		return qsa(selector).some(
+			(el) =>
+				el.matches(PROTECTED_CONTROLS) ||
+				!!el.querySelector(PROTECTED_CONTROLS) ||
+				!!el.closest(PROTECTED_TRIGGERS),
+		);
+	}
+
+	function notifyBlocked(message: string | null) {
+		if (options.onBlocked) {
+			options.onBlocked(message);
+			return;
+		}
+		noticeEl.textContent = message ?? "";
+		noticeEl.style.display = message ? "" : "none";
+	}
+
 	async function commit() {
 		await options.setCss(writeBlock(options.getCss(), model));
 		renderList();
@@ -673,6 +713,11 @@ export function createVisualCssEditor(options: {
 	function setProp(prop: string, value: string | null) {
 		const key = currentKey();
 		if (!selector || BLOCKED.test(key)) return Promise.resolve();
+		if (value !== null && hidesProtectedControl(prop, value)) {
+			notifyBlocked(PROTECTED_HIDE_MESSAGE);
+			return Promise.resolve();
+		}
+		notifyBlocked(null);
 		let decls = model.get(key);
 		if (value === null) {
 			decls?.delete(prop);
@@ -743,6 +788,7 @@ export function createVisualCssEditor(options: {
 	}
 
 	function render() {
+		notifyBlocked(null);
 		const has = !!selector;
 		panelEl.style.display = has ? "" : "none";
 		statusEl.style.display = has ? "none" : "";
@@ -875,15 +921,20 @@ export function createVisualCssEditor(options: {
 
 		switch (field.kind) {
 			case "color": {
-				const read = () => {
+				const read = (): [string, number] => {
 					const stored = getProp(field.prop);
-					return (
-						(stored ? parseCssColor(stored) : null) ??
-						parseCssColor(computed(field.read ?? field.prop)) ?? [
-							"#000000",
-							100,
-						]
+					if (stored) {
+						const parsed = parseCssColor(stored);
+						if (parsed) return parsed;
+					}
+					const computedParsed = parseCssColor(
+						computed(field.read ?? field.prop),
 					);
+					if (computedParsed) {
+						const [computedHex, computedAlpha] = computedParsed;
+						return [computedHex, computedAlpha === 0 ? 100 : computedAlpha];
+					}
+					return ["#000000", 100];
 				};
 				const [hex0, alpha0] = read();
 				const picker = document.createElement("input");
@@ -910,6 +961,7 @@ export function createVisualCssEditor(options: {
 				};
 				picker.addEventListener("input", () => {
 					hexInput.value = picker.value;
+					if (Number(alpha.value) === 0) alpha.value = "100";
 					emit();
 				});
 				hexInput.addEventListener("change", () => {
@@ -919,6 +971,7 @@ export function createVisualCssEditor(options: {
 					if (isValidHex(v)) {
 						picker.value = v.toLowerCase();
 						hexInput.value = v.toLowerCase();
+						if (Number(alpha.value) === 0) alpha.value = "100";
 						emit();
 					} else hexInput.value = picker.value;
 				});
@@ -945,6 +998,21 @@ export function createVisualCssEditor(options: {
 				number.className = "form-control form-control-sm kiln-vce-num";
 				number.value = String(initial);
 				const apply = (n: number) => {
+					const value = field.format(n);
+					if (hidesProtectedControl(field.prop, value)) {
+						notifyBlocked(PROTECTED_HIDE_MESSAGE);
+						// Put the slider back on the stored/computed value so it
+						// doesn't read as applied when the edit was refused.
+						const stored = getProp(field.prop);
+						const restore =
+							(stored ? field.parse(stored) : null) ??
+							(cs ? field.computed?.(cs) : null) ??
+							initial;
+						slider.value = String(restore);
+						number.value = String(restore);
+						row.sync();
+						return;
+					}
 					const implied = field.implies;
 					if (implied && n > 0) {
 						const decls = model.get(currentKey());
@@ -954,7 +1022,7 @@ export function createVisualCssEditor(options: {
 						)
 							void setProp(implied.prop, implied.value);
 					}
-					void setProp(field.prop, field.format(n));
+					void setProp(field.prop, value);
 					syncRows(row);
 					row.sync();
 				};

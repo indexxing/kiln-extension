@@ -16,15 +16,15 @@
 
 import { onMessage } from "@/utils/messaging";
 import type { StoreListingApi, StoreListingFilters } from "@/utils/types";
-import { handle } from "./shared";
+import { handle, resolveInjectableTabId } from "./shared";
 
-onMessage("getStoreListing", ({ data: filters }) =>
+onMessage("getStoreListing", ({ data: filters, sender }) =>
 	handle(async () => {
-		const tabs = await browser.tabs.query({ active: true, currentWindow: true });
-		if (!tabs[0]?.id) throw new Error("No active tab");
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) throw new Error("No active tab");
 
 		const results = await browser.scripting.executeScript({
-			target: { tabId: tabs[0].id },
+			target: { tabId },
 			world: "MAIN",
 			args: [filters],
 			func: async (filters: StoreListingFilters) => {
@@ -39,9 +39,15 @@ onMessage("getStoreListing", ({ data: filters }) =>
 				query.set("order", filters.order);
 				query.set("showOffsale", String(filters.showOffsale));
 				query.set("collectiblesOnly", String(filters.collectiblesOnly));
-				if (typeof filters.minPrice === "number" && Number.isFinite(filters.minPrice))
+				if (
+					typeof filters.minPrice === "number" &&
+					Number.isFinite(filters.minPrice)
+				)
 					query.set("minPrice", String(filters.minPrice));
-				if (typeof filters.maxPrice === "number" && Number.isFinite(filters.maxPrice))
+				if (
+					typeof filters.maxPrice === "number" &&
+					Number.isFinite(filters.maxPrice)
+				)
 					query.set("maxPrice", String(filters.maxPrice));
 				if (filters.creatorName) query.set("creatorName", filters.creatorName);
 

@@ -23,8 +23,18 @@ import { handle, safeFetch, withApi } from "./shared";
 onMessage("getStore", ({ data: params }) =>
 	handle(async () => {
 		const config = await withApi("public_api", "public");
+		const query = new URLSearchParams();
+		if (params.order !== undefined) query.set("order", params.order);
+		if (params.sort !== undefined) query.set("sort", params.sort);
+		if (params.showOffsale !== undefined)
+			query.set("showOffsale", String(params.showOffsale));
+		for (const type of params.types || []) query.append("types[]", type);
+		if (params.search !== undefined) query.set("search", params.search);
+		query.set("page", String(params.page || 1));
+		if (params.limit !== undefined) query.set("limit", String(params.limit));
+
 		return safeFetch(
-			`${config.resolvedUrls.public}store/?order=${params.order}&sort=${params.sort}&showOffsale=${params.showOffsale}${(params.types || []).map((type) => `&types[]=${type}`)}&search=${params.search}&page=${params.page || 1}${params.limit !== undefined ? `&limit=${params.limit}` : ""}`,
+			`${config.resolvedUrls.public}store/?${query.toString()}`,
 			Polytoria.StoreApiSchema,
 		);
 	}),
@@ -134,16 +144,14 @@ onMessage("getItemOwners", ({ data: { itemId, limit, page } }) =>
 				};
 
 				for (let page = 2; page <= finalResults.pages; page++) {
-					const currentBatchSize = Math.min(
-						BATCH_LIMIT,
-						total - (page - 1) * BATCH_LIMIT,
-					);
 					const res = await safeFetch(
-						`${config.resolvedUrls.public}store/${itemId}/owners?limit=${currentBatchSize}&page=${page}`,
+						`${config.resolvedUrls.public}store/${itemId}/owners?limit=${BATCH_LIMIT}&page=${page}`,
 						Polytoria.OwnersApiSchema,
 					);
 					finalResults.inventories.push(...(res.inventories || []));
 				}
+
+				finalResults.inventories = finalResults.inventories.slice(0, total);
 
 				return finalResults;
 			},

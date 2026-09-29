@@ -53,14 +53,18 @@ export function placeFileExport(showDisclosures: boolean) {
 	form.insertBefore(container, form.children[form.children.length - 1]);
 
 	button.addEventListener("click", async () => {
+		button.disabled = true;
 		button.innerHTML = `
       <span class="spinner-grow spinner-grow-sm" aria-hidden="true"></span>
         <span class="visually-hidden" role="status">Loading...</span>
     `;
 
-		await sendMessage("downloadPlaceFile", +placeID);
-
-		button.textContent = "Download";
+		try {
+			await sendMessage("downloadPlaceFile", +placeID);
+		} finally {
+			button.disabled = false;
+			button.textContent = "Download";
+		}
 	});
 }
 
@@ -90,18 +94,28 @@ export function bulkWhitelist(showDisclosures: boolean) {
 
 	submitBtn.addEventListener("click", async () => {
 		const textbox = submitBtn.previousElementSibling! as HTMLTextAreaElement;
-		const usernames = textbox.value.split("\n").filter((x) => x.trim() != "");
-		textbox.disabled = true;
+		const usernames = textbox.value
+			.split("\n")
+			.map((x) => x.trim())
+			.filter((x) => x !== "");
 
-		if (usernames.length > 0) {
+		if (usernames.length === 0) {
+			textbox.disabled = false;
+			return;
+		}
+
+		textbox.disabled = true;
+		submitBtn.disabled = true;
+
+		try {
 			await sendMessage("bulkWhitelist", {
 				placeId: placeID,
 				usernames,
 			});
-
-			setTimeout(() => {
-				window.location.reload();
-			}, 200 * usernames.length);
+			window.location.reload();
+		} catch {
+			textbox.disabled = false;
+			submitBtn.disabled = false;
 		}
 	});
 }
@@ -198,15 +212,16 @@ export function worldTrends() {
 	const fetchMetric = async (
 		metric: TrendMetric,
 		range: TrendRange,
-	): Promise<TrendPoint[]> => {
+	): Promise<{ points: TrendPoint[]; ok: boolean }> => {
 		const cacheKey = `${metric}-${range.id}`;
 		const cached = cache.get(cacheKey);
-		if (cached) return cached;
+		if (cached) return { points: cached, ok: true };
 
 		const stop = new Date();
 		const start = new Date(stop.getTime() - range.days * 24 * 60 * 60 * 1000);
 
 		let points: TrendPoint[];
+		let ok: boolean;
 		if (metric === "inGame") {
 			const result = await sendMessage("getWorldIngameChart", {
 				placeId: placeID,
@@ -214,6 +229,7 @@ export function worldTrends() {
 				stop: stop.toISOString(),
 				window: range.window,
 			});
+			ok = result.ok;
 			points = result.ok
 				? result.data.avg.map((p) => ({
 						time: new Date(p._time).getTime(),
@@ -228,6 +244,7 @@ export function worldTrends() {
 				stop: stop.toISOString(),
 				window: range.window,
 			});
+			ok = result.ok;
 			points =
 				result.ok && "value" in result.data
 					? result.data.value.map((p) => ({
@@ -242,8 +259,8 @@ export function worldTrends() {
 						: [];
 		}
 
-		cache.set(cacheKey, points);
-		return points;
+		if (ok) cache.set(cacheKey, points);
+		return { points, ok };
 	};
 
 	const formatAxisDate = (time: number, rangeDays: number) => {
@@ -379,12 +396,17 @@ export function worldTrends() {
 		currentEl.textContent = "...";
 	};
 
+	let loadRequestId = 0;
+
 	const load = async () => {
+		const requestId = ++loadRequestId;
 		const metric = metricSelect.value as TrendMetric;
 		const range = trendRanges.find((r) => r.id === rangeSelect.value)!;
 
 		showLoading();
-		const points = await fetchMetric(metric, range);
+		const { points } = await fetchMetric(metric, range);
+		if (requestId !== loadRequestId) return;
+
 		const metricConfig = trendMetrics.find((m) => m.id === metric)!;
 		renderChart(
 			points,
