@@ -14,7 +14,8 @@
 		"features.placeConsumablesTab.enabled": false,
 		"features.outfitManagement.enabled": false,
 		"features.customProfileThemes.useThisTheme": false,
-		"general.futureOfKilnNotice.visible": false
+		"general.futureOfKilnNotice.visible": false,
+		"apis.extension.newVerificationsEnabled": true
 	},
 	"limits": {
 		"maxPinnedWorlds": 25,

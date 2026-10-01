@@ -41,6 +41,13 @@ export type ApiSession = {
 	phrase?: string;
 };
 
+export type KilnBan = {
+	userId: number;
+	reason: string | null;
+	bannedAt: string | null;
+	refreshToken?: string;
+};
+
 export type KilnErrorLogEntry = {
 	type: "content" | "network";
 	message: string;

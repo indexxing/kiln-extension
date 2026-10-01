@@ -156,6 +156,7 @@ export default defineContentScript({
 							user.userId,
 							showDisclosures,
 							condensedTabBars,
+							user.userId === 2782,
 						),
 					);
 				}

@@ -25,11 +25,13 @@ import {
 	apiSessions,
 	cache,
 	dismissedNotices,
+	kilnBans,
 } from "./storage";
 import type {
 	ApiSession,
 	CacheInterface,
 	CurrencyCode,
+	KilnBan,
 	UserDetails,
 } from "./types";
 
@@ -119,6 +121,11 @@ export async function getApiSession(
 	const session = sessionStore.find((s: ApiSession) => s.userId == userId);
 
 	return session || null;
+}
+
+export async function getKilnBan(userId: number): Promise<KilnBan | null> {
+	const bans = await kilnBans.getValue();
+	return bans.find((b) => b.userId == userId) ?? null;
 }
 
 export async function updateApiSession(

@@ -19,8 +19,8 @@ import type { Runtime } from "webextension-polyfill";
 import type z from "zod";
 import fallbackConfig from "@/utils/static/fallbackConfig.json";
 import metadata from "@/utils/static/metadata.json";
-import { apiSessions } from "@/utils/storage";
-import type { ApiTypes, Result } from "@/utils/types";
+import { apiSessions, getFeedbackClientId, kilnBans } from "@/utils/storage";
+import type { ApiTypes, KilnBan, Result } from "@/utils/types";
 import {
 	expireKVCache,
 	getFlag,
@@ -104,6 +104,10 @@ export async function safeFetch<T>(
 	blob: boolean = false,
 	allowErrorResponse: boolean = false,
 ): Promise<T> {
+	const clientHeader: Record<string, string> = url.startsWith(KILN_API_BASE)
+		? { "x-kiln-client-id": await getFeedbackClientId() }
+		: {};
+
 	let response: Response;
 	try {
 		response = await fetch(url, {
@@ -111,6 +115,7 @@ export async function safeFetch<T>(
 			credentials: "include",
 			headers: {
 				"Content-Type": "application/json",
+				...clientHeader,
 				...options.headers,
 			},
 		});
@@ -236,6 +241,59 @@ export async function handle<T>(fn: () => Promise<T>): Promise<Result<T>> {
 	}
 }
 
+export function isBannedError(err: unknown): boolean {
+	return (
+		err instanceof ApiHttpError &&
+		err.status === 403 &&
+		err.message === "ACCOUNT_BANNED"
+	);
+}
+
+export async function saveKilnBan(ban: KilnBan): Promise<void> {
+	const bans = await kilnBans.getValue();
+	await kilnBans.setValue([...bans.filter((b) => b.userId != ban.userId), ban]);
+}
+
+export async function clearKilnBan(userId: number): Promise<void> {
+	const bans = await kilnBans.getValue();
+	if (!bans.some((b) => b.userId == userId)) return;
+	await kilnBans.setValue(bans.filter((b) => b.userId != userId));
+}
+
+export async function fetchKilnBanStatus(
+	refreshToken: string,
+	config: FetchedConfig,
+): Promise<Extension.AuthBanStatusApi["data"]> {
+	const result = await safeFetch(
+		`${config.resolvedUrls.extension}auth/ban`,
+		Extension.AuthBanStatusApi,
+		{
+			method: "POST",
+			headers: { "x-kiln-refresh-token": refreshToken },
+		},
+	);
+	return result.data;
+}
+
+export async function recordKilnBan(
+	userId: number,
+	config: FetchedConfig,
+	refreshToken?: string,
+): Promise<void> {
+	let reason: string | null = null;
+	let bannedAt: string | null = null;
+	if (refreshToken) {
+		try {
+			({ reason, bannedAt } = await fetchKilnBanStatus(refreshToken, config));
+		} catch {}
+	}
+	await saveKilnBan({ userId, reason, bannedAt, refreshToken });
+	await apiSessions.setValue(
+		(await apiSessions.getValue()).filter((s) => s.userId != userId),
+	);
+	await expireKVCache("currentSession", String(userId));
+}
+
 export async function withAuthSession<T>(
 	userId: number,
 	fn: (token: string, config: FetchedConfig) => Promise<T>,
@@ -248,6 +306,10 @@ export async function withAuthSession<T>(
 	try {
 		return await fn(session.accessToken, config);
 	} catch (err) {
+		if (isBannedError(err)) {
+			await recordKilnBan(userId, config, session.refreshToken);
+			throw new NoSessionError();
+		}
 		if (!(err instanceof ApiHttpError && err.status === 401)) throw err;
 		if (!session.refreshToken) throw new NoSessionError();
 
@@ -279,6 +341,10 @@ export async function withAuthSession<T>(
 
 				return result.data;
 			} catch (refreshErr) {
+				if (isBannedError(refreshErr)) {
+					await recordKilnBan(userId, config, latestSession.refreshToken);
+					throw new NoSessionError();
+				}
 				if (
 					refreshErr instanceof ApiHttpError &&
 					(refreshErr.status === 401 || refreshErr.status === 403)

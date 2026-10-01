@@ -32,6 +32,7 @@ import {
 	dismissedNotices,
 	isChrome,
 	isMobileDevice,
+	kilnBans,
 	migrateImportedPreferences,
 	PREFERENCES_VERSION,
 	PreferencesVersionError,
@@ -43,6 +44,7 @@ import {
 	getApiSession,
 	getConfig,
 	getFlag,
+	getKilnBan,
 	getUserDetails,
 	pullCache,
 	renderMarkdownLinks,
@@ -138,6 +140,7 @@ export async function kilnSettings() {
 	const showAdmin = !!adminSession;
 
 	content.innerHTML = `
+		<div id="kiln-ban-notice"></div>
 		<div class="d-flex gap-2 w-100 mb-2">
 			<button type="button" class="btn btn-primary flex-grow-1" id="kiln-tab-about">About</button>
 			<button type="button" class="btn btn-secondary flex-grow-1" id="kiln-tab-prefs">Preferences</button>
@@ -206,6 +209,26 @@ export async function kilnSettings() {
 	initWhatsNewTab();
 	initSyncTab();
 	initAboutTab();
+	initBanNotice();
+
+	async function initBanNotice() {
+		const user = await getUserDetails();
+		if (!user) return;
+		const ban = await checkKilnBan(user.userId);
+		if (!ban) return;
+
+		document.getElementById("kiln-ban-notice")!.innerHTML = `
+			<div class="alert border-danger d-flex align-items-start gap-3 mb-2">
+				<i class="fas fa-ban text-danger" style="font-size:1.4rem;flex-shrink:0;margin-top:2px;"></i>
+				<div>
+					<div class="fw-semibold">Your account has been permanently banned from Kiln</div>
+					${ban.reason ? `<div class="small mt-1"><span class="text-muted">Reason:</span> ${escapeHtml(ban.reason)}</div>` : ""}
+					${ban.bannedAt ? `<div class="small text-muted mt-1">Banned on ${new Date(ban.bannedAt).toLocaleDateString()}</div>` : ""}
+					<div class="small text-muted mt-2">You can no longer link your account or use features that require a linked account. Everything else in Kiln continues to work.</div>
+				</div>
+			</div>
+		`;
+	}
 
 	async function initAboutTab() {
 		const container = document.getElementById("kiln-about")!;
@@ -1443,6 +1466,223 @@ function initAdminGeneralTab(userId: number, panel: HTMLElement) {
 	}
 }
 
+function initAdminBansTab(userId: number, panel: HTMLElement) {
+	panel.innerHTML = `
+		<div class="card mb-2">
+			<div class="card-header small fw-semibold">Ban a User</div>
+			<div class="card-body">
+				<div class="d-flex gap-2 align-items-center flex-wrap">
+					<input id="kadmin-ban-user-id" type="text" class="form-control form-control-sm" style="max-width:200px;" placeholder="User ID…" />
+					<input id="kadmin-ban-reason" type="text" maxlength="500" class="form-control form-control-sm" style="max-width:300px;" placeholder="Ban reason (shown to the user)…" />
+					<button id="kadmin-ban-btn" class="btn btn-danger btn-sm">Ban</button>
+					<span id="kadmin-ban-status" class="small"></span>
+				</div>
+				<p class="text-muted small mb-0 mt-2">Banning immediately revokes all of the user's sessions.</p>
+			</div>
+		</div>
+		<div class="d-flex gap-2 mb-2 align-items-center">
+			<input id="kadmin-bans-search" type="text" class="form-control form-control-sm" style="max-width:260px;" placeholder="Search by username, user ID, or reason…" />
+			<button id="kadmin-bans-refresh" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Refresh">
+				<i class="fas fa-sync-alt" style="font-size:0.75rem;"></i>
+			</button>
+		</div>
+		<div id="kadmin-bans-list"></div>
+		<div id="kadmin-bans-pagination" class="d-flex justify-content-between align-items-center mt-2"></div>
+	`;
+
+	const banInput = document.getElementById(
+		"kadmin-ban-user-id",
+	) as HTMLInputElement;
+	const banReason = document.getElementById(
+		"kadmin-ban-reason",
+	) as HTMLInputElement;
+	const banBtn = document.getElementById("kadmin-ban-btn") as HTMLButtonElement;
+	const banStatus = document.getElementById("kadmin-ban-status")!;
+	const searchInput = document.getElementById(
+		"kadmin-bans-search",
+	) as HTMLInputElement;
+	const list = document.getElementById("kadmin-bans-list")!;
+	const pagination = document.getElementById("kadmin-bans-pagination")!;
+
+	let page = 1;
+
+	async function load() {
+		list.innerHTML = `<p class="text-muted small">Loading…</p>`;
+		pagination.innerHTML = "";
+
+		const result = await sendMessage("adminGetBannedUsers", {
+			userId,
+			search: searchInput.value.trim() || undefined,
+			page,
+		});
+
+		if (!result.ok) {
+			list.innerHTML = `<p class="text-danger small">Failed to load: ${escapeHtml(result.message)}</p>`;
+			return;
+		}
+
+		const { data: items, meta } = result.data;
+		if (items.length === 0) {
+			list.innerHTML = `<p class="text-muted small">${searchInput.value.trim() ? "No banned users match this search." : "No users are currently banned."}</p>`;
+			return;
+		}
+
+		list.innerHTML = items
+			.map((item) => {
+				const metaLine = [
+					`Banned ${new Date(item.bannedAt).toLocaleString()}`,
+					item.version && `Kiln v${escapeHtml(item.version)}`,
+				]
+					.filter(Boolean)
+					.join(" · ");
+
+				const linkedHtml = item.linkedAccounts.length
+					? `
+						<div class="mt-2 pt-2 border-top">
+							<div class="text-muted" style="font-size:0.72rem;">Possible alt accounts</div>
+							${item.linkedAccounts
+								.map((linked) => {
+									const shared = [
+										linked.signals.includes("client") && "same install",
+										linked.signals.includes("ip") && "same network",
+									]
+										.filter(Boolean)
+										.join(", ");
+									return `
+										<div class="d-flex justify-content-between align-items-center gap-2 mt-1">
+											<div class="small" style="min-width:0;">
+												<a href="/users/${linked.userId}" target="_blank">${linked.username ? escapeHtml(linked.username) : `User ${linked.userId}`}</a>
+												<span class="text-muted" style="font-size:0.72rem;">#${linked.userId} · ${shared} · seen ${new Date(linked.lastSeenAt).toLocaleDateString()}</span>
+												${linked.bannedAt ? '<span class="badge bg-danger ms-1">Banned</span>' : ""}
+											</div>
+											${linked.bannedAt ? "" : `<button class="btn btn-outline-danger btn-sm flex-shrink-0 py-0" data-prefill-ban="${linked.userId}">Ban…</button>`}
+										</div>
+									`;
+								})
+								.join("")}
+						</div>
+					`
+					: "";
+
+				return `
+					<div class="card mb-2">
+						<div class="card-body py-2">
+							<div class="d-flex justify-content-between align-items-start gap-2">
+								<div style="min-width:0;">
+									<a href="/users/${item.userId}" target="_blank" class="fw-semibold small">${item.username ? escapeHtml(item.username) : `User ${item.userId}`}</a>
+									${item.username ? `<span class="text-muted" style="font-size:0.72rem;">#${item.userId}</span>` : ""}
+									<div class="text-muted" style="font-size:0.72rem;">${metaLine}</div>
+									<div class="small mt-1">${item.reason ? escapeHtml(item.reason) : '<span class="text-muted fst-italic">No reason given</span>'}</div>
+								</div>
+								<button class="btn btn-outline-success btn-sm flex-shrink-0" data-unban="${item.userId}">Unban</button>
+							</div>
+							${linkedHtml}
+						</div>
+					</div>
+				`;
+			})
+			.join("");
+
+		pagination.innerHTML = `
+			<button class="btn btn-outline-secondary btn-sm" id="kadmin-bans-prev" ${meta.currentPage <= 1 ? "disabled" : ""}>← Prev</button>
+			<span class="text-muted small">Page ${meta.currentPage} of ${meta.totalPages} (${meta.totalCount} total)</span>
+			<button class="btn btn-outline-secondary btn-sm" id="kadmin-bans-next" ${meta.currentPage >= meta.totalPages ? "disabled" : ""}>Next →</button>
+		`;
+		document
+			.getElementById("kadmin-bans-prev")
+			?.addEventListener("click", () => {
+				page = Math.max(1, page - 1);
+				load();
+			});
+		document
+			.getElementById("kadmin-bans-next")
+			?.addEventListener("click", () => {
+				page += 1;
+				load();
+			});
+
+		for (const btn of list.querySelectorAll<HTMLButtonElement>(
+			"[data-prefill-ban]",
+		)) {
+			btn.addEventListener("click", () => {
+				banInput.value = btn.dataset.prefillBan ?? "";
+				banReason.value = "Ban evasion";
+				banInput.scrollIntoView({ behavior: "smooth", block: "center" });
+				banInput.focus();
+			});
+		}
+
+		for (const btn of list.querySelectorAll<HTMLButtonElement>(
+			"[data-unban]",
+		)) {
+			btn.addEventListener("click", async () => {
+				const target = Number(btn.dataset.unban);
+				btn.disabled = true;
+				const result = await sendMessage("adminUnbanUser", {
+					userId,
+					targetUserId: target,
+				});
+				if (!result.ok) {
+					btn.disabled = false;
+					btn.textContent = "Failed";
+					btn.title = result.message;
+					return;
+				}
+				if (items.length === 1 && page > 1) page -= 1;
+				await load();
+			});
+		}
+	}
+
+	banBtn.addEventListener("click", async () => {
+		const target = Number(banInput.value.trim());
+		if (!Number.isInteger(target) || target <= 0) {
+			banStatus.className = "small text-danger";
+			banStatus.textContent = "Enter a valid user ID.";
+			return;
+		}
+
+		banBtn.disabled = true;
+		banStatus.className = "small text-muted";
+		banStatus.textContent = "Working…";
+
+		const reason = banReason.value.trim();
+		const result = await sendMessage("adminBanUser", {
+			userId,
+			targetUserId: target,
+			...(reason ? { reason } : {}),
+		});
+
+		banBtn.disabled = false;
+		if (!result.ok) {
+			banStatus.className = "small text-danger";
+			banStatus.textContent = `Failed: ${result.message}`;
+			return;
+		}
+
+		banStatus.className = "small text-success";
+		banStatus.textContent = `Banned ${target} and revoked their sessions.`;
+		banInput.value = "";
+		banReason.value = "";
+		page = 1;
+		await load();
+	});
+
+	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+	searchInput.addEventListener("input", () => {
+		if (searchDebounce) clearTimeout(searchDebounce);
+		searchDebounce = setTimeout(() => {
+			page = 1;
+			load();
+		}, 250);
+	});
+	document
+		.getElementById("kadmin-bans-refresh")!
+		.addEventListener("click", load);
+
+	load();
+}
+
 function initAdminTab(userId: number) {
 	const inner = document.getElementById("kiln-admin-inner") as HTMLElement;
 
@@ -1452,34 +1692,40 @@ function initAdminTab(userId: number) {
 			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-themes">Themes</button>
 			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-profile-themes">Profile Themes</button>
 			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-feedback">Feedback</button>
+			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-bans">Bans</button>
 		</div>
 		<div id="kadmin-general"></div>
 		<div id="kadmin-themes" style="display:none;"></div>
 		<div id="kadmin-profile-themes" style="display:none;"></div>
 		<div id="kadmin-feedback" style="display:none;"></div>
+		<div id="kadmin-bans" style="display:none;"></div>
 	`;
 
 	const generalPanel = document.getElementById("kadmin-general")!;
 	const themesPanel = document.getElementById("kadmin-themes")!;
 	const profileThemesPanel = document.getElementById("kadmin-profile-themes")!;
 	const feedbackPanel = document.getElementById("kadmin-feedback")!;
+	const bansPanel = document.getElementById("kadmin-bans")!;
 
 	const adminPanels: Record<string, HTMLElement> = {
 		general: generalPanel,
 		themes: themesPanel,
 		"profile-themes": profileThemesPanel,
 		feedback: feedbackPanel,
+		bans: bansPanel,
 	};
 	const adminTabBtns: Record<string, HTMLElement> = {
 		general: document.getElementById("kadmin-tab-general")!,
 		themes: document.getElementById("kadmin-tab-themes")!,
 		"profile-themes": document.getElementById("kadmin-tab-profile-themes")!,
 		feedback: document.getElementById("kadmin-tab-feedback")!,
+		bans: document.getElementById("kadmin-tab-bans")!,
 	};
 
 	let themesLoaded = false;
 	let feedbackLoaded = false;
 	let profileThemesLoaded = false;
+	let bansLoaded = false;
 	for (const [name, btn] of Object.entries(adminTabBtns)) {
 		btn.addEventListener("click", () => {
 			for (const [key, panel] of Object.entries(adminPanels)) {
@@ -1499,6 +1745,10 @@ function initAdminTab(userId: number) {
 			if (name === "profile-themes" && !profileThemesLoaded) {
 				profileThemesLoaded = true;
 				initAdminProfileThemesTab(userId, profileThemesPanel);
+			}
+			if (name === "bans" && !bansLoaded) {
+				bansLoaded = true;
+				initAdminBansTab(userId, bansPanel);
 			}
 		});
 	}
@@ -2300,13 +2550,22 @@ async function initSyncTab() {
 	const container = document.getElementById("kiln-sync")!;
 	container.innerHTML = `<div class="text-muted small">Loading…</div>`;
 
-	const [user, sessions] = await Promise.all([
-		getUserDetails(),
+	const user = await getUserDetails();
+	const [sessions, ban, config] = await Promise.all([
 		apiSessions.getValue(),
+		user ? checkKilnBan(user.userId) : null,
+		getConfig(),
 	]);
 
+	const newLinksEnabled = getFlag(
+		config.flags,
+		"apis.extension.newVerificationsEnabled",
+		true,
+	);
+	const isBanned = !!ban;
 	const isLinked =
 		!!user &&
+		!isBanned &&
 		sessions.some((s) => s.userId === user.userId && s.state === "verified");
 
 	const linkedFeatures = (data.preferences as SettingData[]).filter(
@@ -2327,22 +2586,40 @@ async function initSyncTab() {
 		)
 		.join("");
 
-	const statusIcon = isLinked
-		? `<i class="fas fa-check-circle text-success" style="font-size:1.4rem;flex-shrink:0;"></i>`
-		: `<i class="fas fa-times-circle text-danger" style="font-size:1.4rem;flex-shrink:0;"></i>`;
+	const statusIcon = isBanned
+		? `<i class="fas fa-ban text-danger" style="font-size:1.4rem;flex-shrink:0;"></i>`
+		: isLinked
+			? `<i class="fas fa-check-circle text-success" style="font-size:1.4rem;flex-shrink:0;"></i>`
+			: `<i class="fas fa-times-circle text-danger" style="font-size:1.4rem;flex-shrink:0;"></i>`;
 	const statusName = user ? user.username : "Not logged in";
-	const statusDesc = isLinked
-		? "Linked to Kiln! Sync features are available."
-		: "Not linked to Kiln. Link your account to unlock additional features.";
-	const statusBtn = isLinked
-		? `<button id="kiln-sync-action-btn" class="btn btn-outline-secondary btn-sm flex-shrink-0">Manage Linked Accounts</button>`
-		: `<button id="kiln-sync-action-btn" class="btn btn-primary btn-sm flex-shrink-0">Link Account</button>`;
+	const statusDesc = isBanned
+		? "Banned from Kiln. This account can't be linked again."
+		: isLinked
+			? "Linked to Kiln! Sync features are available."
+			: "Not linked to Kiln. Link your account to unlock additional features.";
+	const statusBtn = isBanned
+		? `<button class="btn btn-outline-danger btn-sm flex-shrink-0" disabled>Banned</button>`
+		: isLinked
+			? `<button id="kiln-sync-action-btn" class="btn btn-outline-secondary btn-sm flex-shrink-0">Manage Linked Accounts</button>`
+			: `<button id="kiln-sync-action-btn" class="btn btn-primary btn-sm flex-shrink-0" ${newLinksEnabled ? "" : "disabled"}>Link Account</button>`;
+	const linksDisabledNotice =
+		!newLinksEnabled && !isLinked && !isBanned
+			? `
+		<div class="alert border-warning d-flex align-items-start gap-3 mb-2">
+			<i class="fas fa-exclamation-triangle text-warning" style="font-size:1.4rem;flex-shrink:0;margin-top:2px;"></i>
+			<div>
+				<div class="fw-semibold">Linking is temporarily unavailable</div>
+				<div class="small text-muted mt-1">New accounts can't be linked to Kiln right now. Accounts that are already linked are unaffected. Please check back later or join the Discord for updates.</div>
+			</div>
+		</div>`
+			: "";
 
 	const featuresHeader = isLinked
 		? "Unlocked Features"
 		: "Features Requiring a Linked Account";
 
 	container.innerHTML = `
+		${linksDisabledNotice}
 		<div class="card mb-2">
 			<div class="card-body d-flex align-items-center gap-3">
 				${statusIcon}
@@ -2618,6 +2895,17 @@ async function initFeedbackTab() {
 
 	const user = await getUserDetails();
 
+	if (user && (await getKilnBan(user.userId))) {
+		textarea.disabled = true;
+		submitBtn.disabled = true;
+		textarea.placeholder =
+			"Your account has been banned from Kiln, so you can't send feedback.";
+	} else if (!user || !(await getApiSession(user.userId))) {
+		textarea.disabled = true;
+		submitBtn.disabled = true;
+		textarea.placeholder = "Link your account to Kiln to send feedback.";
+	}
+
 	const typeButtons = Array.from(
 		document.querySelectorAll<HTMLButtonElement>(
 			"#kiln-feedback-type-group [data-type]",
@@ -2682,9 +2970,14 @@ async function initFeedbackTab() {
 			if (myFeedbackLoaded) renderMyFeedback();
 		} else {
 			status.textContent =
-				result.code === "RATE_LIMITED"
-					? "Slow down. Try again in a minute."
-					: "Something went wrong. Try again later.";
+				result.message === "ACCOUNT_BANNED"
+					? "Your account has been banned from Kiln, so you can't send feedback."
+					: result.message === "ACCOUNT_NOT_LINKED"
+						? "Link your account to Kiln to send feedback."
+						: result.code === "RATE_LIMITED" ||
+								result.message === "Too many requests"
+							? "Slow down. Try again later."
+							: "Something went wrong. Try again later.";
 			status.className = "small text-danger";
 		}
 
@@ -2770,6 +3063,7 @@ function initDebugTab(container: HTMLElement) {
 		"cache",
 		"savedThemes",
 		"kilnSessions",
+		"kilnBans",
 		"seenTradeIds",
 		"dismissedNotices",
 		"errorLog",
@@ -2825,6 +3119,18 @@ function initDebugTab(container: HTMLElement) {
 					<button id="kd-clear-sessions" class="btn btn-sm btn-outline-danger">Clear</button>
 				</div>
 				<pre id="kd-sessions-out" class="mx-3 mb-3 p-2 rounded bg-black text-success" style="display:none;max-height:220px;overflow:auto;font-size:0.72rem;"></pre>
+			</div>
+		</div>
+		<div class="col-12">
+			<div class="card border-secondary">
+				<div class="card-header fw-semibold">Kiln Ban</div>
+				<div class="card-body d-flex gap-2 flex-wrap align-items-center">
+					<input id="kd-ban-reason" type="text" class="form-control form-control-sm" style="max-width:260px;" placeholder="Reason (optional)" value="Spamming world reviews" />
+					<button id="kd-simulate-ban" class="btn btn-sm btn-outline-danger">Simulate Ban</button>
+					<button id="kd-clear-ban" class="btn btn-sm btn-outline-secondary">Clear Ban</button>
+					<button id="kd-view-bans" class="btn btn-sm btn-outline-secondary">View</button>
+				</div>
+				<pre id="kd-bans-out" class="mx-3 mb-3 p-2 rounded bg-black text-success" style="display:none;max-height:220px;overflow:auto;font-size:0.72rem;"></pre>
 			</div>
 		</div>
 		<div class="col-12">
@@ -3042,6 +3348,43 @@ function initDebugTab(container: HTMLElement) {
 		});
 
 	document
+		.getElementById("kd-simulate-ban")!
+		.addEventListener("click", async () => {
+			const user = await getUserDetails();
+			if (!user) return;
+			const reason =
+				(
+					document.getElementById("kd-ban-reason") as HTMLInputElement
+				).value.trim() || null;
+			const bans = await kilnBans.getValue();
+			await kilnBans.setValue([
+				...bans.filter((b) => b.userId !== user.userId),
+				{ userId: user.userId, reason, bannedAt: new Date().toISOString() },
+			]);
+			const dismissed = await dismissedNotices.getValue();
+			await dismissedNotices.setValue(
+				dismissed.filter((id) => id !== `kiln-ban-${user.userId}`),
+			);
+			location.reload();
+		});
+
+	document
+		.getElementById("kd-clear-ban")!
+		.addEventListener("click", async () => {
+			const user = await getUserDetails();
+			if (!user) return;
+			const bans = await kilnBans.getValue();
+			await kilnBans.setValue(bans.filter((b) => b.userId !== user.userId));
+			location.reload();
+		});
+
+	document
+		.getElementById("kd-view-bans")!
+		.addEventListener("click", async () => {
+			toggle("kd-bans-out", await kilnBans.getValue());
+		});
+
+	document
 		.getElementById("kd-view-prefs")!
 		.addEventListener("click", async () => {
 			toggle("kd-prefs-out", await preferences.getPreferences());
@@ -3140,7 +3483,14 @@ function openProfileThemeEffectsModal(
 	modal.showModal();
 }
 
+async function checkKilnBan(userId: number) {
+	const result = await sendMessage("checkKilnBan", userId);
+	return result.ok ? result.data : await getKilnBan(userId);
+}
+
 async function openVerificationFlowModal(userId: number) {
+	if (await checkKilnBan(userId)) return;
+
 	const modal = createModal();
 
 	function setContent(html: string) {
@@ -3260,7 +3610,9 @@ async function openVerificationFlowModal(userId: number) {
 		if (!startResult.ok) {
 			return {
 				ok: false,
-				message: "Failed to start verification. Please try again later.",
+				message: (await getKilnBan(userId))
+					? "This account has been banned from Kiln and can't be linked."
+					: "Failed to start verification. Please try again later.",
 			};
 		}
 		const { phrase, token } = startResult.data.data;

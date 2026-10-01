@@ -22,6 +22,7 @@ import type {
 	ApiSession,
 	CacheInterface,
 	EvalProfile,
+	KilnBan,
 	KilnErrorLogEntry,
 	ThemeEffect,
 } from "./types";
@@ -557,6 +558,11 @@ export const apiSessions = storage.defineItem<ApiSession[]>(
 		version: 1,
 	},
 );
+
+export const kilnBans = storage.defineItem<KilnBan[]>("local:kilnBans", {
+	fallback: [],
+	version: 1,
+});
 
 export const dismissedNotices = storage.defineItem<string[]>(
 	"local:dismissedNotices",

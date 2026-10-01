@@ -35,6 +35,7 @@ import {
 	_savedThemes,
 	_showKilnDisclosures,
 	_textTruncateFix,
+	dismissedNotices,
 	getEnabledDeprecatedFeatures,
 	type PastNotification,
 	preferences,
@@ -42,7 +43,7 @@ import {
 } from "@/utils/storage";
 import { applyKilnTheme, THEME_PRESETS } from "@/utils/theme";
 import { screenTradeNotifications } from "@/utils/tradeScreening";
-import type { CurrencyCode } from "@/utils/types";
+import type { CurrencyCode, KilnBan } from "@/utils/types";
 import {
 	applyKilnDisclosureTitle,
 	bricksToCurrency,
@@ -50,6 +51,7 @@ import {
 	createModal,
 	formatNotificationRelativeTime,
 	getApiSession,
+	getKilnBan,
 	getUserDetails,
 	injectNoticeBanners,
 	injectPostUpdateBanner,
@@ -164,11 +166,14 @@ export default defineContentScript({
 
 				renderKilnNotifications(user.userId);
 
-				getApiSession(user.userId).then((state) => {
-					if (state == null) {
+				(async () => {
+					if ((await getApiSession(user.userId))?.state === "verified")
+						await sendMessage("getApiSession", user.userId);
+					const ban = await getKilnBan(user.userId);
+					if (ban) injectBanBanner(user.userId, ban);
+					else if (!(await getApiSession(user.userId)))
 						injectVerificationBanner();
-					}
-				});
+				})();
 
 				Promise.all([
 					preferences.getPreferences(),
@@ -508,6 +513,47 @@ function injectDeprecatedFeaturesBanner(enabled: FeatureId[]) {
 	const verb = count === 1 ? "is" : "are";
 	const pronoun = count === 1 ? "it" : "them";
 	banner.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i><span>You have <b>${count}</b> feature${count === 1 ? "" : "s"} enabled that ${verb} deprecated. It is recommended you <a href="/my/settings/kiln?tab=prefs&category=deprecated" class="alert-link text-black">disable ${pronoun}</a>.</span>`;
+
+	mainContent.prepend(banner);
+}
+
+async function injectBanBanner(userId: number, ban: KilnBan) {
+	const noticeId = `kiln-ban-${userId}`;
+	if ((await dismissedNotices.getValue()).includes(noticeId)) return;
+
+	const mainContent = document.querySelector(
+		'#main-content div[style^="min-height"]',
+	);
+	if (!mainContent) return;
+
+	const banner = document.createElement("div");
+	banner.classList.add(
+		"alert",
+		"alert-danger",
+		"d-flex",
+		"align-items-center",
+		"gap-2",
+		"p-3",
+		"rounded-0",
+		"border-0",
+		"text-dark",
+	);
+	banner.style.cssText =
+		"background-image: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.05) 10px, rgba(0,0,0,0.05) 20px); margin: 0;";
+	banner.role = "alert";
+	banner.innerHTML = `<i class="fa-solid fa-ban"></i><span>Your account has been permanently banned from Kiln${ban.reason ? ` for: <b>${escapeHtml(ban.reason)}</b>` : "."} Features that require a linked account are no longer available. <a href="/my/settings/kiln?tab=sync" class="alert-link text-black">Learn more</a></span>`;
+
+	const dismissBtn = document.createElement("button");
+	dismissBtn.type = "button";
+	dismissBtn.className = "btn-close ms-auto";
+	dismissBtn.setAttribute("aria-label", "Dismiss");
+	dismissBtn.addEventListener("click", async () => {
+		const dismissed = await dismissedNotices.getValue();
+		if (!dismissed.includes(noticeId))
+			await dismissedNotices.setValue([...dismissed, noticeId]);
+		banner.remove();
+	});
+	banner.append(dismissBtn);
 
 	mainContent.prepend(banner);
 }

@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import type { PolyTrack } from "@kiln/schemas";
 import { escapeHtml } from "@/utils/escapeHtml";
 import { sendMessage } from "@/utils/messaging";
 import metadata from "@/utils/static/metadata.json";
@@ -550,6 +551,10 @@ export async function playtimeTracking(
 	userId: number,
 	showDisclosures: boolean,
 ) {
+	const SESSIONS_PER_PAGE = 10;
+	const FETCH_PAGE_SIZE = 25; // Polytrack rejects anything above 25
+	const MAX_FETCH_PAGES = 100;
+
 	const formatMinutes = (minutes: number) => {
 		if (minutes < 60) return `${minutes}mins`;
 		const h = Math.floor(minutes / 60);
@@ -564,31 +569,57 @@ export async function playtimeTracking(
 			year: "numeric",
 		});
 
-	const fetchActivity = (forceRefresh = false) =>
-		sendMessage("getGameActivity", {
+	const fetchAllActivity = async (forceRefresh = false) => {
+		const first = await sendMessage("getGameActivity", {
 			userId,
 			gameId: placeID,
 			page: 1,
-			pageSize: 25,
+			pageSize: FETCH_PAGE_SIZE,
 			forceRefresh,
 		});
+		if (!first.ok) return first;
 
-	const buildContent = (
-		data: Extract<
-			Awaited<ReturnType<typeof fetchActivity>>,
-			{ ok: true }
-		>["data"],
-	) => {
-		const { totalPlaytime, sessions } = data;
+		const sessions = [...first.data.sessions];
+		const { totalSessions, totalPlaytime } = first.data;
+		let page = 2;
 
-		const visibleSessions = sessions.filter(
-			(session) => session.isOpen || Math.round(session.duration / 60_000) > 0,
+		while (sessions.length < totalSessions && page <= MAX_FETCH_PAGES) {
+			const next = await sendMessage("getGameActivity", {
+				userId,
+				gameId: placeID,
+				page,
+				pageSize: FETCH_PAGE_SIZE,
+				forceRefresh,
+			});
+			if (!next.ok || next.data.sessions.length === 0) break;
+			sessions.push(...next.data.sessions);
+			page++;
+		}
+
+		return {
+			ok: true as const,
+			data: { totalPlaytime, totalSessions, sessions },
+		};
+	};
+
+	let allSessions: PolyTrack.GameActivitySession[] = [];
+	let totalPlaytimeMs = 0;
+	let currentPage = 1;
+
+	const renderPage = () => {
+		const totalPages = Math.max(
+			1,
+			Math.ceil(allSessions.length / SESSIONS_PER_PAGE),
 		);
+		if (currentPage > totalPages) currentPage = totalPages;
+
+		const start = (currentPage - 1) * SESSIONS_PER_PAGE;
+		const pageSessions = allSessions.slice(start, start + SESSIONS_PER_PAGE);
 
 		const rowsHTML =
-			visibleSessions.length === 0
+			pageSessions.length === 0
 				? `<div class="text-muted small fst-italic">No sessions recorded for this world yet.</div>`
-				: visibleSessions
+				: pageSessions
 						.map(
 							(session) => `
 						<div class="d-flex justify-content-between align-items-center py-1 border-bottom border-secondary" style="font-size:0.85rem;">
@@ -598,23 +629,34 @@ export async function playtimeTracking(
 						)
 						.join("");
 
-		const totalMinutes = Math.round(totalPlaytime / 60_000);
+		const totalMinutes = Math.round(totalPlaytimeMs / 60_000);
+		const countedSessions = allSessions.filter(
+			(session) => session.duration > 0,
+		).length;
 		const avgMinutes =
-			visibleSessions.length > 0
-				? Math.round(totalMinutes / visibleSessions.length)
-				: 0;
+			countedSessions > 0 ? Math.round(totalMinutes / countedSessions) : 0;
 
 		const summaryHTML =
-			visibleSessions.length > 0
+			allSessions.length > 0
 				? `<div class="small text-muted mb-2">
 					<i class="fas fa-chart-bar me-1"></i>avg ${formatMinutes(avgMinutes)}/session
 				</div>`
+				: "";
+
+		const paginationHTML =
+			totalPages > 1
+				? `<div class="d-flex justify-content-between align-items-center">
+						<button class="btn btn-sm btn-outline-secondary playtime-prev" ${currentPage <= 1 ? "disabled" : ""}>‹ Prev</button>
+						<span class="small text-muted">Page ${currentPage} of ${totalPages}</span>
+						<button class="btn btn-sm btn-outline-secondary playtime-next" ${currentPage >= totalPages ? "disabled" : ""}>Next ›</button>
+					</div>`
 				: "";
 
 		return {
 			totalBadge:
 				totalMinutes > 0 ? `${formatMinutes(totalMinutes)} total` : "0m total",
 			bodyHTML: `${summaryHTML}${rowsHTML}`,
+			paginationHTML,
 		};
 	};
 
@@ -639,6 +681,7 @@ export async function playtimeTracking(
 				</div>
 			</div>
 		</div>
+		<div class="playtime-pagination p-2" style="display:none;"></div>
 	`;
 
 	await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -654,17 +697,40 @@ export async function playtimeTracking(
 		".playtime-total-badge",
 	)!;
 	const cardBody = card.querySelector<HTMLElement>(".playtime-card-body")!;
+	const paginationEl = card.querySelector<HTMLElement>(".playtime-pagination")!;
+
+	const paint = () => {
+		const { totalBadge, bodyHTML, paginationHTML } = renderPage();
+		totalBadgeEl.textContent = totalBadge;
+		cardBody.innerHTML = bodyHTML;
+		paginationEl.innerHTML = paginationHTML;
+		paginationEl.style.display = paginationHTML ? "" : "none";
+		sendMessage("registerBootstrapElements");
+	};
+
+	paginationEl.addEventListener("click", (e) => {
+		const target = e.target as HTMLElement;
+		if (target.closest(".playtime-prev")) {
+			if (currentPage > 1) {
+				currentPage--;
+				paint();
+			}
+		} else if (target.closest(".playtime-next")) {
+			currentPage++;
+			paint();
+		}
+	});
 
 	refreshBtn.addEventListener("click", async () => {
 		refreshBtn.disabled = true;
 		refreshBtn.innerHTML = `<i class="fas fa-sync-alt fa-spin"></i>`;
 		try {
-			const result = await fetchActivity(true);
+			const result = await fetchAllActivity(true);
 			if (result.ok) {
-				const fresh = buildContent(result.data);
-				totalBadgeEl.textContent = fresh.totalBadge;
-				cardBody.innerHTML = fresh.bodyHTML;
-				sendMessage("registerBootstrapElements");
+				allSessions = result.data.sessions;
+				totalPlaytimeMs = result.data.totalPlaytime;
+				currentPage = 1;
+				paint();
 			}
 		} finally {
 			refreshBtn.disabled = false;
@@ -672,17 +738,16 @@ export async function playtimeTracking(
 		}
 	});
 
-	const initial = await fetchActivity();
+	const initial = await fetchAllActivity();
 	if (!initial.ok) {
 		cardBody.innerHTML = `<div class="text-muted small fst-italic">Failed to load playtime.</div>`;
 		return;
 	}
 
-	const { totalBadge, bodyHTML } = buildContent(initial.data);
-	totalBadgeEl.textContent = totalBadge;
-	cardBody.innerHTML = bodyHTML;
+	allSessions = initial.data.sessions;
+	totalPlaytimeMs = initial.data.totalPlaytime;
+	paint();
 	refreshBtn.disabled = false;
-	sendMessage("registerBootstrapElements");
 }
 
 export function achievementsProgressBar(showDisclosures: boolean) {
@@ -870,7 +935,7 @@ export function legacyPlaceViewLayout(
 	const hero = container.querySelector<HTMLElement>(".place-hero");
 	if (!hero) return;
 
-	const isV2World = !!hero.querySelector(".badge .fa-gamepad");
+	const isV2World = !!document.querySelector(".badge .fa-gamepad");
 
 	const accessWarningHtml =
 		hero.querySelector<HTMLElement>(".text-warning")?.outerHTML ?? null;
@@ -1202,6 +1267,7 @@ export async function detailedPlaceReviews(
 	userId: number,
 	showDisclosures: boolean,
 	condensedTabBar: boolean,
+	isAdmin = false,
 ) {
 	const elements = await waitForPlaceTabs();
 	if (!elements) return;
@@ -1271,7 +1337,7 @@ export async function detailedPlaceReviews(
 
 	const renderReplyRow = (reply: ReviewReply, creatorId: number | null) => {
 		const date = renderTimestamp(reply.createdAt);
-		const masked = reply.anonymous && reply.userId !== userId;
+		const masked = reply.anonymous && reply.userId !== userId && !isAdmin;
 
 		return `
 			<div class="d-flex align-items-start gap-2 mt-2 ps-3 border-start border-secondary" data-reply-id="${reply.id}">
@@ -1343,7 +1409,7 @@ export async function detailedPlaceReviews(
 		const playtimeMs = playtimesByReviewId.get(review.id);
 
 		const editing = isOwn && isEditing;
-		const masked = review.anonymous && !isOwn;
+		const masked = review.anonymous && !isOwn && !isAdmin;
 
 		return `
 			<div class="card mcard mb-2${isOwn ? " border border-primary" : ""}">
@@ -1376,7 +1442,9 @@ export async function detailedPlaceReviews(
 							isOwn
 								? `<button class="btn btn-sm btn-outline-secondary kiln-review-edit flex-shrink-0 px-2 py-1" title="Edit your review"><i class="fas fa-pen"></i></button>
 								<button class="btn btn-sm btn-outline-danger kiln-review-delete flex-shrink-0 px-2 py-1 ms-1" title="Delete your review"><i class="fas fa-trash"></i></button>`
-								: ""
+								: isAdmin
+									? `<button class="btn btn-sm btn-outline-danger kiln-review-admin-delete flex-shrink-0 px-2 py-1 ms-1" data-review-id="${review.id}" title="Delete this review (admin)"><i class="fas fa-trash"></i></button>`
+									: ""
 						}
 					</div>
 					${
@@ -1685,6 +1753,43 @@ export async function detailedPlaceReviews(
 
 				render();
 			});
+
+			cardBody
+				.querySelectorAll<HTMLButtonElement>(".kiln-review-admin-delete")
+				.forEach((adminDeleteBtn) => {
+					adminDeleteBtn.addEventListener("click", async () => {
+						const reviewId = adminDeleteBtn.dataset.reviewId!;
+						if (!confirm("Permanently delete this review?")) return;
+
+						adminDeleteBtn.disabled = true;
+						adminDeleteBtn.innerHTML = `<span class="spinner-border spinner-border-sm"></span>`;
+
+						const res = await sendMessage("adminDeletePlaceReview", {
+							userId,
+							id: reviewId,
+						});
+						if (!res.ok) {
+							adminDeleteBtn.disabled = false;
+							adminDeleteBtn.innerHTML = `<i class="fas fa-trash"></i>`;
+							return;
+						}
+
+						reviews = reviews.filter((r) => r.id !== reviewId);
+						if (myReview?.id === reviewId) {
+							myReview = null;
+							pendingRating = 0;
+							pendingAnonymous = false;
+							isEditing = false;
+						}
+						totalReviews = Math.max(0, totalReviews - 1);
+						averageRating =
+							reviews.length > 0
+								? reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
+								: null;
+
+						render();
+					});
+				});
 
 			if (!showEditor) return;
 

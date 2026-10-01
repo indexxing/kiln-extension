@@ -91,6 +91,15 @@ export const RefreshTokenApi = z.object({
 });
 export type RefreshTokenApi = z.infer<typeof RefreshTokenApi>;
 
+export const AuthBanStatusApi = z.object({
+	data: z.object({
+		banned: z.boolean(),
+		reason: z.string().nullable(),
+		bannedAt: z.string().nullable(),
+	}),
+});
+export type AuthBanStatusApi = z.infer<typeof AuthBanStatusApi>;
+
 export const ErrorGeneric = z.object({
 	data: z.null(),
 	error: z.object({
@@ -255,6 +264,48 @@ export const AdminDeleteThemeApi = z.object({
 	data: z.object({ ok: z.boolean() }),
 });
 export type AdminDeleteThemeApi = z.infer<typeof AdminDeleteThemeApi>;
+
+export const AdminDeletePlaceReviewApi = z.object({
+	data: z.object({ ok: z.boolean() }),
+});
+export type AdminDeletePlaceReviewApi = z.infer<
+	typeof AdminDeletePlaceReviewApi
+>;
+
+export const AdminBanUserApi = z.object({
+	data: z.object({ ok: z.boolean(), banned: z.boolean() }),
+});
+export type AdminBanUserApi = z.infer<typeof AdminBanUserApi>;
+
+export const AdminBannedUsersApi = z.object({
+	data: z.array(
+		z.object({
+			userId: z.number(),
+			username: z.string().nullable(),
+			bannedAt: z.string(),
+			reason: z.string().nullable(),
+			version: z.string().nullable(),
+			linkedAccounts: z
+				.array(
+					z.object({
+						userId: z.number(),
+						username: z.string().nullable(),
+						bannedAt: z.string().nullable(),
+						signals: z.array(z.enum(["client", "ip"])),
+						lastSeenAt: z.string(),
+					}),
+				)
+				.default([]),
+		}),
+	),
+	meta: z.object({
+		currentPage: z.number(),
+		perPage: z.number(),
+		totalPages: z.number(),
+		totalCount: z.number(),
+	}),
+});
+export type AdminBannedUsersApi = z.infer<typeof AdminBannedUsersApi>;
 
 export const AdminConfigApi = z.object({ data: ExtensionConfigSchema });
 export type AdminConfigApi = z.infer<typeof AdminConfigApi>;
@@ -699,6 +750,18 @@ export const TopReviewersApi = z.object({
 	),
 });
 export type TopReviewersApi = z.infer<typeof TopReviewersApi>;
+
+export const MostLikedUsersApi = z.object({
+	data: z.array(
+		z.object({
+			userId: z.number(),
+			username: z.string(),
+			thumbnail: z.string().nullable(),
+			likeCount: z.number(),
+		}),
+	),
+});
+export type MostLikedUsersApi = z.infer<typeof MostLikedUsersApi>;
 
 export const RatedWorldsLeaderboardApi = z.object({
 	data: z.array(

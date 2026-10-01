@@ -967,7 +967,6 @@
 			"name": "Custom Body Color Hex Codes",
 			"desc": "Choose that exact color shade with an input for any hex code you can dream up in the \"Custom\" tab of the body part color selector modal on the avatar editor page.",
 			"id": "customBodyColorHexCodes",
-			"defaultEnabled": true,
 			"notes": [
 				{
 					"type": "warning",
@@ -1041,7 +1040,6 @@
 			"name": "Creator Comment Labels",
 			"desc": "Label comments made by the creator of the world, guild, or item you're looking at.",
 			"id": "creatorCommentLabels",
-			"defaultEnabled": true,
 			"config": [
 				{
 					"type": "check",
@@ -1164,7 +1162,8 @@
 				}
 			],
 			"tags": [
-				"expression"
+				"expression",
+				"deprecated"
 			]
 		},
 		{
@@ -1375,7 +1374,6 @@
 			"name": "Forum Composer Markdown Tools",
 			"desc": "Quickly apply markdown to your forum posts with easy to use formatting buttons!",
 			"id": "forumMarkdownButtons",
-			"defaultEnabled": true,
 			"notes": [
 				{
 					"type": "warning",

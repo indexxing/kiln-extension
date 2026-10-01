@@ -17,11 +17,17 @@
 import { Extension } from "@kiln/schemas";
 import { onMessage } from "@/utils/messaging";
 import { apiSessions } from "@/utils/storage";
-import { expireKVCache, pullKVCache } from "@/utils/utilities";
+import { expireKVCache, getKilnBan, pullKVCache } from "@/utils/utilities";
 import {
+	clearKilnBan,
+	dedupe,
+	fetchKilnBanStatus,
 	handle,
+	isBannedError,
 	NoSessionError,
+	recordKilnBan,
 	safeFetch,
+	saveKilnBan,
 	withApi,
 	withAuthSession,
 } from "./shared";
@@ -71,15 +77,21 @@ onMessage("startKilnVerification", ({ data: userId }) =>
 					!!session.verificationToken &&
 					!isJwtExpired(session.verificationToken)));
 		if (blocked) throw new Error("Session already exists for user");
-		return safeFetch(
-			`${config.resolvedUrls.extension}auth/flow/start`,
-			Extension.AuthStartApi,
-			{
-				credentials: "include",
-				method: "POST",
-				body: JSON.stringify({ userId }),
-			},
-		);
+		if (await getKilnBan(userId)) throw new Error("ACCOUNT_BANNED");
+		try {
+			return await safeFetch(
+				`${config.resolvedUrls.extension}auth/flow/start`,
+				Extension.AuthStartApi,
+				{
+					credentials: "include",
+					method: "POST",
+					body: JSON.stringify({ userId }),
+				},
+			);
+		} catch (err) {
+			if (isBannedError(err)) await recordKilnBan(userId, config);
+			throw err;
+		}
 	}),
 );
 
@@ -90,18 +102,55 @@ onMessage("finishKilnVerification", ({ data: userId }) =>
 		const session = sessionStore.find((session) => session.userId == userId);
 		if (!session?.verificationToken)
 			throw new Error("No pending verification for user");
-		const result = await safeFetch(
-			`${config.resolvedUrls.extension}auth/flow/end`,
-			Extension.AuthEndApi,
-			{
-				credentials: "include",
-				method: "POST",
-				headers: { Authorization: `Bearer ${session.verificationToken}` },
-			},
-		);
+		let result: Extension.AuthEndApi;
+		try {
+			result = await safeFetch(
+				`${config.resolvedUrls.extension}auth/flow/end`,
+				Extension.AuthEndApi,
+				{
+					credentials: "include",
+					method: "POST",
+					headers: { Authorization: `Bearer ${session.verificationToken}` },
+				},
+			);
+		} catch (err) {
+			if (isBannedError(err)) await recordKilnBan(userId, config);
+			throw err;
+		}
+		await clearKilnBan(userId);
 		await expireKVCache("currentSession", String(userId));
 		return result;
 	}),
+);
+
+onMessage("checkKilnBan", ({ data: userId }) =>
+	handle(() =>
+		dedupe(`checkKilnBan:${userId}`, async () => {
+			const ban = await getKilnBan(userId);
+			if (!ban?.refreshToken) return ban;
+
+			const config = await withApi("kiln_api", "extension");
+			let status: Awaited<ReturnType<typeof fetchKilnBanStatus>>;
+			try {
+				status = await fetchKilnBanStatus(ban.refreshToken, config);
+			} catch {
+				return ban;
+			}
+
+			if (!status.banned) {
+				await clearKilnBan(userId);
+				return null;
+			}
+
+			const updated = {
+				...ban,
+				reason: status.reason,
+				bannedAt: status.bannedAt,
+			};
+			await saveKilnBan(updated);
+			return updated;
+		}),
+	),
 );
 
 onMessage("terminateKilnSession", ({ data: userId }) =>
@@ -403,6 +452,68 @@ onMessage("adminDeleteTheme", ({ data }) =>
 				},
 			),
 		),
+	),
+);
+
+onMessage("adminDeletePlaceReview", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/reviews/${encodeURIComponent(data.id)}`,
+				Extension.AdminDeletePlaceReviewApi,
+				{
+					method: "DELETE",
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			),
+		),
+	),
+);
+
+onMessage("adminBanUser", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/users/${data.targetUserId}/ban`,
+				Extension.AdminBanUserApi,
+				{
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+					body: JSON.stringify(data.reason ? { reason: data.reason } : {}),
+				},
+			),
+		),
+	),
+);
+
+onMessage("adminUnbanUser", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/users/${data.targetUserId}/unban`,
+				Extension.AdminBanUserApi,
+				{
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			),
+		),
+	),
+);
+
+onMessage("adminGetBannedUsers", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) => {
+			const params = new URLSearchParams();
+			if (data.search) params.set("search", data.search);
+			if (data.page) params.set("page", String(data.page));
+
+			return safeFetch(
+				`${config.resolvedUrls.extension}admin/users/banned?${params.toString()}`,
+				Extension.AdminBannedUsersApi,
+				{ headers: { Authorization: `Bearer ${token}` } },
+			);
+		}),
 	),
 );
 

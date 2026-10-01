@@ -35,7 +35,10 @@ export default defineContentScript({
 	},
 });
 
-type LeaderboardTabId = "kilntopreviewers" | "kilnratedworldshighest";
+type LeaderboardTabId =
+	| "kilntopreviewers"
+	// | "kilnmostlikedusers"
+	| "kilnratedworldshighest";
 
 function waitForElement<T extends Element>(
 	selector: string,
@@ -112,6 +115,7 @@ async function placeReviewLeaderboards() {
 
 	const tabs: { id: LeaderboardTabId; label: string }[] = [
 		{ id: "kilntopreviewers", label: "Top Reviewers" },
+		// { id: "kilnmostlikedusers", label: "Most Liked Users" },
 		{ id: "kilnratedworldshighest", label: "Highest Rated Worlds" },
 	];
 
@@ -135,14 +139,14 @@ async function placeReviewLeaderboards() {
 		});
 	}
 
+	let activeRequestId = 0;
+
 	const urlCategory = new URL(window.location.href).searchParams.get(
 		"category",
 	) as LeaderboardTabId | null;
 	if (tabs.some((t) => t.id === urlCategory)) {
 		activateTab(urlCategory as LeaderboardTabId);
 	}
-
-	let activeRequestId = 0;
 
 	async function activateTab(tabId: LeaderboardTabId) {
 		const requestId = ++activeRequestId;
@@ -191,6 +195,27 @@ async function placeReviewLeaderboards() {
 			)
 			.join("");
 	}
+
+	// async function renderMostLikedUsers(requestId: number) {
+	// 	const result = await sendMessage("getMostLikedUsers");
+	// 	if (requestId !== activeRequestId) return;
+	// 	if (!result.ok) {
+	// 		content!.innerHTML = `<p class="text-muted text-center">Couldn't load the leaderboard.</p>`;
+	// 		return;
+	// 	}
+	//
+	// 	content!.innerHTML = result.data.data
+	// 		.map((entry, i) =>
+	// 			renderLeaderboardCard({
+	// 				href: `/users/${entry.userId}`,
+	// 				thumbnail: entry.thumbnail,
+	// 				name: entry.username,
+	// 				rank: i + 1,
+	// 				value: `${entry.likeCount.toLocaleString()} ${entry.likeCount === 1 ? "like" : "likes"}`,
+	// 			}),
+	// 		)
+	// 		.join("");
+	// }
 
 	async function renderRatedWorlds(requestId: number) {
 		const result = await sendMessage("getRatedWorldsLeaderboard", "highest");

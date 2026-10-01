@@ -23,6 +23,7 @@ import type {
 	FeedApi,
 	FeedSearchFilters,
 	ForumSearchFilters,
+	KilnBan,
 	KilnErrorLogEntry,
 	PlacesListingApi,
 	PlacesListingFilters,
@@ -248,6 +249,7 @@ export interface ProtocolMap {
 		userId: number,
 	): Promise<Result<Extension.AuthStartApi>>;
 	finishKilnVerification(userId: number): Promise<Result<Extension.AuthEndApi>>;
+	checkKilnBan(userId: number): Promise<Result<KilnBan | null>>;
 	getProfileBio(): Promise<Result<string>>;
 	updateProfileBio(description: string): Promise<Result<boolean>>;
 	terminateKilnSession(userId: number): Promise<Result<null>>;
@@ -370,6 +372,24 @@ export interface ProtocolMap {
 		userId: number;
 		id: string;
 	}): Promise<Result<Extension.AdminDeleteThemeApi>>;
+	adminDeletePlaceReview(data: {
+		userId: number;
+		id: string;
+	}): Promise<Result<Extension.AdminDeletePlaceReviewApi>>;
+	adminBanUser(data: {
+		userId: number;
+		targetUserId: number;
+		reason?: string;
+	}): Promise<Result<Extension.AdminBanUserApi>>;
+	adminUnbanUser(data: {
+		userId: number;
+		targetUserId: number;
+	}): Promise<Result<Extension.AdminBanUserApi>>;
+	adminGetBannedUsers(data: {
+		userId: number;
+		search?: string;
+		page?: number;
+	}): Promise<Result<Extension.AdminBannedUsersApi>>;
 
 	getConfig(): Promise<Result<Extension.ExtensionConfig>>;
 	getChangelog(): Promise<Result<string>>;
@@ -458,6 +478,7 @@ export interface ProtocolMap {
 		replyId: string;
 	}): Promise<Result<null>>;
 	getTopReviewers(): Promise<Result<Extension.TopReviewersApi>>;
+	// getMostLikedUsers(): Promise<Result<Extension.MostLikedUsersApi>>;
 	getRatedWorldsLeaderboard(
 		order: "highest" | "lowest",
 	): Promise<Result<Extension.RatedWorldsLeaderboardApi>>;

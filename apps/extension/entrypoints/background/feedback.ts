@@ -17,6 +17,7 @@
 import { Extension } from "@kiln/schemas";
 import { onMessage } from "@/utils/messaging";
 import { _errorLog, getFeedbackClientId } from "@/utils/storage";
+import { getKilnBan } from "@/utils/utilities";
 import {
 	checkRateLimit,
 	handle,
@@ -46,6 +47,8 @@ async function getOptionalAuthHeader(
 onMessage("submitFeedback", ({ data }) =>
 	handle(async () => {
 		checkRateLimit("feedback", 5);
+		if (data.userId && (await getKilnBan(data.userId)))
+			throw new Error("ACCOUNT_BANNED");
 
 		const [config, clientId, authHeader] = await Promise.all([
 			withApi("kiln_api", "extension"),

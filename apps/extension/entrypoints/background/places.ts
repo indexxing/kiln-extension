@@ -967,6 +967,23 @@ onMessage("getTopReviewers", () =>
 	}),
 );
 
+// onMessage("getMostLikedUsers", () =>
+// 	handle(async () => {
+// 		const config = await withApi("kiln_api", "extension");
+// 		return pullKVCache(
+// 			"leaderboards",
+// 			"most-liked-users",
+// 			() =>
+// 				safeFetch(
+// 					`${config.resolvedUrls.extension}places/leaderboards/most-liked-users`,
+// 					Extension.MostLikedUsersApi,
+// 				),
+// 			5 * 60 * 1000,
+// 			false,
+// 		);
+// 	}),
+// );
+
 onMessage("getRatedWorldsLeaderboard", ({ data: order }) =>
 	handle(async () => {
 		const config = await withApi("kiln_api", "extension");
