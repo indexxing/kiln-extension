@@ -276,41 +276,36 @@ export async function placeAIDisclosures(
 	const result = await sendMessage("getPlaceAiDisclosures", placeID);
 	if (!result.ok) return;
 
-	const { assisted, generated, icon, thumbnails } = result.data.data;
+	const { icon, thumbnails } = result.data.data;
 
-	const labels: string[] = [];
-	if (generated) labels.push("Entirely AI");
-	else if (assisted) labels.push("AI assisted");
-	if (icon) labels.push("AI icon");
-	if (thumbnails > 0) {
-		labels.push(
-			thumbnails === 1 ? "AI thumbnail" : `${thumbnails} AI thumbnails`,
-		);
-	}
+	const found: string[] = [];
+	if (icon) found.push("icon");
+	if (thumbnails > 0) found.push(thumbnails === 1 ? "thumbnail" : "thumbnails");
+	const labeled = found.length > 0;
 
 	const key = document.createElement("li");
 	const value = document.createElement("li");
 
 	key.dataset.kiln = "ai-usage";
-	key.innerHTML = `AI Usage:${kilnDisclosureBadgeHtml(showDisclosures)}`;
-
-	if (labels.length === 0) {
-		value.classList.add("text-muted");
-		value.textContent = "Unknown";
-	} else {
-		value.classList.add("text-warning");
-		value.innerHTML = `<i class="fas fa-robot me-1"></i>${escapeHtml(labels.join(", "))}`;
-	}
-
-	value.insertAdjacentHTML(
-		"beforeend",
-		` <i class="fa-solid fa-circle-info text-muted" data-bs-toggle="tooltip" data-bs-title="AI usage labels are issued by Index when a world is reported as likely built with AI. &quot;Unknown&quot; means no label has been issued, not that the world doesn't use AI."></i>`,
-	);
 
 	const report = document.createElement("a");
 	report.href = "#";
-	report.className = "ms-2 small";
-	report.textContent = "Report";
+	report.className = "small";
+
+	if (labeled) {
+		key.innerHTML = `AI-Generated Content:${kilnDisclosureBadgeHtml(showDisclosures)}`;
+		value.classList.add("text-warning");
+		value.innerHTML = `<i class="fas fa-robot me-1"></i>Detected in ${escapeHtml(found.join(" and "))}`;
+		value.insertAdjacentHTML(
+			"beforeend",
+			` <i class="fa-solid fa-circle-info text-muted" data-bs-toggle="tooltip" data-bs-title="Index confirmed that the image(s) listed were generated with AI. This only covers the world's current icon and thumbnails, and says nothing about how the world itself or its scripts were made. If an image is changed, this label no longer applies to the new one."></i>`,
+		);
+		report.classList.add("ms-2");
+		report.textContent = "Report";
+	} else {
+		key.innerHTML = `Images:${kilnDisclosureBadgeHtml(showDisclosures)}`;
+		report.textContent = "Report AI-generated content";
+	}
 	value.append(report);
 
 	report.addEventListener("click", async (event) => {
@@ -318,7 +313,7 @@ export async function placeAIDisclosures(
 
 		const verified = !!(await getApiSession(userId));
 		const prompt = await sendMessage("showPlaceAiReportPrompt", {
-			hasLabels: labels.length > 0,
+			hasLabels: labeled,
 			verified,
 		});
 		if (!prompt.ok || !prompt.data) return;
@@ -1081,6 +1076,12 @@ export function legacyPlaceViewLayout(
 		? container.querySelector<HTMLElement>("#favorite-btn")
 		: null;
 
+	const updatesCard = newerFeatures
+		? container
+				.querySelector<HTMLElement>(".card-header .fa-clock-rotate-left")
+				?.closest<HTMLElement>(".card")
+		: null;
+
 	const leftCol = document.createElement("div");
 	leftCol.className = "col-12 col-xl-7 mb-2";
 
@@ -1249,6 +1250,11 @@ export function legacyPlaceViewLayout(
       </div>
     </div>`,
 	);
+
+	if (updatesCard) {
+		updatesCard.classList.add("mt-2");
+		rightCol.appendChild(updatesCard);
+	}
 
 	const mainRow = document.createElement("div");
 	mainRow.className = "row";

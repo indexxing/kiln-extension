@@ -18,7 +18,7 @@ import { defineConfig } from "wxt";
 
 export default defineConfig({
 	browser: "chrome",
-	manifest: {
+	manifest: ({ mode }) => ({
 		name: "Kiln for Polytoria",
 		description: "50+ features. Everything Polytoria should have built in.",
 		permissions: [
@@ -32,12 +32,12 @@ export default defineConfig({
 			"https://polytoria.com/*",
 			"https://api.polytoria.com/*",
 			"https://kiln-api.indexx.dev/*",
-			"http://localhost:3000/*",
 			"https://kiln.indexx.dev/*",
 			"https://polytoria.trade/api/*",
 			"https://polytrack.top/*",
 			"https://cdn.polytoria.com/*",
 			"https://poly-upd-archival.pages.dev/*",
+			...(mode === "development" ? ["http://localhost:3000/*"] : []),
 		],
 		browser_specific_settings: {
 			gecko: {
@@ -50,7 +50,7 @@ export default defineConfig({
 				matches: ["https://polytoria.com/*"],
 			},
 		],
-	},
+	}),
 	vite: () => ({
 		plugins: [
 			{

@@ -17,8 +17,8 @@
 import { Extension } from "@kiln/schemas";
 import type { Runtime } from "webextension-polyfill";
 import type z from "zod";
-import fallbackConfig from "@/utils/static/fallbackConfig.json";
 import { endpoints } from "@/utils/endpoints";
+import fallbackConfig from "@/utils/static/fallbackConfig.json";
 import metadata from "@/utils/static/metadata.json";
 import { apiSessions, getFeedbackClientId, kilnBans } from "@/utils/storage";
 import type { ApiTypes, KilnBan, Result } from "@/utils/types";

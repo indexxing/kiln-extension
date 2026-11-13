@@ -427,8 +427,8 @@ export interface ProtocolMap {
 	adminAddPlaceAiDisclosure(data: {
 		userId: number;
 		placeId: number;
-		kind: "icon" | "thumbnail" | "assisted" | "generated";
-		imageHash?: string;
+		kind: "icon" | "thumbnail";
+		imageHash: string;
 	}): Promise<Result<Extension.AdminAiDisclosureOkApi>>;
 	adminRemovePlaceAiDisclosure(data: {
 		userId: number;
@@ -535,6 +535,9 @@ export interface ProtocolMap {
 	getPlaceAiDisclosures(
 		placeId: number,
 	): Promise<Result<Extension.PlaceAiDisclosuresApi>>;
+	getPlaceAiDisclosuresBatch(
+		placeIds: number[],
+	): Promise<Result<Extension.PlaceAiDisclosuresBatchApi>>;
 	showPlaceAiReportPrompt(data: {
 		hasLabels: boolean;
 		verified: boolean;

@@ -1,77 +1,122 @@
 <style>
-	#options {
-		position: absolute;
-		bottom: 0;
-		margin-bottom: 15px;
-		font-size: 1.25rem;
-		background: #1a1a1a;
-		border-radius: 10px;
-		padding: 2.5px;
-	}
+#options {
+	position: absolute;
+	bottom: 0;
+	margin-bottom: 15px;
+	font-size: 1.25rem;
+	background: #1a1a1a;
+	border-radius: 10px;
+	padding: 2.5px;
+}
 
-	#options *:not(input) {
-		background: transparent;
-		border: none;
-		color: #fff;
-		font-size: 1.25rem;
-	}
+#options *:not(input) {
+	background: transparent;
+	border: none;
+	color: #fff;
+	font-size: 1.25rem;
+}
 
-	#options *:not(input):not(:nth-child(2)) {
-		margin-bottom: 3.5px;
-	}
+#options *:not(input):not(:nth-child(2)) {
+	margin-bottom: 3.5px;
+}
 
-	[class^="p+outfit_overwrite_button"]:hover, [class^="p+outfit_delete_button"]:hover {
-		cursor: pointer;
-	}
+[class^="p+outfit_overwrite_button"]:hover,
+[class^="p+outfit_delete_button"]:hover {
+	cursor: pointer;
+}
 
-	[id="p+retro_items_warning"] {
-		display: none;
-		color: #000;
-		font-weight: bold;
-	}
+[id="p+retro_items_warning"] {
+	display: none;
+	color: #000;
+	font-weight: bold;
+}
 
-	body:has([data-tab="retro"].active) [id="p+retro_items_warning"] {
-		display: block;
-	}
+body:has([data-tab="retro"].active) [id="p+retro_items_warning"] {
+	display: block;
+}
 
-	.card:has(> #advanced-collapse:not(.show)) > .card-header {
-		border-radius: inherit !important;
-		border: none;
-	}
+.card:has(> #advanced-collapse:not(.show)) > .card-header {
+	border-radius: inherit !important;
+	border: none;
+}
 </style>
 <span class="badge bg-warning mb-2" id="view-cache">Kiln</span>
-<h4 class="d-none d-lg-block">
-	Character Sandbox
-</h4>
+<h4 class="d-none d-lg-block">Character Sandbox</h4>
 <div class="row">
 	<div class="col-12 col-lg-3">
 		<div class="card mcard mb-3">
 			<div class="card-body">
-				<canvas id="viewCanvas" style="width: 100%; height: 314px; border-radius: 0.65rem; display: block;"></canvas>
+				<canvas
+					id="viewCanvas"
+					style="width: 100%; height: 314px; border-radius: 0.65rem; display: block;"
+				></canvas>
 				<div id="options">
-					<input name="JSONUpload" type="file" accept="application/json" multiple="false" id="jsonUpload" aria-label="Upload JSON!" style="display: none;" />
+					<input
+						name="JSONUpload"
+						type="file"
+						accept="application/json"
+						multiple="false"
+						id="jsonUpload"
+						aria-label="Upload JSON!"
+						style="display: none;"
+					>
 
 					<label for="JSONUpload" style="display: block;">
-						<button type="button" aria-label="Upload JSON!" onclick="this.parentElement.previousElementSibling.click()" data-bs-toggle="tooltip" data-bs-title="Upload" data-bs-placement="right">
+						<button
+							type="button"
+							aria-label="Upload JSON!"
+							onclick="this.parentElement.previousElementSibling.click()"
+							data-bs-toggle="tooltip"
+							data-bs-title="Upload"
+							data-bs-placement="right"
+						>
 							<i class="fa-duotone fa-upload"></i>
 						</button>
 					</label>
 
-					<button type="button" id="jsonSave" aria-label="Save as JSON!" style="display: block;" data-bs-toggle="tooltip" data-bs-title="Download" data-bs-placement="right">
+					<button
+						type="button"
+						id="jsonSave"
+						aria-label="Save as JSON!"
+						style="display: block;"
+						data-bs-toggle="tooltip"
+						data-bs-title="Download"
+						data-bs-placement="right"
+					>
 						<i class="fa-duotone fa-download"></i>
 					</button>
 
-					<button type="button" id="glbExport" aria-label="Export as GLB!" style="display: block;" data-bs-toggle="tooltip" data-bs-title="Export GLB" data-bs-placement="right">
+					<button
+						type="button"
+						id="glbExport"
+						aria-label="Export as GLB!"
+						style="display: block;"
+						data-bs-toggle="tooltip"
+						data-bs-title="Export GLB"
+						data-bs-placement="right"
+					>
 						<i class="fa-duotone fa-cube"></i>
 					</button>
 
-					<button type="button" aria-label="View in full screen!" style="display: block;" id="viewFullscreen" data-bs-toggle="tooltip" data-bs-title="Full Screen" data-bs-placement="right">
+					<button
+						type="button"
+						aria-label="View in full screen!"
+						style="display: block;"
+						id="viewFullscreen"
+						data-bs-toggle="tooltip"
+						data-bs-title="Full Screen"
+						data-bs-placement="right"
+					>
 						<i class="fa-duotone fa-maximize"></i>
 					</button>
 				</div>
 			</div>
 		</div>
-		<button type="button" id="myself" class="btn btn-outline-primary w-100 mb-2">
+		<button
+			type="button"
+			id="myself"
+			class="btn btn-outline-primary w-100 mb-2"
+		>
 			<i class="fa-duotone fa-shirt"></i>
 			Load Myself
 		</button>
@@ -83,7 +128,11 @@
 				</button>
 			</div>
 			<div class="col">
-				<button type="button" id="saveOutfit" class="btn btn-outline-success w-100">
+				<button
+					type="button"
+					id="saveOutfit"
+					class="btn btn-outline-success w-100"
+				>
 					<i class="fa-duotone fa-save"></i>
 					Save
 				</button>
@@ -98,28 +147,65 @@
 			<div class="card-body">
 				<div class="card-body text-center" id="body-parts">
 					<div style="margin-bottom: 5px">
-						<button type="button" id="head" class="avatarAction bodypart bp1x1" style="background-color: #e0e0e0;"></button>
+						<button
+							type="button"
+							id="head"
+							class="avatarAction bodypart bp1x1"
+							style="background-color: #e0e0e0;"
+						></button>
 					</div>
 					<div style="margin-bottom: 5px">
-						<button type="button" id="rightArm" class="avatarAction bodypart bp1x2" style="background-color: #e0e0e0; margin-right: 5px;"></button>
-						<button type="button" id="torso" class="avatarAction bodypart bp2x2" style="background-color: #e0e0e0;"></button>
-						<button type="button" class="avatarAction bodypart bp1x2" id="leftArm" style="background-color: #e0e0e0; margin-left: 5px;"></button>
+						<button
+							type="button"
+							id="rightArm"
+							class="avatarAction bodypart bp1x2"
+							style="background-color: #e0e0e0; margin-right: 5px;"
+						></button>
+						<button
+							type="button"
+							id="torso"
+							class="avatarAction bodypart bp2x2"
+							style="background-color: #e0e0e0;"
+						></button>
+						<button
+							type="button"
+							class="avatarAction bodypart bp1x2"
+							id="leftArm"
+							style="background-color: #e0e0e0; margin-left: 5px;"
+						></button>
 					</div>
 					<div>
-						<button type="button" class="avatarAction bodypart bp1x2" id="rightLeg" style="background-color: #e0e0e0; margin-right: 5px; padding-right: 18px;"></button>
-						<button type="button" id="leftLeg" class="avatarAction bodypart bp1x2" style="background-color: #e0e0e0; padding-right: 18px;"></button>
+						<button
+							type="button"
+							class="avatarAction bodypart bp1x2"
+							id="rightLeg"
+							style="background-color: #e0e0e0; margin-right: 5px; padding-right: 18px;"
+						></button>
+						<button
+							type="button"
+							id="leftLeg"
+							class="avatarAction bodypart bp1x2"
+							style="background-color: #e0e0e0; padding-right: 18px;"
+						></button>
 					</div>
 				</div>
 			</div>
 		</div>
 		<div class="card mcard mb-3 mt-3">
-			<h6 class="card-header text-center" data-bs-toggle="collapse" data-bs-target="#advanced-collapse" style="cursor: pointer;">
+			<h6
+				class="card-header text-center"
+				data-bs-toggle="collapse"
+				data-bs-target="#advanced-collapse"
+				style="cursor: pointer;"
+			>
 				<i class="fad fa-wrench"></i>
 				Advanced
 			</h6>
 			<div class="collapse" id="advanced-collapse">
 				<div class="card-body">
-					<small class="text-muted mb-1" style="font-size: 0.7rem;">Wear asset by ID</small>
+					<small class="text-muted mb-1" style="font-size: 0.7rem;"
+						>Wear asset by ID</small
+					>
 					<br>
 					<select class="form-select bg-dark mb-1" id="load-asset-type">
 						<option value="hat" selected>Hat</option>
@@ -132,15 +218,24 @@
 						<option value="user">User Avatar</option>
 					</select>
 					<div class="input-group">
-						<input type="text" class="form-control bg-dark" placeholder="Asset ID.." />
-						<button type="button" class="btn btn-primary" id="load-asset">Wear</button>
+						<input
+							type="text"
+							class="form-control bg-dark"
+							placeholder="Asset ID.."
+						>
+						<button type="button" class="btn btn-primary" id="load-asset">
+							Wear
+						</button>
 					</div>
 				</div>
 			</div>
 		</div>
 	</div>
 	<div class="col-12 col-lg-9">
-		<ul class="nav nav-pills no-shrink avatar-nav-pills nav-justified row" id="tabs">
+		<ul
+			class="nav nav-pills no-shrink avatar-nav-pills nav-justified row"
+			id="tabs"
+		>
 			<li class="nav-item col-6 col-md-4 col-xl-3" style="flex: unset">
 				<a class="nav-link active" data-tab="hat">
 					<i class="fas fa-hat-wizard me-1"></i>
@@ -172,7 +267,12 @@
 				</a>
 			</li>
 			<li class="nav-item col-6 col-md-4 col-xl-3" style="flex: unset">
-				<a class="nav-link" data-tab="retro" data-bs-toggle="tooltip" data-bs-title="Items from Bloxtopia, Superium, and Polytoria v1!">
+				<a
+					class="nav-link"
+					data-tab="retro"
+					data-bs-toggle="tooltip"
+					data-bs-title="Items from Bloxtopia, Superium, and Polytoria v1!"
+				>
 					<i class="fa-solid fa-tv-retro me-1"></i>
 					<span class="pilltitle">Retro</span>
 				</a>
@@ -184,10 +284,18 @@
 				</a>
 			</li>
 		</ul>
-		<div role="alert" class="alert bg-warning text-center mb-1 mt-2" id="p+retro_items_warning">
-			Items in this category are from past iterations of Polytoria. They can only be worn in the Avatar Sandbox.
+		<div
+			role="alert"
+			class="alert bg-warning text-center mb-1 mt-2"
+			id="p+retro_items_warning"
+		>
+			Items in this category are from past iterations of Polytoria. They can
+			only be worn in the Avatar Sandbox.
 		</div>
-		<div class="card px-2 pt-2 pb-2 mb-2" style="background: transparent; border-color: transparent; border-top-left-radius: 20px; border-top-right-radius: 20px;">
+		<div
+			class="card px-2 pt-2 pb-2 mb-2"
+			style="background: transparent; border-color: transparent; border-top-left-radius: 20px; border-top-right-radius: 20px;"
+		>
 			<div class="row mb-1">
 				<div class="col-md-4">
 					<div class="input-group">
@@ -205,12 +313,23 @@
 				</div>
 				<div class="col">
 					<div class="input-group">
-						<input id="item-search" type="text" class="form-control mb-2 retro-items-disable" placeholder="Search for an item..." />
-						<button type="button" id="search-btn" class="btn btn-primary h-100 retro-items-disable">Search</button>
+						<input
+							id="item-search"
+							type="text"
+							class="form-control mb-2 retro-items-disable"
+							placeholder="Search for an item..."
+						>
+						<button
+							type="button"
+							id="search-btn"
+							class="btn btn-primary h-100 retro-items-disable"
+						>
+							Search
+						</button>
 					</div>
 				</div>
 			</div>
-<div class="row alignleft itemgrid mb-4" id="inventory"></div>
+			<div class="row alignleft itemgrid mb-4" id="inventory"></div>
 			<nav id="pagination" style="margin: auto;">
 				<ul class="pagination">
 					<li class="page-item disabled" id="pagination-first">
@@ -234,8 +353,14 @@
 				</ul>
 			</nav>
 		</div>
-		<h6 class="card-header mb-2"><i class="fad fa-hat-wizard me-1"></i> Wearing</h6>
-		<div class="card px-2 pt-2 pb-2 mb-4" style="background: transparent; border-color: transparent; border-top-left-radius: 20px; border-top-right-radius: 20px;">
+		<h6 class="card-header mb-2">
+			<i class="fad fa-hat-wizard me-1"></i>
+			Wearing
+		</h6>
+		<div
+			class="card px-2 pt-2 pb-2 mb-4"
+			style="background: transparent; border-color: transparent; border-top-left-radius: 20px; border-top-right-radius: 20px;"
+		>
 			<div class="row alignleft itemgrid" id="wearing"></div>
 		</div>
 	</div>

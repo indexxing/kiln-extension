@@ -912,6 +912,34 @@ onMessage("getPlaceAiDisclosures", ({ data: placeId }) =>
 	}),
 );
 
+onMessage("getPlaceAiDisclosuresBatch", ({ data: placeIds }) =>
+	handle(async () => {
+		const config = await withApi("kiln_api", "extension");
+		const data = await pullBulkKVCache(
+			"placeAiDisclosuresBatch",
+			placeIds.map(String),
+			async (missing) => {
+				const response = await safeFetch(
+					`${config.resolvedUrls.extension}places/ai-disclosures/batch`,
+					Extension.PlaceAiDisclosuresBatchApi,
+					{
+						method: "POST",
+						body: JSON.stringify({ placeIds: missing.map(Number) }),
+					},
+				);
+				const result: Record<string, { icon: boolean; thumbnails: number }> =
+					{};
+				for (const id of missing)
+					result[id] = response.data[id] ?? { icon: false, thumbnails: 0 };
+				return result;
+			},
+			5 * 60 * 1000,
+			false,
+		);
+		return { data };
+	}),
+);
+
 onMessage("showPlaceAiReportPrompt", ({ data, sender }) =>
 	handle(async () => {
 		const tabId = await resolveInjectableTabId(sender);
@@ -927,19 +955,19 @@ onMessage("showPlaceAiReportPrompt", ({ data, sender }) =>
 					await window.Swal.fire({
 						icon: "info",
 						title: "Verify to report",
-						text: "Link your Kiln account to report an AI usage label.",
+						text: "Link your Kiln account to report AI-generated content.",
 					});
 					return null;
 				}
 
 				// @ts-expect-error
 				const { value, isConfirmed } = await window.Swal.fire({
-					title: "Report AI Usage",
+					title: "Report AI-Generated Content",
 					html: `
 						<div class="text-start">
 							<div class="form-check mb-2">
 								<input class="form-check-input" type="radio" name="kiln-ai-report" id="kiln-ai-report-missing" value="missing" checked>
-								<label class="form-check-label" for="kiln-ai-report-missing">This world should have an AI label</label>
+								<label class="form-check-label" for="kiln-ai-report-missing">The icon or a thumbnail of this world is AI-generated</label>
 							</div>
 							${
 								hasLabels
@@ -950,7 +978,7 @@ onMessage("showPlaceAiReportPrompt", ({ data, sender }) =>
 									: ""
 							}
 							<label class="form-label small text-muted" for="kiln-ai-report-details">Details (optional)</label>
-							<textarea id="kiln-ai-report-details" class="form-control" rows="3" maxlength="500" placeholder="What made you notice? Which image or part is affected?"></textarea>
+							<textarea id="kiln-ai-report-details" class="form-control" rows="3" maxlength="500" placeholder="Which image is affected, and how did you check it?"></textarea>
 						</div>`,
 					showCancelButton: true,
 					confirmButtonText: "Send report",

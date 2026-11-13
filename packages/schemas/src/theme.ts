@@ -1085,6 +1085,31 @@ export function profileThemeReadabilityIssues(
 	return issues;
 }
 
+export const SIMPLE_MODE_MIN_TEXT_RATIO = 4.5;
+export const SIMPLE_MODE_MIN_ACCENT_RATIO = 3;
+
+export function simplifyThemeColors(theme: {
+	accentColor: string;
+	navbarColor: string;
+}): { accentColor: string; navbarColor: string } {
+	const navbarColor = isValidHex(theme.navbarColor)
+		? theme.navbarColor
+		: "#1a1a1a";
+	let accentColor = isValidHex(theme.accentColor)
+		? theme.accentColor
+		: "#2563eb";
+	const card = hexToRgb(lightenHex(navbarColor, 7));
+	const towardLight = getContrastColor(lightenHex(navbarColor, 7)) === "#ffffff";
+	for (let i = 0; i < 20; i++) {
+		const ratio = contrastRatio(hexToRgb(accentColor), card);
+		if (ratio >= SIMPLE_MODE_MIN_ACCENT_RATIO) break;
+		accentColor = towardLight
+			? lightenHex(accentColor, 5)
+			: darkenHex(accentColor, 5);
+	}
+	return { accentColor, navbarColor };
+}
+
 const LOGO_BASE_HUE = rgbToHsl(...hexToRgb("#ff5951"))[0];
 
 export function hexToIconFilter(hex: string): string {

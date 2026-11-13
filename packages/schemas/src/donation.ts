@@ -13,6 +13,8 @@ export const DONATION_PLATFORMS: DonationPlatform[] = [
 	{ name: "Liberapay", host: "liberapay.com" },
 	{ name: "Open Collective", host: "opencollective.com" },
 	{ name: "Cash App", host: "cash.app" },
+	{ name: "Boosty", host: "boosty.to" },
+	{ name: "Sponsr", host: "sponsr.ru" },
 ];
 
 export const DONATION_URL_MAX_LENGTH = 200;

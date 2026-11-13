@@ -29,7 +29,11 @@ import {
 	extrasFromTheme,
 } from "@/utils/profileThemeExtras";
 import { _savedThemes, _userNotes, preferences } from "@/utils/storage";
-import { applyKilnTheme, THEME_PRESETS } from "@/utils/theme";
+import {
+	applyKilnTheme,
+	simplifyThemeColors,
+	THEME_PRESETS,
+} from "@/utils/theme";
 import {
 	applyKilnDisclosureTitle,
 	condenseTabBar,
@@ -1753,6 +1757,7 @@ type PublicProfileTheme = NonNullable<Extension.ProfileThemeApi["data"]>;
 export type ProfileThemePreferences = {
 	viewOthers?: boolean;
 	hideInaccessible?: boolean;
+	simpleMode?: boolean;
 	audio?: boolean;
 	customCss?: boolean;
 	effects?: boolean;
@@ -1858,10 +1863,38 @@ function releaseProfileThemeHold() {
 
 const AUDIO_EFFECT_TYPES = new Set(["clicking-sound", "background-music"]);
 
+function simplifyProfileTheme(theme: PublicProfileTheme): PublicProfileTheme {
+	const colors = simplifyThemeColors(theme);
+	return {
+		...theme,
+		...colors,
+		customCss: undefined,
+		effects: undefined,
+		backgroundImage: undefined,
+		backgroundOverlayColor: undefined,
+		backgroundOverlayOpacity: undefined,
+		cursorUrl: undefined,
+		colorTokens: undefined,
+		ambient: undefined,
+		pointerEffects: undefined,
+		cardStyle: undefined,
+		layout: undefined,
+		banner: undefined,
+		stickers: undefined,
+		notes: undefined,
+		videos: undefined,
+		avatarBackdrop: undefined,
+		usernameStyle: theme.usernameStyle?.animated
+			? { ...theme.usernameStyle, animated: false }
+			: theme.usernameStyle,
+	} as PublicProfileTheme;
+}
+
 function withThemePreferences(
 	theme: PublicProfileTheme,
 	prefs: ProfileThemePreferences,
 ): PublicProfileTheme {
+	if (prefs.simpleMode) return simplifyProfileTheme(theme);
 	return {
 		...theme,
 		customCss: prefs.customCss === false ? undefined : theme.customCss,

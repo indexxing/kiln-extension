@@ -212,6 +212,12 @@ export default defineContentScript({
 					console.log("[Kiln] Running discovery page functions: ", discovery);
 				}
 
+				if (values.enabled.includes("placeAIDisclosures")) {
+					runFeature("placeAIDisclosures", () =>
+						discovery.placeAiMarkers(showDisclosures),
+					);
+				}
+
 				if (values.enabled.includes("legacyWorldDiscoveryLayout")) {
 					runFeature("legacyWorldDiscoveryLayout", () =>
 						discovery.legacyWorldDiscoveryLayout(

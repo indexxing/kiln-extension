@@ -879,7 +879,11 @@ export async function kilnSettings() {
 					};
 
 					const isThemeConfig = setting.id === "customProfileThemes";
-					const themeTopLevelSubs = ["viewOthers", "hideInaccessible"];
+					const themeTopLevelSubs = [
+						"viewOthers",
+						"hideInaccessible",
+						"simpleMode",
+					];
 					const themeEffectSubs = isThemeConfig
 						? setting.config.filter(
 								(s) => !s.hide && !themeTopLevelSubs.includes(s.subsetting),
@@ -1404,10 +1408,8 @@ export async function kilnSettings() {
 }
 
 const AI_DISCLOSURE_LABELS: Record<string, string> = {
-	icon: "AI icon",
-	thumbnail: "AI thumbnail",
-	assisted: "AI assisted",
-	generated: "Entirely AI",
+	icon: "SynthID in icon",
+	thumbnail: "SynthID in thumbnail",
 };
 
 function initAdminWorldsTab(userId: number, panel: HTMLElement) {
@@ -1425,7 +1427,7 @@ function initAdminWorldsTab(userId: number, panel: HTMLElement) {
 		<div class="small fw-semibold mb-2">Open reports</div>
 		<div id="kadmin-world-reports" class="mb-3"></div>
 		<div id="kadmin-world-detail"></div>
-		<div class="small fw-semibold mb-2 mt-3">Worlds with AI disclosures</div>
+		<div class="small fw-semibold mb-2 mt-3">Worlds with SynthID labels</div>
 		<div id="kadmin-world-list"></div>
 	`;
 
@@ -1570,7 +1572,7 @@ function initAdminWorldsTab(userId: number, panel: HTMLElement) {
 			<div class="d-flex flex-column gap-1">
 				<img src="${escapeHtml(img.url)}" alt="" style="width:${size}px;height:auto;border-radius:6px;">
 				<code style="font-size:0.65rem;word-break:break-all;max-width:${size}px;">${escapeHtml(img.hash)}</code>
-				${toggle(kind, "AI generated", img.hash)}
+				${toggle(kind, "SynthID watermark detected", img.hash)}
 			</div>`;
 
 		const stale = disclosures.filter((d) => !d.active);
@@ -1578,11 +1580,6 @@ function initAdminWorldsTab(userId: number, panel: HTMLElement) {
 		detail.innerHTML = `
 			<div class="card mb-2">
 				<div class="card-body">
-					<div class="mb-3">
-						<div class="text-muted small mb-1">Whole world</div>
-						${toggle("assisted", "Made with AI assistance")}
-						${toggle("generated", "Made entirely with AI")}
-					</div>
 					<div class="mb-3">
 						<div class="text-muted small mb-1">Icon</div>
 						${images.icon ? image(images.icon, "icon", 96) : '<span class="small text-muted">No icon found.</span>'}
@@ -1621,11 +1618,7 @@ function initAdminWorldsTab(userId: number, panel: HTMLElement) {
 			"[data-kind]",
 		)) {
 			box.addEventListener("change", async () => {
-				const kind = box.dataset.kind as
-					| "icon"
-					| "thumbnail"
-					| "assisted"
-					| "generated";
+				const kind = box.dataset.kind as "icon" | "thumbnail";
 				const hash = box.dataset.hash ?? "";
 				box.disabled = true;
 				setStatus(actionStatus, "Saving…");
@@ -1636,7 +1629,7 @@ function initAdminWorldsTab(userId: number, panel: HTMLElement) {
 							userId,
 							placeId,
 							kind,
-							...(hash ? { imageHash: hash } : {}),
+							imageHash: hash,
 						})
 					: existing
 						? await sendMessage("adminRemovePlaceAiDisclosure", {

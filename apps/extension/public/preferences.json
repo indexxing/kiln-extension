@@ -1212,7 +1212,7 @@
 				{
 					"type": "check",
 					"subsetting": "newerFeatures",
-					"label": "Add Newer Features (Follow & Favorite Buttons)",
+					"label": "Add Newer Features (Follow & Favorite Buttons, Updates)",
 					"default": true
 				}
 			],
@@ -1833,6 +1833,12 @@
 				},
 				{
 					"type": "check",
+					"subsetting": "simpleMode",
+					"label": "Simple Mode (only basic colors & fonts: no images, effects, custom CSS, or low-contrast colors)",
+					"default": false
+				},
+				{
+					"type": "check",
 					"subsetting": "audio",
 					"label": "Play Background Music & Click Sounds",
 					"default": true
@@ -2128,22 +2134,25 @@
 			]
 		},
 		{
-			"name": "World AI Disclosures",
-			"desc": "See which worlds use AI in the Info section of a world, whether that's an AI generated icon or thumbnail, or the entire world. You can also report a missing or incorrect label.",
+			"name": "AI-Generated World Content Labels",
+			"desc": "See when a world's icon or thumbnail is AI-generated, in the Info section of a world and as a small marker on the bottom left of world icons in discovery. You can also report an incorrect or missing label. Labels cover images only and say nothing about how the world or its scripts were made.",
 			"id": "placeAIDisclosures",
 			"defaultEnabled": true,
 			"requiresSync": true,
 			"notes": [
 				{
 					"type": "info",
-					"text": "Disclosures are labeled by Kiln's maintainers. A disclosure for an icon or thumbnail goes away if the image is changed. You can see labels without a linked Kiln account, but reporting one requires it."
+					"text": "I label world media by hand after confirming an image is AI-generated with detector tools such as Google's SynthID. A label only applies to that exact image and goes away if the icon or thumbnail is changed."
+				},
+				{
+					"type": "info",
+					"text": "You can see labels without a linked Kiln account, but reporting one requires it."
 				}
 			],
 			"tags": [
 				"new",
 				"utility"
-			],
-			"hide": true
+			]
 		},
 		{
 			"name": "Event Progress Tracker",

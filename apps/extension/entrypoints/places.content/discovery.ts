@@ -455,7 +455,8 @@ export function legacyWorldDiscoveryLayout(
 	if (disableAutoScroll) {
 		const loadMoreButton = document.createElement("button");
 		loadMoreButton.type = "button";
-		loadMoreButton.className = "btn btn-outline-secondary d-block mx-auto mb-3 px-5";
+		loadMoreButton.className =
+			"btn btn-outline-secondary d-block mx-auto mb-3 px-5";
 		loadMoreButton.innerHTML = `Load More${kilnDisclosureBadgeHtml(showDisclosures)}`;
 		placesContainer.insertAdjacentElement("afterend", loadMoreButton);
 
@@ -589,4 +590,114 @@ export async function legacyRandomPlace(showDisclosures: boolean) {
 	button.addEventListener("click", () =>
 		rollRandomPlaceWithStatus(button, showDisclosures),
 	);
+}
+
+export function placeAiMarkers(showDisclosures: boolean) {
+	const BATCH_SIZE = 60;
+	const requested = new Set<number>();
+	const pending = new Map<number, HTMLElement[]>();
+	const known = new Map<number, { icon: boolean; thumbnails: number }>();
+	let timer: ReturnType<typeof setTimeout> | null = null;
+
+	const describe = (icon: boolean, thumbnails: number) => {
+		const found: string[] = [];
+		if (icon) found.push("icon");
+		if (thumbnails > 0)
+			found.push(thumbnails === 1 ? "thumbnail" : "thumbnails");
+		return `AI-Generated Content: ${found.join(" and ")}`;
+	};
+
+	const attach = (card: HTMLElement, icon: boolean, thumbnails: number) => {
+		if (card.querySelector(".kiln-ai-marker")) return;
+		const image = card.querySelector<HTMLElement>(".place-card-image, img");
+		const host = image?.parentElement;
+		if (!image || !host) return;
+
+		if (getComputedStyle(host).position === "static") {
+			host.style.position = "relative";
+		}
+
+		const marker = document.createElement("span");
+		marker.className = "kiln-ai-marker badge bg-warning text-dark";
+		marker.innerHTML = `<i class="fas fa-robot"></i>`;
+		Object.assign(marker.style, {
+			position: "absolute",
+			zIndex: "5",
+			padding: "2px 4px",
+			fontSize: "0.65rem",
+			lineHeight: "1",
+			pointerEvents: "auto",
+		});
+		marker.title = describe(icon, thumbnails);
+		applyKilnDisclosureTitle(marker, showDisclosures, marker.title);
+
+		const place = () => {
+			marker.style.left = `${image.offsetLeft}px`;
+			marker.style.top = `${image.offsetTop + image.offsetHeight - marker.offsetHeight}px`;
+		};
+		host.appendChild(marker);
+		place();
+		image.addEventListener("load", place);
+	};
+
+	const flush = async () => {
+		timer = null;
+		const ids = [...pending.keys()];
+		for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+			const chunk = ids.slice(i, i + BATCH_SIZE);
+			const result = await sendMessage("getPlaceAiDisclosuresBatch", chunk);
+			if (!result.ok) {
+				for (const id of chunk) requested.delete(id);
+				continue;
+			}
+			for (const id of chunk) {
+				const entry = result.data.data[String(id)];
+				if (entry) known.set(id, entry);
+				const cards = pending.get(id) ?? [];
+				if (entry && (entry.icon || entry.thumbnails > 0)) {
+					for (const card of cards) attach(card, entry.icon, entry.thumbnails);
+				}
+			}
+		}
+		for (const id of ids) pending.delete(id);
+	};
+
+	const scan = (root: ParentNode) => {
+		let added = false;
+		for (const card of root.querySelectorAll<HTMLElement>(".place-card")) {
+			const href = card.closest("a")?.getAttribute("href") ?? "";
+			const match = /^\/places\/(\d+)/.exec(href);
+			if (!match) continue;
+			const id = Number(match[1]);
+			const label = known.get(id);
+			if (label) {
+				if (label.icon || label.thumbnails > 0)
+					attach(card, label.icon, label.thumbnails);
+				continue;
+			}
+			if (requested.has(id) && !pending.has(id)) continue;
+			requested.add(id);
+			const cards = pending.get(id) ?? [];
+			cards.push(card);
+			pending.set(id, cards);
+			added = true;
+		}
+		if (added && !timer) timer = setTimeout(flush, 150);
+	};
+
+	scan(document);
+
+	new MutationObserver((mutations) => {
+		for (const mutation of mutations) {
+			for (const node of mutation.addedNodes) {
+				if (!(node instanceof Element)) continue;
+				if (node.classList.contains("place-card")) {
+					const wrapper = node.parentElement;
+					if (wrapper) scan(wrapper);
+				} else {
+					scan(node);
+				}
+			}
+		}
+	}).observe(document.body, { childList: true, subtree: true });
 }

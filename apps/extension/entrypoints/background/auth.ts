@@ -489,7 +489,7 @@ onMessage("adminAddPlaceAiDisclosure", ({ data }) =>
 					headers: { Authorization: `Bearer ${token}` },
 					body: JSON.stringify({
 						kind: data.kind,
-						...(data.imageHash ? { imageHash: data.imageHash } : {}),
+						imageHash: data.imageHash,
 					}),
 				},
 			),

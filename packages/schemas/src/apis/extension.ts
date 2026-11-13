@@ -248,13 +248,21 @@ export type UserDonationApi = z.infer<typeof UserDonationApi>;
 
 export const PlaceAiDisclosuresApi = z.object({
 	data: z.object({
-		assisted: z.boolean(),
-		generated: z.boolean(),
 		icon: z.boolean(),
 		thumbnails: z.number(),
 	}),
 });
 export type PlaceAiDisclosuresApi = z.infer<typeof PlaceAiDisclosuresApi>;
+
+export const PlaceAiDisclosuresBatchApi = z.object({
+	data: z.record(
+		z.string(),
+		z.object({ icon: z.boolean(), thumbnails: z.number() }),
+	),
+});
+export type PlaceAiDisclosuresBatchApi = z.infer<
+	typeof PlaceAiDisclosuresBatchApi
+>;
 
 export const LikeStatusApi = z.object({
 	data: z.object({ liked: z.boolean() }),
@@ -332,7 +340,7 @@ export const AdminPlaceAiDisclosuresApi = z.object({
 			z.object({
 				id: z.number(),
 				placeId: z.number(),
-				kind: z.enum(["icon", "thumbnail", "assisted", "generated"]),
+				kind: z.enum(["icon", "thumbnail"]),
 				imageHash: z.string(),
 				active: z.boolean(),
 				createdAt: z.string(),

@@ -1361,9 +1361,9 @@ export async function clothing3DPreview(showDisclosures: boolean) {
 		</p>
 		<div class="mb-2">
 			<select class="form-select form-select-sm" id="p-back-body-select">
-				${previewBodies.map(
-					(b) => `<option value="${b.id ?? ""}">${b.name}</option>`,
-				).join("")}
+				${previewBodies
+					.map((b) => `<option value="${b.id ?? ""}">${b.name}</option>`)
+					.join("")}
 			</select>
 		</div>
 		<div id="kiln-back-clothing-preview-body">
@@ -1599,25 +1599,26 @@ export async function collectibleOwnerLabels(
 	>();
 	const OG_CUTOFF = `${ogYear + 1}-01-01`;
 
+	const labelsHtml = (
+		info: { active: boolean; registeredAt: string | null } | null,
+	) => {
+		if (!info) return "";
+		let html = "";
+		if (!info.active) {
+			html += `<span class="badge bg-secondary ms-1" style="font-size:0.65rem;vertical-align:middle;" data-bs-toggle="tooltip" data-bs-title="Hasn't been seen online in the last ${inactiveDays} days">Inactive</span>${kilnDisclosureBadgeHtml(showDisclosures)}`;
+		}
+		if (info.registeredAt && info.registeredAt.slice(0, 10) < OG_CUTOFF) {
+			html += `<span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;vertical-align:middle;" data-bs-toggle="tooltip" data-bs-title="Joined during ${ogYear} or earlier">OG</span>${kilnDisclosureBadgeHtml(showDisclosures)}`;
+		}
+		return html;
+	};
+
 	const applyLabels = (
 		nameEl: Element,
 		info: { active: boolean; registeredAt: string | null } | null,
 	) => {
-		if (!info) return;
-
-		if (!info.active) {
-			nameEl.insertAdjacentHTML(
-				"beforeend",
-				`<span class="badge bg-secondary ms-1" style="font-size:0.65rem;vertical-align:middle;" data-bs-toggle="tooltip" data-bs-title="Hasn't been seen online in the last ${inactiveDays} days">Inactive</span>${kilnDisclosureBadgeHtml(showDisclosures)}`,
-			);
-		}
-
-		if (info.registeredAt && info.registeredAt.slice(0, 10) < OG_CUTOFF) {
-			nameEl.insertAdjacentHTML(
-				"beforeend",
-				`<span class="badge bg-warning text-dark ms-1" style="font-size:0.65rem;vertical-align:middle;" data-bs-toggle="tooltip" data-bs-title="Joined during ${ogYear} or earlier">OG</span>${kilnDisclosureBadgeHtml(showDisclosures)}`,
-			);
-		}
+		const html = labelsHtml(info);
+		if (html) nameEl.insertAdjacentHTML("beforeend", html);
 	};
 
 	const processCards = async (cards: Element[]) => {
@@ -1678,6 +1679,272 @@ export async function collectibleOwnerLabels(
 		}
 		if (added.length) processCards(added);
 	}).observe(container, { childList: true });
+
+	const ownersRoot = document.getElementById("owners");
+	const nativeNav = ownersRoot?.querySelector<HTMLElement>(
+		'nav[aria-label="Owners"]',
+	);
+	if (!ownersRoot || !nativeNav) return;
+
+	type OwnerEntry = { id: number; name: string; serial: number };
+	const PAGE_SIZE = 5;
+	let allOwners: OwnerEntry[] | null = null;
+	let activeOwners: OwnerEntry[] = [];
+	let ready = false;
+	let customPage = 0;
+	let renderToken = 0;
+	const thumbs = new Map<number, string>();
+
+	const toggle = document.createElement("li");
+	toggle.className = "me-2";
+	toggle.style.cssText = "margin-top: auto; margin-bottom: auto;";
+	toggle.innerHTML = `
+		<div class="form-check mb-0">
+			<input class="form-check-input" type="checkbox" id="p-owners-hide-inactive">
+			<label class="form-check-label" for="p-owners-hide-inactive" style="font-size: 0.85rem;">Hide inactive${kilnDisclosureBadgeHtml(showDisclosures)}</label>
+		</div>
+	`;
+	const nativeList = nativeNav.querySelector<HTMLElement>("ul.pagination")!;
+	nativeList.prepend(toggle);
+	const checkbox = toggle.querySelector<HTMLInputElement>(
+		"#p-owners-hide-inactive",
+	)!;
+
+	const customContainer = document.createElement("div");
+	customContainer.classList.add("d-none");
+	const customNav = document.createElement("nav");
+	customNav.classList.add("d-none");
+	customNav.setAttribute("aria-label", "Active owners");
+	customNav.innerHTML = `
+		<ul class="pagination justify-content-center">
+			<li class="page-item disabled" id="p-owners-prev-pg">
+				<a class="page-link" href="#!" tabindex="-1"><i class="fad fa-chevron-left"></i></a>
+			</li>
+			<li class="page-item active">
+				<a class="page-link" href="#!" id="p-owners-current-pg">1</a>
+			</li>
+			<li class="page-item disabled" id="p-owners-next-pg">
+				<a class="page-link" href="#!"><i class="fad fa-chevron-right"></i></a>
+			</li>
+		</ul>
+	`;
+	nativeNav.after(customContainer, customNav);
+	const customList = customNav.querySelector<HTMLElement>("ul.pagination")!;
+
+	const prevItem = customNav.querySelector<HTMLElement>("#p-owners-prev-pg")!;
+	const nextItem = customNav.querySelector<HTMLElement>("#p-owners-next-pg")!;
+	const currentLabel = customNav.querySelector<HTMLElement>(
+		"#p-owners-current-pg",
+	)!;
+
+	const setStatusHtml = (text: string) => {
+		customContainer.innerHTML = `
+			<div class="text-center text-muted py-4">
+				<div class="spinner-border mb-2" role="status">
+					<span class="visually-hidden">Loading...</span>
+				</div>
+				<small class="d-block" style="font-size: 0.8rem;" id="p-owners-status">${text}</small>
+			</div>
+		`;
+	};
+	const setStatus = (text: string) => {
+		const el = document.getElementById("p-owners-status");
+		if (el) el.textContent = text;
+	};
+
+	const loadActivity = async (
+		ids: number[],
+		onProgress: (done: number, total: number) => void,
+	) => {
+		const missing = [...new Set(ids)].filter((id) => !infoCache.has(id));
+		const chunks: number[][] = [];
+		for (let i = 0; i < missing.length; i += 5) {
+			chunks.push(missing.slice(i, i + 5));
+		}
+
+		onProgress(0, missing.length);
+		for (let i = 0; i < chunks.length; i += 4) {
+			await Promise.all(
+				chunks.slice(i, i + 4).map(async (chunk) => {
+					const result = await sendMessage("checkUserActivity", {
+						userIds: chunk,
+						days: inactiveDays,
+					});
+					if (!result.ok) return;
+					for (const id of chunk) {
+						infoCache.set(id, result.data[String(id)] ?? null);
+					}
+				}),
+			);
+			onProgress(Math.min((i + 4) * 5, missing.length), missing.length);
+		}
+	};
+
+	const loadThumbs = async (ids: number[]) => {
+		const missing = ids.filter((id) => !thumbs.has(id));
+		if (missing.length === 0) return;
+
+		const hashResult = await sendMessage("getAvatarHashes", missing);
+		if (hashResult.ok) {
+			for (const id of missing) {
+				const hash = hashResult.data[String(id)];
+				if (hash) {
+					thumbs.set(
+						id,
+						`https://cdn.polytoria.com/thumbnails/avatars/${hash}-icon.png`,
+					);
+				}
+			}
+		}
+
+		await Promise.all(
+			missing
+				.filter((id) => !thumbs.has(id))
+				.map(async (id) => {
+					const userResult = await sendMessage("getUser", id);
+					thumbs.set(id, userResult.ok ? userResult.data.thumbnail.icon : "");
+				}),
+		);
+	};
+
+	const prefetchThumbs = (fromPage: number) => {
+		const ids = activeOwners
+			.slice(fromPage * PAGE_SIZE, (fromPage + 3) * PAGE_SIZE)
+			.map((o) => o.id);
+		if (ids.length) loadThumbs(ids);
+	};
+
+	const renderCustomPage = async () => {
+		const token = ++renderToken;
+		const pageCount = Math.max(1, Math.ceil(activeOwners.length / PAGE_SIZE));
+		const pageOwners = activeOwners.slice(
+			customPage * PAGE_SIZE,
+			(customPage + 1) * PAGE_SIZE,
+		);
+
+		await loadThumbs(pageOwners.map((o) => o.id));
+		if (token !== renderToken) return;
+
+		customContainer.innerHTML =
+			pageOwners.length > 0
+				? pageOwners
+						.map(
+							(o) => `
+			<div class="card mb-3">
+				<div class="card-body">
+					<div class="row">
+						<div class="col-auto">
+							<img src="${thumbs.get(o.id) ?? ""}" alt="${escapeHtml(o.name)}" width="72" class="rounded-circle border border-2 bg-inset">
+						</div>
+						<div class="col d-flex align-items-center">
+							<div>
+								<h6 class="mb-1">
+									<a class="text-reset" href="/users/${o.id}">${escapeHtml(o.name)}</a>${labelsHtml(infoCache.get(o.id) ?? null)}
+								</h6>
+								<small class="text-muted">Serial #${o.serial}</small>
+							</div>
+						</div>
+						<div class="col-auto d-flex align-items-center">
+							<a class="btn btn-primary" type="button" href="/users/${o.id}">
+								<i class="fas fa-user me-1"></i>
+								<span class="d-none d-sm-inline">View Profile</span>
+							</a>
+						</div>
+					</div>
+				</div>
+			</div>
+		`,
+						)
+						.join("")
+				: `
+			<div class="card mb-3">
+				<div class="card-body text-center py-5 text-muted">
+					<h5>No active owners</h5>
+					<p class="mb-0">Every owner of this item has been inactive recently.</p>
+				</div>
+			</div>
+		`;
+
+		prefetchThumbs(customPage + 1);
+		currentLabel.textContent = (customPage + 1).toString();
+		prevItem.classList.toggle("disabled", customPage <= 0);
+		nextItem.classList.toggle("disabled", customPage >= pageCount - 1);
+		sendMessage("registerBootstrapElements");
+	};
+
+	const showNative = (native: boolean) => {
+		container.classList.toggle("d-none", !native);
+		nativeNav.classList.toggle("d-none", !native);
+		customContainer.classList.toggle("d-none", native);
+		customNav.classList.toggle("d-none", native);
+		(native ? nativeList : customList).prepend(toggle);
+	};
+
+	prevItem.addEventListener("click", (e) => {
+		e.preventDefault();
+		if (customPage > 0) {
+			customPage--;
+			renderCustomPage();
+		}
+	});
+	nextItem.addEventListener("click", (e) => {
+		e.preventDefault();
+		if ((customPage + 1) * PAGE_SIZE < activeOwners.length) {
+			customPage++;
+			renderCustomPage();
+		}
+	});
+
+	checkbox.addEventListener("change", async () => {
+		if (!checkbox.checked) {
+			renderToken++;
+			showNative(true);
+			return;
+		}
+
+		showNative(false);
+
+		if (!ready) {
+			checkbox.disabled = true;
+			setStatusHtml("Fetching owners...");
+
+			if (!allOwners) {
+				const result = await sendMessage("getItemOwners", {
+					itemId: parseInt(itemID, 10),
+				});
+				if (!result.ok) {
+					checkbox.disabled = false;
+					customContainer.innerHTML = `<div class="text-center p-2"><p class="text-muted mb-0">Sorry! This feature is currently unavailable. Please check back later!</p></div>`;
+					return;
+				}
+				allOwners = result.data.inventories
+					.map((inv) => ({
+						id: inv.user.id,
+						name: inv.user.username,
+						serial: inv.serial,
+					}))
+					.sort((a, b) => a.serial - b.serial);
+			}
+
+			await loadActivity(
+				allOwners.map((o) => o.id),
+				(done, total) => {
+					if (total > 0)
+						setStatus(`Checking activity (${done}/${total} users)...`);
+				},
+			);
+
+			activeOwners = allOwners.filter(
+				(o) => infoCache.get(o.id)?.active !== false,
+			);
+			ready = true;
+			checkbox.disabled = false;
+		}
+
+		if (!checkbox.checked) return;
+		customPage = 0;
+		await renderCustomPage();
+	});
 }
 
 export function creatorCommentLabels(

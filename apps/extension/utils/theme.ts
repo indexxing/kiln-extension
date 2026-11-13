@@ -46,6 +46,7 @@ export const {
 	isValidHex,
 	hexToIconFilter,
 	buildThemeCSS,
+	simplifyThemeColors,
 } = Theme;
 
 export function proxyThemeImageUrl(url: string): string {
