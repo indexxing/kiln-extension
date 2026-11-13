@@ -15,7 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { applyKilnDisclosureTitle } from "@/utils/utilities";
-import { CLOTHING_PREVIEW_BODIES } from "./view";
+import { getClothingPreviewBodies } from "./view";
 
 export async function clothingCreateBodyPreview(showDisclosures: boolean) {
 	const nativeCanvas = document.querySelector<HTMLCanvasElement>(
@@ -25,12 +25,13 @@ export async function clothingCreateBodyPreview(showDisclosures: boolean) {
 	const dropzone = document.getElementById("store-dropzone");
 	if (!previewCard || !dropzone) return;
 
+	const previewBodies = await getClothingPreviewBodies();
 	const wrapper = document.createElement("div");
 	wrapper.className = "card text-start";
 	wrapper.innerHTML = `
 	<div class="card-body p-0" style="position: relative;">
 		<select class="form-select form-select-sm" id="kiln-create-body-select" style="position: absolute; top: 8px; right: 8px; width: auto; z-index: 1;">
-			${CLOTHING_PREVIEW_BODIES.map((b) => `<option value="${b.id ?? ""}">${b.name}</option>`).join("")}
+			${previewBodies.map((b) => `<option value="${b.id ?? ""}">${b.name}</option>`).join("")}
 		</select>
 		<canvas id="kiln-create-body-canvas" style="width: 100%; aspect-ratio: 1 / 1; display: block;"></canvas>
 	</div>

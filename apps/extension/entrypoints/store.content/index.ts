@@ -85,6 +85,11 @@ export default defineContentScript({
 							discovery.eventItems(showDisclosures),
 						);
 					}
+					if (values.enabled.includes("hideCollectibles")) {
+						runFeature("hideCollectibles", () =>
+							discovery.hideCollectibles(showDisclosures),
+						);
+					}
 					if (
 						!legacyDiscoveryLayout &&
 						values.enabled.includes("disableInfiniteScrolling") &&

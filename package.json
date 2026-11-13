@@ -6,10 +6,10 @@
 		"apps/extension"
 	],
 	"scripts": {
-		"dev": "bun run --cwd apps/extension dev",
+		"dev": "bun run scripts/dev.ts",
+		"dev:ext": "bun run --cwd apps/extension dev",
 		"dev:firefox": "bun run --cwd apps/extension dev:firefox",
 		"dev:api": "bun run --filter @kiln/api dev",
-		"dev:all": "bun run dev & bun run dev:api",
 		"build": "bun run --filter @kiln/extension build",
 		"build:firefox": "bun run --filter @kiln/extension build:firefox",
 		"zip": "bun run --filter @kiln/extension zip",

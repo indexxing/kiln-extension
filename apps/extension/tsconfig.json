@@ -1,4 +1,4 @@
 {
 	"extends": "./.wxt/tsconfig.json",
-	"exclude": ["scripts"]
+	"exclude": ["scripts", "tests", "e2e", "playwright.config.ts"]
 }

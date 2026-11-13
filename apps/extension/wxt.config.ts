@@ -32,6 +32,7 @@ export default defineConfig({
 			"https://polytoria.com/*",
 			"https://api.polytoria.com/*",
 			"https://kiln-api.indexx.dev/*",
+			"http://localhost:3000/*",
 			"https://kiln.indexx.dev/*",
 			"https://polytoria.trade/api/*",
 			"https://polytrack.top/*",

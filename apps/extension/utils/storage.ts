@@ -53,9 +53,15 @@ const chromeOnlyIds = new Set(
 		.map((p) => p.id),
 );
 
+const addonOnlyIds = new Set(
+	(prefItems as Array<{ id: string; requiresAddon?: boolean }>)
+		.filter((p) => p.requiresAddon)
+		.map((p) => p.id),
+);
+
 const deprecatedHiddenIds = new Set(
-	(prefItems as Array<{ id: string; hide?: boolean; defaultEnabled?: boolean }>)
-		.filter((p) => p.hide && !p.defaultEnabled)
+	(prefItems as Array<{ id: string; hide?: boolean }>)
+		.filter((p) => p.hide)
 		.map((p) => p.id),
 );
 
@@ -116,6 +122,7 @@ export const defaultPreferences = {
 		},
 		themeCreator: {
 			activeThemeId: "default" as string,
+			sitewideMusicWidget: true as boolean,
 		},
 		favoredDevelopmentGuild: {
 			guildId: null as number | null,
@@ -241,6 +248,11 @@ export const preferences: PreferencesStorageItem = storage.defineItem(
 		migrations: preferenceMigrations,
 	},
 ) as PreferencesStorageItem;
+
+export const _reviewUpvoteThreshold = storage.defineItem<number>(
+	"sync:reviewUpvoteThreshold",
+	{ fallback: 4 },
+);
 
 export const _favoritedPlaces = storage.defineItem<number[]>(
 	"sync:favoritedPlaces",
@@ -470,9 +482,11 @@ preferences.getPreferences = async function () {
 	const flags = configResult?.ok ? configResult.data.flags : {};
 	const mobile = isMobileDevice();
 	const chrome = isChrome();
+	const addonReleased = flags["general.addon.released"] === true;
 	const activeEnabled = mergedEnabled.filter(
 		(id) =>
 			flags[`features.${id}.enabled`] !== false &&
+			!(!addonReleased && addonOnlyIds.has(id)) &&
 			!(mobile && desktopOnlyIds.has(id)) &&
 			!(!chrome && chromeOnlyIds.has(id)) &&
 			!deprecatedHiddenIds.has(id),
@@ -495,6 +509,7 @@ preferences.setValue = async function (value) {
 	const flags = configResult?.ok ? configResult.data.flags : {};
 	const mobile = isMobileDevice();
 	const chrome = isChrome();
+	const addonReleased = flags["general.addon.released"] === true;
 	const disabled = value.disabled ?? [];
 
 	const enabled = new Set(value.enabled ?? []);
@@ -502,6 +517,7 @@ preferences.setValue = async function (value) {
 		if (enabled.has(id) || disabled.includes(id)) continue;
 		const filteredOut =
 			flags[`features.${id}.enabled`] === false ||
+			(!addonReleased && addonOnlyIds.has(id)) ||
 			(mobile && desktopOnlyIds.has(id)) ||
 			(!chrome && chromeOnlyIds.has(id)) ||
 			deprecatedHiddenIds.has(id);
@@ -583,6 +599,28 @@ export const _hasShownPublishRulesModal = storage.defineItem<boolean>(
 export const _reportedTimezones = storage.defineItem<
 	Record<number, { timezone: string; reportedAt: number }>
 >("local:reportedTimezones", {
+	fallback: {},
+	version: 1,
+});
+
+export const _syncedMessagingOptIns = storage.defineItem<
+	Record<string, boolean>
+>("local:syncedMessagingOptIns", {
+	fallback: {},
+	version: 1,
+});
+
+export type MessagingUiState = {
+	open: boolean;
+	partnerId: number | null;
+	partnerName: string | null;
+	draft: string;
+	draftImage?: { assetId: number; url: string } | null;
+};
+
+export const _messagingUiState = storage.defineItem<
+	Record<number, MessagingUiState>
+>("local:messagingUiState", {
 	fallback: {},
 	version: 1,
 });

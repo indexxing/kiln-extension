@@ -17,13 +17,15 @@
 import type { Extension } from "@kiln/schemas";
 import { POLYTORIA_CDN_URL, resolveDecalUrl } from "@/utils/decal";
 import { escapeHtml, safeHttpUrl } from "@/utils/escapeHtml";
+import { fontPickerHtml, initFontPicker } from "@/utils/fontPicker";
 import { sendMessage } from "@/utils/messaging";
 import {
 	applyProfileExtras,
 	clearProfileExtras,
+	DEFAULT_MAX_STICKERS,
 	extrasFromTheme,
-	MAX_NOTES,
-	MAX_STICKERS,
+	DEFAULT_MAX_NOTES,
+	MAX_VIDEOS,
 	PROFILE_SECTIONS,
 	type ProfileAmbientType,
 	type ProfileCardStyle,
@@ -31,6 +33,7 @@ import {
 	type ProfilePointerEffects,
 	type ProfileSticker,
 	type ProfileThemeExtras,
+	parseYouTubeId,
 	stickerAnchorLabel,
 	stickerPlacementAt,
 } from "@/utils/profileThemeExtras";
@@ -45,6 +48,7 @@ import {
 	isValidHex,
 	lightenHex,
 	parseAssetVolume,
+	profileThemeReadabilityIssues,
 } from "@/utils/theme";
 import {
 	confirmPublishRulesSeen,
@@ -56,11 +60,23 @@ import {
 	renderSelectorReference,
 } from "@/utils/themeEditorShared";
 import type { EffectType, ThemeEffect } from "@/utils/types";
-import { getApiSession } from "@/utils/utilities";
+import {
+	createModal,
+	getApiSession,
+	getConfig,
+	getFlag,
+} from "@/utils/utilities";
 import { createVisualCssEditor } from "@/utils/visualCssEditor";
 import {
 	AMBIENT_TYPES,
+	ambientDefaultColor,
 	CARD_PRESET_OPACITY,
+	HALLOWEEN_AMBIENT_TYPES,
+	HALLOWEEN_POINTER_CLICKS,
+	HALLOWEEN_POINTER_TRAILS,
+	THANKSGIVING_AMBIENT_TYPES,
+	THANKSGIVING_POINTER_CLICKS,
+	THANKSGIVING_POINTER_TRAILS,
 	NO_POINTER_EFFECTS_ATTR,
 } from "@/utils/visualEffects";
 
@@ -89,7 +105,9 @@ type ServerTheme = ProfileThemeValues & {
 
 type ServerThemeSource = NonNullable<Extension.ProfileThemeApi["data"]>;
 
-function mapServerTheme(t: ServerThemeSource): ServerTheme {
+function mapThemeValues(
+	t: Extension.ProfileThemeSlot["theme"],
+): ProfileThemeValues {
 	return {
 		accentColor: t.accentColor,
 		navbarColor: t.navbarColor,
@@ -103,6 +121,12 @@ function mapServerTheme(t: ServerThemeSource): ServerTheme {
 		cursorUrl: t.cursorUrl ?? undefined,
 		colorTokens: t.colorTokens ?? undefined,
 		...extrasFromTheme(t),
+	};
+}
+
+function mapServerTheme(t: ServerThemeSource): ServerTheme {
+	return {
+		...mapThemeValues(t),
 		enabled: t.enabled,
 		approvalStatus: t.approvalStatus,
 	};
@@ -119,10 +143,56 @@ const CARD_STYLE_HOVER = ["none", "lift", "glow", "tilt"];
 const POINTER_CLICK_OPTIONS = ["sparkles", "hearts", "ripples", "confetti"];
 const POINTER_TRAIL_OPTIONS = ["sparkles", "dots", "hearts", "glow"];
 const AMBIENT_TYPE_KEYS = AMBIENT_TYPES.map((t) => t.key) as string[];
+const HALLOWEEN_FLAG = "features.customProfileThemes.halloweenEffects";
 
-function sanitizeImportedExtras(data: Record<string, any>): ProfileThemeExtras {
+function usesHalloweenEffects(extras: ProfileThemeExtras): boolean {
+	return (
+		HALLOWEEN_AMBIENT_TYPES.some((t) => t.key === extras.ambient?.type) ||
+		HALLOWEEN_POINTER_CLICKS.some(
+			(t) => t.key === extras.pointerEffects?.click,
+		) ||
+		HALLOWEEN_POINTER_TRAILS.some((t) => t.key === extras.pointerEffects?.trail)
+	);
+}
+
+const THANKSGIVING_FLAG = "features.customProfileThemes.thanksgivingEffects";
+
+function usesThanksgivingEffects(extras: ProfileThemeExtras): boolean {
+	return (
+		THANKSGIVING_AMBIENT_TYPES.some((t) => t.key === extras.ambient?.type) ||
+		THANKSGIVING_POINTER_CLICKS.some(
+			(t) => t.key === extras.pointerEffects?.click,
+		) ||
+		THANKSGIVING_POINTER_TRAILS.some(
+			(t) => t.key === extras.pointerEffects?.trail,
+		)
+	);
+}
+
+function sanitizeImportedExtras(
+	data: Record<string, any>,
+	allowHalloween: boolean,
+	allowThanksgiving: boolean,
+	maxStickers: number,
+	maxNotes: number,
+): ProfileThemeExtras {
 	const isObject = (v: unknown): v is Record<string, any> =>
 		!!v && typeof v === "object" && !Array.isArray(v);
+	const ambientKeys = [
+		...AMBIENT_TYPE_KEYS,
+		...(allowHalloween ? HALLOWEEN_AMBIENT_TYPES.map((t) => t.key) : []),
+		...(allowThanksgiving ? THANKSGIVING_AMBIENT_TYPES.map((t) => t.key) : []),
+	];
+	const clickOptions: string[] = [
+		...POINTER_CLICK_OPTIONS,
+		...(allowHalloween ? HALLOWEEN_POINTER_CLICKS.map((t) => t.key) : []),
+		...(allowThanksgiving ? THANKSGIVING_POINTER_CLICKS.map((t) => t.key) : []),
+	];
+	const trailOptions: string[] = [
+		...POINTER_TRAIL_OPTIONS,
+		...(allowHalloween ? HALLOWEEN_POINTER_TRAILS.map((t) => t.key) : []),
+		...(allowThanksgiving ? THANKSGIVING_POINTER_TRAILS.map((t) => t.key) : []),
+	];
 
 	const usernameStyle =
 		isObject(data.usernameStyle) &&
@@ -169,7 +239,7 @@ function sanitizeImportedExtras(data: Record<string, any>): ProfileThemeExtras {
 			: undefined;
 
 	const ambient =
-		isObject(data.ambient) && AMBIENT_TYPE_KEYS.includes(data.ambient.type)
+		isObject(data.ambient) && ambientKeys.includes(data.ambient.type)
 			? {
 					type: data.ambient.type as ProfileAmbientType,
 					density: clamp(
@@ -249,10 +319,10 @@ function sanitizeImportedExtras(data: Record<string, any>): ProfileThemeExtras {
 		data.pointerEffects,
 	)
 		? {
-				click: POINTER_CLICK_OPTIONS.includes(data.pointerEffects.click)
+				click: clickOptions.includes(data.pointerEffects.click)
 					? data.pointerEffects.click
 					: undefined,
-				trail: POINTER_TRAIL_OPTIONS.includes(data.pointerEffects.trail)
+				trail: trailOptions.includes(data.pointerEffects.trail)
 					? data.pointerEffects.trail
 					: undefined,
 				color: isValidHex(data.pointerEffects.color)
@@ -281,7 +351,7 @@ function sanitizeImportedExtras(data: Record<string, any>): ProfileThemeExtras {
 		stickers: Array.isArray(data.stickers)
 			? (data.stickers as Record<string, any>[])
 					.filter((s) => isObject(s) && POLYTORIA_CDN_URL.test(s.url))
-					.slice(0, MAX_STICKERS)
+					.slice(0, maxStickers)
 					.map(
 						(s): ProfileSticker => ({
 							id: typeof s.id === "string" && s.id ? s.id : crypto.randomUUID(),
@@ -303,7 +373,7 @@ function sanitizeImportedExtras(data: Record<string, any>): ProfileThemeExtras {
 					.filter(
 						(n) => isObject(n) && typeof n.text === "string" && n.text.trim(),
 					)
-					.slice(0, MAX_NOTES)
+					.slice(0, maxNotes)
 					.map((n) => ({
 						id: typeof n.id === "string" && n.id ? n.id : crypto.randomUUID(),
 						text: n.text.slice(0, 300),
@@ -316,6 +386,20 @@ function sanitizeImportedExtras(data: Record<string, any>): ProfileThemeExtras {
 						color: isValidHex(n.color) ? n.color : "#1a1a1a",
 						background: isValidHex(n.background) ? n.background : "#fff9c4",
 						layer: n.layer === "back" ? "back" : "front",
+					}))
+			: undefined,
+		videos: Array.isArray(data.videos)
+			? (data.videos as Record<string, any>[])
+					.filter(
+						(v) =>
+							isObject(v) &&
+							typeof v.videoId === "string" &&
+							parseYouTubeId(v.videoId),
+					)
+					.slice(0, MAX_VIDEOS)
+					.map((v) => ({
+						id: typeof v.id === "string" && v.id ? v.id : crypto.randomUUID(),
+						videoId: parseYouTubeId(v.videoId) as string,
 					}))
 			: undefined,
 		cardStyle,
@@ -414,8 +498,20 @@ async function doOpenProfileThemeEditor({
 
 	let serverTheme: ServerTheme | null = null;
 	let themeLoadFailed = false;
+	let slots: Extension.ProfileThemeSlot[] = [];
+	let slotsLoadFailed = false;
+	let slotsBusy = false;
+	let editingSlot: number | null = null;
+	let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+	let autosaveRunning: Promise<void> = Promise.resolve();
+	let autosaveBaseline = "";
 	if (verified) {
-		const result = await sendMessage("getMyProfileTheme", userId);
+		const [result, slotsResult] = await Promise.all([
+			sendMessage("getMyProfileTheme", userId),
+			sendMessage("getProfileThemeSlots", userId),
+		]);
+		if (slotsResult.ok) slots = slotsResult.data.data;
+		else slotsLoadFailed = true;
 		if (result.ok) {
 			if (result.data.data) serverTheme = mapServerTheme(result.data.data);
 		} else {
@@ -444,6 +540,26 @@ async function doOpenProfileThemeEditor({
 	let workingExtras: ProfileThemeExtras = serverTheme
 		? structuredClone(extrasFromTheme(serverTheme))
 		: {};
+
+	const config = await getConfig().catch(() => null);
+	const slotCount = config?.limits.maxProfileThemeSlots ?? 3;
+	const maxStickers =
+		config?.limits.maxProfileThemeStickers ?? DEFAULT_MAX_STICKERS;
+	const maxNotes = config?.limits.maxProfileThemeNotes ?? DEFAULT_MAX_NOTES;
+	const halloweenEnabled =
+		getFlag(config?.flags, HALLOWEEN_FLAG) ||
+		usesHalloweenEffects(workingExtras);
+	const thanksgivingEnabled =
+		getFlag(config?.flags, THANKSGIVING_FLAG) ||
+		usesThanksgivingEffects(workingExtras);
+	const thanksgivingOptions = (options: { key: string; label: string }[]) =>
+		thanksgivingEnabled
+			? `<optgroup label="Thanksgiving">${options.map((t) => `<option value="${t.key}">${t.label}</option>`).join("")}</optgroup>`
+			: "";
+	const halloweenOptions = (options: { key: string; label: string }[]) =>
+		halloweenEnabled
+			? `<optgroup label="Halloween">${options.map((t) => `<option value="${t.key}">${t.label}</option>`).join("")}</optgroup>`
+			: "";
 
 	function currentValues(): ProfileThemeValues {
 		return {
@@ -532,6 +648,16 @@ async function doOpenProfileThemeEditor({
 		#kiln-pte-status:empty {
 			display: none;
 		}
+		.kiln-pte-slot + .kiln-pte-slot {
+			border-top: 1px solid rgba(128,128,128,0.15);
+		}
+		.kiln-pte-slot-swatch {
+			width: 28px;
+			height: 28px;
+			border-radius: 6px;
+			flex-shrink: 0;
+			border: 1px solid rgba(128,128,128,0.3);
+		}
 		#kiln-pte-resize {
 			position: absolute;
 			left: 0;
@@ -588,6 +714,10 @@ async function doOpenProfileThemeEditor({
 				Connect your Kiln account to publish a profile theme.
 				<a href="https://polytoria.com/my/settings/kiln?tab=sync" target="_blank" class="d-block mt-1">Connect account</a>
 			</div>
+
+			<button class="btn btn-outline-secondary btn-sm w-100 mb-2" id="kiln-pte-slots-open" style="display:none;">
+				<i class="fas fa-layer-group me-1"></i>Theme Slots
+			</button>
 
 			<div class="card mb-2">
 				<div class="card-header fw-semibold d-flex justify-content-between align-items-center kiln-pte-section-hdr" style="cursor:pointer;" data-body="kiln-pte-colors-body">
@@ -700,11 +830,7 @@ async function doOpenProfileThemeEditor({
 				</div>
 				<div class="card-body" id="kiln-pte-font-body" style="display:none;">
 					<label class="form-label small text-muted mb-1">Font</label>
-					<select id="kiln-pte-font" class="form-select form-select-sm">
-						${Object.entries(FONTS)
-							.map(([key, f]) => `<option value="${key}">${f.name}</option>`)
-							.join("")}
-					</select>
+					${fontPickerHtml("kiln-pte-font")}
 				</div>
 			</div>
 
@@ -747,11 +873,7 @@ async function doOpenProfileThemeEditor({
 							<span id="kiln-pte-un-glow-label" class="small text-muted" style="min-width:2.5em;text-align:right;">Off</span>
 						</div>
 						<label class="form-label small text-muted mb-1">Font</label>
-						<select id="kiln-pte-un-font" class="form-select form-select-sm">
-							${Object.entries(FONTS)
-								.map(([key, f]) => `<option value="${key}">${f.name}</option>`)
-								.join("")}
-						</select>
+						${fontPickerHtml("kiln-pte-un-font")}
 					</div>
 				</div>
 			</div>
@@ -790,7 +912,7 @@ async function doOpenProfileThemeEditor({
 					<span>Stickers</span><i class="fas fa-chevron-down"></i>
 				</div>
 				<div class="card-body" id="kiln-pte-stickers-body" style="display:none;">
-					<p class="small text-muted mb-2">Add Polytoria decals as stickers, then drag them around on your profile to place them. Up to ${MAX_STICKERS}.</p>
+					<p class="small text-muted mb-2">Add Polytoria decals as stickers, then drag them around on your profile to place them. Up to ${maxStickers}.</p>
 					<div class="d-flex gap-1 align-items-center">
 						<input type="text" id="kiln-pte-sticker-id" class="form-control form-control-sm flex-fill"
 						       placeholder="Decal ID or store link…" style="min-width:0;" />
@@ -806,7 +928,7 @@ async function doOpenProfileThemeEditor({
 					<span>Notes</span><i class="fas fa-chevron-down"></i>
 				</div>
 				<div class="card-body" id="kiln-pte-notes-body" style="display:none;">
-					<p class="small text-muted mb-2">Sticky notes of your own text, dragged anywhere on your profile. Up to ${MAX_NOTES}.</p>
+					<p class="small text-muted mb-2">Sticky notes of your own text, dragged anywhere on your profile. Up to ${maxNotes}.</p>
 					<div class="d-flex gap-1 align-items-center">
 						<input type="text" id="kiln-pte-note-text" class="form-control form-control-sm flex-fill"
 						       placeholder="Write something…" maxlength="300" style="min-width:0;" />
@@ -814,6 +936,22 @@ async function doOpenProfileThemeEditor({
 					</div>
 					<div id="kiln-pte-note-status" class="small text-muted mt-1 mb-2" style="min-height:1.1em;"></div>
 					<div id="kiln-pte-note-list"></div>
+				</div>
+			</div>
+
+			<div class="card mb-2">
+				<div class="card-header fw-semibold d-flex justify-content-between align-items-center kiln-pte-section-hdr" style="cursor:pointer;border-radius:inherit;border:none;" data-body="kiln-pte-videos-body">
+					<span>YouTube Videos</span><i class="fas fa-chevron-down"></i>
+				</div>
+				<div class="card-body" id="kiln-pte-videos-body" style="display:none;">
+					<p class="small text-muted mb-2">Embed up to ${MAX_VIDEOS} YouTube videos on your profile. New videos are checked by a moderator before others see them.</p>
+					<div class="d-flex gap-1 align-items-center">
+						<input type="text" id="kiln-pte-video-url" class="form-control form-control-sm flex-fill"
+						       placeholder="YouTube link…" style="min-width:0;" />
+						<button class="btn btn-outline-secondary btn-sm flex-shrink-0" id="kiln-pte-video-add"><i class="fas fa-plus me-1"></i>Add</button>
+					</div>
+					<div id="kiln-pte-video-status" class="small text-muted mt-1 mb-2" style="min-height:1.1em;"></div>
+					<div id="kiln-pte-video-list"></div>
 				</div>
 			</div>
 
@@ -828,6 +966,8 @@ async function doOpenProfileThemeEditor({
 							<select id="kiln-pte-ambient-type" class="form-select form-select-sm">
 								<option value="">None</option>
 								${AMBIENT_TYPES.map((t) => `<option value="${t.key}">${t.label}</option>`).join("")}
+								${halloweenOptions(HALLOWEEN_AMBIENT_TYPES)}
+								${thanksgivingOptions(THANKSGIVING_AMBIENT_TYPES)}
 							</select>
 						</div>
 						<div class="col-6">
@@ -965,6 +1105,8 @@ async function doOpenProfileThemeEditor({
 								<option value="hearts">Hearts</option>
 								<option value="ripples">Ripples</option>
 								<option value="confetti">Confetti</option>
+								${halloweenOptions(HALLOWEEN_POINTER_CLICKS)}
+								${thanksgivingOptions(THANKSGIVING_POINTER_CLICKS)}
 							</select>
 						</div>
 						<div class="col-6">
@@ -975,6 +1117,8 @@ async function doOpenProfileThemeEditor({
 								<option value="dots">Dots</option>
 								<option value="hearts">Hearts</option>
 								<option value="glow">Glow</option>
+								${halloweenOptions(HALLOWEEN_POINTER_TRAILS)}
+								${thanksgivingOptions(THANKSGIVING_POINTER_TRAILS)}
 							</select>
 						</div>
 					</div>
@@ -1106,6 +1250,19 @@ async function doOpenProfileThemeEditor({
 				</div>
 			</div>
 		</div>
+
+		<div id="kiln-pte-readability-overlay" style="display:none;position:absolute;inset:0;z-index:11;background:rgba(0,0,0,0.55);flex-direction:column;padding:16px;overflow-y:auto;">
+			<div style="background:var(--bs-body-bg,#212529);border:1px solid rgba(128,128,128,0.3);border-radius:8px;padding:16px;width:100%;margin:auto;">
+				<p class="fw-bold mb-2" style="font-size:0.95rem;"><i class="fas fa-triangle-exclamation text-warning me-1"></i>This theme is hard to read</p>
+				<p class="text-muted small mb-2">Some text barely stands out from what's behind it:</p>
+				<ul class="small mb-2 ps-3" id="kiln-pte-readability-list"></ul>
+				<p class="text-muted small mb-0">If you publish it anyway, players who have "Disable profile themes detected as inaccessible" turned on (the default) will see your profile without the theme.</p>
+				<div class="d-flex gap-2 justify-content-end mt-3">
+					<button class="btn btn-sm btn-secondary" id="kiln-pte-readability-cancel">Keep Editing</button>
+					<button class="btn btn-sm btn-warning" id="kiln-pte-readability-continue">Publish Anyway</button>
+				</div>
+			</div>
+		</div>
 	`;
 
 	document.body.appendChild(sidebar);
@@ -1142,7 +1299,7 @@ async function doOpenProfileThemeEditor({
 	const iconColorRow = el("kiln-pte-icon-color-row");
 	const iconPicker = el<HTMLInputElement>("kiln-pte-icon-picker");
 	const iconHex = el<HTMLInputElement>("kiln-pte-icon-hex");
-	const fontSelect = el<HTMLSelectElement>("kiln-pte-font");
+	const fontSelect = initFontPicker(el<HTMLButtonElement>("kiln-pte-font"));
 	const cssTextarea = el<HTMLTextAreaElement>("kiln-pte-custom-css");
 	const effectsList = el("kiln-pte-effects-list");
 	const addEffectForm = el("kiln-pte-add-effect-form");
@@ -1160,6 +1317,58 @@ async function doOpenProfileThemeEditor({
 	const selRefBody = el("kiln-pte-selref-body");
 	const selRefSearch = el<HTMLInputElement>("kiln-pte-selref-search");
 	const deleteOverlay = el("kiln-pte-delete-overlay");
+	const slotsOpenBtn = el<HTMLButtonElement>("kiln-pte-slots-open");
+	const slotsModal = createModal();
+	slotsModal.setAttribute(NO_POINTER_EFFECTS_ATTR, "");
+	slotsModal.innerHTML = `
+		<div class="d-flex justify-content-between align-items-center mb-2">
+			<h5 class="mb-0 fw-bold">Theme Slots</h5>
+			<button class="btn-close" id="kiln-pte-slots-close" aria-label="Close"></button>
+		</div>
+		<p class="small text-muted mb-2">Keep up to ${slotCount} themes saved and switch between them without losing your work.</p>
+		<div id="kiln-pte-slots-list"></div>
+		<div id="kiln-pte-slots-status" class="small mt-2" style="min-height:1.1em;"></div>
+		<div id="kiln-pte-slot-rename-overlay" style="display:none;position:absolute;inset:0;z-index:10;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;padding:24px;">
+			<div style="background:var(--bs-body-bg,#212529);border:1px solid rgba(128,128,128,0.3);border-radius:8px;padding:16px;width:100%;">
+				<p class="fw-bold mb-2" style="font-size:0.95rem;">Rename Slot</p>
+				<input type="text" id="kiln-pte-slot-rename-input" class="form-control form-control-sm mb-3" maxlength="30" placeholder="Slot name…" />
+				<div class="d-flex gap-2 justify-content-end">
+					<button class="btn btn-sm btn-secondary" id="kiln-pte-slot-rename-cancel">Cancel</button>
+					<button class="btn btn-sm btn-primary" id="kiln-pte-slot-rename-confirm">Rename</button>
+				</div>
+			</div>
+		</div>
+
+		<div id="kiln-pte-slot-confirm-overlay" style="display:none;position:absolute;inset:0;z-index:10;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;padding:24px;">
+			<div style="background:var(--bs-body-bg,#212529);border:1px solid rgba(128,128,128,0.3);border-radius:8px;padding:16px;width:100%;">
+				<p class="fw-bold mb-2" style="font-size:0.95rem;" id="kiln-pte-slot-confirm-title"></p>
+				<p class="text-muted small mb-3" id="kiln-pte-slot-confirm-text"></p>
+				<div class="d-flex gap-2 justify-content-end">
+					<button class="btn btn-sm btn-secondary" id="kiln-pte-slot-confirm-cancel">Cancel</button>
+					<button class="btn btn-sm btn-danger" id="kiln-pte-slot-confirm-continue"></button>
+				</div>
+			</div>
+		</div>
+
+`;
+	const slotEl = <T extends HTMLElement>(id: string) =>
+		slotsModal.querySelector<T>(`#${id}`)!;
+	const slotsList = slotEl("kiln-pte-slots-list");
+	const slotsStatus = slotEl("kiln-pte-slots-status");
+	const slotRenameOverlay = slotEl("kiln-pte-slot-rename-overlay");
+	const slotRenameInput = slotEl<HTMLInputElement>(
+		"kiln-pte-slot-rename-input",
+	);
+	const slotConfirmOverlay = slotEl("kiln-pte-slot-confirm-overlay");
+	const slotConfirmContinueBtn = slotEl<HTMLButtonElement>(
+		"kiln-pte-slot-confirm-continue",
+	);
+	const slotConfirmCancelBtn = slotEl<HTMLButtonElement>(
+		"kiln-pte-slot-confirm-cancel",
+	);
+	const setSlotStatus = (html: string) => {
+		slotsStatus.innerHTML = html;
+	};
 	const publishRulesOverlay = el("kiln-pte-publish-rules-overlay");
 	const publishRulesContinueBtn = el<HTMLButtonElement>(
 		"kiln-pte-publish-rules-continue",
@@ -1167,6 +1376,38 @@ async function doOpenProfileThemeEditor({
 	const publishRulesCancelBtn = el<HTMLButtonElement>(
 		"kiln-pte-publish-rules-cancel",
 	);
+	const readabilityOverlay = el("kiln-pte-readability-overlay");
+	const readabilityList = el("kiln-pte-readability-list");
+	const readabilityContinueBtn = el<HTMLButtonElement>(
+		"kiln-pte-readability-continue",
+	);
+	const readabilityCancelBtn = el<HTMLButtonElement>(
+		"kiln-pte-readability-cancel",
+	);
+
+	function confirmReadability(values: ProfileThemeValues): Promise<boolean> {
+		const issues = profileThemeReadabilityIssues(values);
+		if (issues.length === 0) return Promise.resolve(true);
+		readabilityList.innerHTML = issues
+			.map(
+				(issue) =>
+					`<li>${escapeHtml(issue.label)} <span class="text-muted">(contrast ${issue.ratio}:1)</span></li>`,
+			)
+			.join("");
+		readabilityOverlay.style.display = "flex";
+		return new Promise<boolean>((resolve) => {
+			const finish = (result: boolean) => {
+				readabilityOverlay.style.display = "none";
+				readabilityContinueBtn.removeEventListener("click", onContinue);
+				readabilityCancelBtn.removeEventListener("click", onCancel);
+				resolve(result);
+			};
+			const onContinue = () => finish(true);
+			const onCancel = () => finish(false);
+			readabilityContinueBtn.addEventListener("click", onContinue);
+			readabilityCancelBtn.addEventListener("click", onCancel);
+		});
+	}
 
 	const visualCss = createVisualCssEditor({
 		mount: el("kiln-pte-vce-mount"),
@@ -1187,6 +1428,7 @@ async function doOpenProfileThemeEditor({
 	});
 
 	function refreshPreview() {
+		scheduleAutosave();
 		const values = currentValues();
 		applyKilnTheme({
 			...values,
@@ -1259,9 +1501,12 @@ async function doOpenProfileThemeEditor({
 	}
 
 	async function recheckVerification() {
+		const wasVerified = verified;
 		const freshSession = await getApiSession(userId);
 		verified = freshSession?.state === "verified";
 		verifyNotice.style.display = verified ? "none" : "";
+		if (verified && !wasVerified) await refreshSlots();
+		else renderSlots();
 		return verified;
 	}
 
@@ -1399,6 +1644,9 @@ async function doOpenProfileThemeEditor({
 	}
 
 	async function closeSidebar() {
+		clearTimeout(autosaveTimer);
+		await autosaveRunning;
+		await autosaveToSlot();
 		visualCss.destroy();
 		document.removeEventListener("mousemove", onResizeMove);
 		document.removeEventListener("mouseup", onResizeUp);
@@ -1406,6 +1654,8 @@ async function doOpenProfileThemeEditor({
 		document.removeEventListener("mouseup", onWindowDragUp);
 		window.removeEventListener("focus", recheckVerification);
 		document.body.style.userSelect = "";
+		slotsModal.close();
+		slotsModal.remove();
 		sidebar.remove();
 		styleEl.remove();
 		const url = new URL(window.location.href);
@@ -1920,7 +2170,13 @@ async function doOpenProfileThemeEditor({
 							? data.colorTokens
 							: undefined,
 				},
-				sanitizeImportedExtras(data),
+				sanitizeImportedExtras(
+					data,
+					halloweenEnabled,
+					thanksgivingEnabled,
+					maxStickers,
+					maxNotes,
+				),
 			);
 			syncInputs();
 			refreshPreview();
@@ -1930,15 +2186,327 @@ async function doOpenProfileThemeEditor({
 		}
 	});
 
-	saveBtn.addEventListener("click", async () => {
-		if (themeLoadFailed) return;
+	function confirmSlotAction(
+		title: string,
+		text: string,
+		label: string,
+	): Promise<boolean> {
+		slotEl("kiln-pte-slot-confirm-title").textContent = title;
+		slotEl("kiln-pte-slot-confirm-text").textContent = text;
+		slotConfirmContinueBtn.textContent = label;
+		slotConfirmOverlay.style.display = "flex";
+		return new Promise<boolean>((resolve) => {
+			const finish = (result: boolean) => {
+				slotConfirmOverlay.style.display = "none";
+				slotConfirmContinueBtn.removeEventListener("click", onContinue);
+				slotConfirmCancelBtn.removeEventListener("click", onCancel);
+				resolve(result);
+			};
+			const onContinue = () => finish(true);
+			const onCancel = () => finish(false);
+			slotConfirmContinueBtn.addEventListener("click", onContinue);
+			slotConfirmCancelBtn.addEventListener("click", onCancel);
+		});
+	}
+
+	function renderSlots() {
+		slotsOpenBtn.style.display = verified ? "" : "none";
+		if (slotsLoadFailed) {
+			slotsList.innerHTML =
+				'<p class="small text-danger my-2">Couldn\'t load your theme slots.</p>';
+			return;
+		}
+		slotsList.innerHTML = Array.from({ length: slotCount }, (_, index) => {
+			const slot = slots.find((s) => s.slot === index);
+			const swatch = slot
+				? `background:linear-gradient(135deg, ${escapeHtml(slot.theme.accentColor)} 50%, ${escapeHtml(slot.theme.navbarColor)} 50%);`
+				: "border-style:dashed;";
+			const subtitle = slot
+				? slot.updatedAt
+					? `Saved ${new Date(slot.updatedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+					: "Saved"
+				: "Empty";
+			const label = slot?.name?.trim() || `Slot ${index + 1}`;
+			const actions = slot
+				? `<button class="btn btn-outline-primary btn-sm" data-slot-action="use" data-slot="${index}" title="Load and publish this theme"${slot.live ? " disabled" : ""}>Use</button>
+				   <button class="btn btn-outline-secondary btn-sm" data-slot-action="save" data-slot="${index}" title="Replace with the theme you're editing"><i class="fas fa-floppy-disk"></i></button>
+				   <button class="btn btn-outline-secondary btn-sm" data-slot-action="edit" data-slot="${index}" title="Load into the editor without publishing"><i class="fas fa-pen"></i></button>
+				   <button class="btn btn-outline-secondary btn-sm" data-slot-action="rename" data-slot="${index}" title="Rename this slot"><i class="fas fa-tag"></i></button>
+				   <button class="btn btn-outline-danger btn-sm" data-slot-action="clear" data-slot="${index}" title="Clear this slot"><i class="fas fa-xmark"></i></button>`
+				: `<button class="btn btn-outline-secondary btn-sm" data-slot-action="save" data-slot="${index}" title="Save the theme you're editing here"><i class="fas fa-floppy-disk me-1"></i>Save here</button>`;
+			return `
+				<div class="kiln-pte-slot d-flex align-items-center gap-2 py-2">
+					<span class="kiln-pte-slot-swatch" style="${swatch}"></span>
+					<div class="flex-fill" style="min-width:0;">
+						<div class="small fw-semibold text-truncate">${escapeHtml(label)}${slot?.live ? '<span class="badge bg-primary ms-1">Live</span>' : ""}${slot && editingSlot === index ? '<span class="badge bg-warning text-dark ms-1">Editing</span>' : ""}</div>
+						<div class="small text-muted">${subtitle}</div>
+					</div>
+					<div class="d-flex gap-1 flex-shrink-0">${actions}</div>
+				</div>`;
+		}).join("");
+		if (slotsBusy)
+			for (const button of slotsList.querySelectorAll<HTMLButtonElement>(
+				"button",
+			))
+				button.disabled = true;
+	}
+
+	async function refreshSlots() {
+		const result = await sendMessage("getProfileThemeSlots", userId);
+		slotsLoadFailed = !result.ok;
+		if (result.ok) slots = result.data.data;
+		renderSlots();
+	}
+
+	function setSlotsBusy(busy: boolean) {
+		slotsBusy = busy;
+		renderSlots();
+	}
+
+	function loadSlot(slot: Extension.ProfileThemeSlot) {
+		const values = mapThemeValues(slot.theme);
+		loadFrom(values, extrasFromTheme(values));
+		syncInputs();
+		refreshPreview();
+	}
+
+	async function saveToSlot(index: number) {
+		const existing = slots.find((s) => s.slot === index);
+		if (
+			existing &&
+			!(await confirmSlotAction(
+				`Replace Slot ${index + 1}?`,
+				"The theme saved in this slot will be overwritten with the one you're editing.",
+				"Replace",
+			))
+		)
+			return;
+		const values = currentValues();
+		const notes = values.notes?.filter((n) => n.text.trim());
+		setSlotsBusy(true);
+		const result = await sendMessage("saveProfileThemeSlot", {
+			userId,
+			slot: index,
+			...values,
+			notes: notes && notes.length > 0 ? notes : undefined,
+		});
+		if (!result.ok) {
+			setSlotsBusy(false);
+			setSlotStatus(
+				`<span class="text-danger">${friendlyApiError(
+					result.message,
+					"Couldn't save to that slot. Please try again.",
+				)}</span>`,
+			);
+			return;
+		}
+		slots = result.data.data;
+		editingSlot = index;
+		autosaveBaseline = JSON.stringify(slotSnapshot());
+		setSlotsBusy(false);
+		setSlotStatus(
+			`<span class="text-success"><i class="fas fa-check me-1"></i>Saved to Slot ${index + 1}.</span>`,
+		);
+	}
+
+	function slotSnapshot() {
+		const values = currentValues();
+		const notes = values.notes?.filter((n) => n.text.trim());
+		return {
+			...values,
+			notes: notes && notes.length > 0 ? notes : undefined,
+		};
+	}
+
+	async function autosaveToSlot() {
+		const index = editingSlot;
+		if (index === null || !verified || themeLoadFailed || slotsBusy) return;
+		const snapshot = slotSnapshot();
+		const serialized = JSON.stringify(snapshot);
+		if (serialized === autosaveBaseline) return;
+		const result = await sendMessage("saveProfileThemeSlot", {
+			userId,
+			slot: index,
+			...snapshot,
+		});
+		if (!result.ok) {
+			setSlotStatus(
+				`<span class="text-danger">${friendlyApiError(
+					result.message,
+					"Couldn't autosave to your slot. Please try again.",
+				)}</span>`,
+			);
+			setStatus(
+				'<span class="text-danger">Autosave to your slot failed.</span>',
+			);
+			return;
+		}
+		autosaveBaseline = serialized;
+		slots = result.data.data;
+		renderSlots();
+		setStatus(
+			`<span class="text-muted"><i class="fas fa-check me-1"></i>Autosaved to Slot ${index + 1}. Save &amp; Publish to put it on your profile.</span>`,
+		);
+	}
+
+	function scheduleAutosave() {
+		clearTimeout(autosaveTimer);
+		if (editingSlot === null) return;
+		autosaveTimer = setTimeout(() => {
+			autosaveRunning = autosaveRunning.then(autosaveToSlot);
+		}, 1500);
+	}
+
+	async function renameSlot(index: number, name: string) {
+		const existing = slots.find((s) => s.slot === index);
+		if (!existing || name.trim() === (existing.name ?? "")) return;
+		setSlotsBusy(true);
+		const result = await sendMessage("renameProfileThemeSlot", {
+			userId,
+			slot: index,
+			name: name.trim(),
+		});
+		if (!result.ok) {
+			setSlotsBusy(false);
+			setSlotStatus(
+				`<span class="text-danger">${friendlyApiError(
+					result.message,
+					"Couldn't rename that slot. Please try again.",
+				)}</span>`,
+			);
+			return;
+		}
+		slots = result.data.data;
+		setSlotsBusy(false);
+		setSlotStatus(
+			'<span class="text-success"><i class="fas fa-check me-1"></i>Slot renamed.</span>',
+		);
+	}
+
+	async function clearSlot(index: number) {
+		if (
+			!(await confirmSlotAction(
+				`Clear Slot ${index + 1}?`,
+				"The theme saved in this slot will be removed. Your published theme isn't affected.",
+				"Clear",
+			))
+		)
+			return;
+		setSlotsBusy(true);
+		const result = await sendMessage("clearProfileThemeSlot", {
+			userId,
+			slot: index,
+		});
+		if (!result.ok) {
+			setSlotsBusy(false);
+			setSlotStatus(
+				`<span class="text-danger">${friendlyApiError(result.message)}</span>`,
+			);
+			return;
+		}
+		slots = result.data.data;
+		if (editingSlot === index) {
+			editingSlot = null;
+			clearTimeout(autosaveTimer);
+		}
+		setSlotsBusy(false);
+		setSlotStatus(`<span class="text-muted">Slot ${index + 1} cleared.</span>`);
+	}
+
+	slotsOpenBtn.addEventListener("click", () => {
+		setSlotStatus("");
+		slotsModal.showModal();
+	});
+	slotEl("kiln-pte-slots-close").addEventListener("click", () =>
+		slotsModal.close(),
+	);
+
+	let renameTarget: number | null = null;
+
+	function openSlotRename(index: number) {
+		renameTarget = index;
+		slotRenameInput.value = slots.find((s) => s.slot === index)?.name ?? "";
+		slotRenameOverlay.style.display = "flex";
+		slotRenameInput.focus();
+		slotRenameInput.select();
+	}
+
+	function closeSlotRename() {
+		renameTarget = null;
+		slotRenameOverlay.style.display = "none";
+	}
+
+	function confirmSlotRename() {
+		const index = renameTarget;
+		const name = slotRenameInput.value;
+		closeSlotRename();
+		if (index !== null) void renameSlot(index, name);
+	}
+
+	slotEl("kiln-pte-slot-rename-cancel").addEventListener(
+		"click",
+		closeSlotRename,
+	);
+	slotEl("kiln-pte-slot-rename-confirm").addEventListener(
+		"click",
+		confirmSlotRename,
+	);
+	slotRenameInput.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") confirmSlotRename();
+		if (e.key === "Escape") closeSlotRename();
+	});
+
+	slotsList.addEventListener("click", async (e) => {
+		const button = (e.target as HTMLElement).closest<HTMLButtonElement>(
+			"[data-slot-action]",
+		);
+		if (!button || button.disabled) return;
+		const index = Number(button.dataset.slot);
+		const slot = slots.find((s) => s.slot === index);
+		switch (button.dataset.slotAction) {
+			case "save":
+				await saveToSlot(index);
+				break;
+			case "clear":
+				await clearSlot(index);
+				break;
+			case "rename":
+				if (!slot) return;
+				openSlotRename(index);
+				break;
+			case "edit":
+				if (!slot) return;
+				loadSlot(slot);
+				editingSlot = index;
+				autosaveBaseline = JSON.stringify(slotSnapshot());
+				renderSlots();
+				slotsModal.close();
+				setStatus(
+					`<span class="text-muted">Loaded Slot ${index + 1}. Save &amp; Publish to put it on your profile.</span>`,
+				);
+				break;
+			case "use":
+				if (!slot) return;
+				loadSlot(slot);
+				editingSlot = index;
+				autosaveBaseline = JSON.stringify(slotSnapshot());
+				slotsModal.close();
+				setSlotsBusy(true);
+				await publish();
+				setSlotsBusy(false);
+				break;
+		}
+	});
+
+	async function publish(): Promise<boolean> {
+		if (themeLoadFailed) return false;
 		await recheckVerification();
 		if (!verified) {
 			window.open("https://polytoria.com/my/settings/kiln?tab=sync", "_blank");
 			setStatus(
 				'<span class="text-info"><i class="fas fa-external-link-alt me-1"></i>Connect your account in the opened tab, then try again.</span>',
 			);
-			return;
+			return false;
 		}
 
 		if (!serverTheme) {
@@ -1947,16 +2515,18 @@ async function doOpenProfileThemeEditor({
 				publishRulesContinueBtn,
 				publishRulesCancelBtn,
 			);
-			if (!acknowledged) return;
+			if (!acknowledged) return false;
 		}
+
+		const values = currentValues();
+		const notes = values.notes?.filter((n) => n.text.trim());
+
+		if (!(await confirmReadability({ ...values, notes }))) return false;
 
 		const original = saveBtn.innerHTML;
 		saveBtn.disabled = true;
 		saveBtn.innerHTML =
 			'<i class="fas fa-spinner fa-spin me-1"></i>Publishing…';
-
-		const values = currentValues();
-		const notes = values.notes?.filter((n) => n.text.trim());
 
 		const result = await sendMessage("saveProfileTheme", {
 			userId,
@@ -1974,7 +2544,7 @@ async function doOpenProfileThemeEditor({
 					"Couldn't save your profile theme. Please try again.",
 				)}</span>`,
 			);
-			return;
+			return false;
 		}
 
 		const saved = result.data.data;
@@ -1982,7 +2552,7 @@ async function doOpenProfileThemeEditor({
 			setStatus(
 				'<span class="text-danger">Couldn\'t save your profile theme. Please try again.</span>',
 			);
-			return;
+			return false;
 		}
 		serverTheme = {
 			...currentValues(),
@@ -1992,10 +2562,16 @@ async function doOpenProfileThemeEditor({
 		updateStateBadge();
 		setStatus(
 			saved.approvalStatus === "pending"
-				? '<span class="text-warning"><i class="fas fa-hourglass-half me-1"></i>Saved. Your background image or notes need a quick review before others see the theme.</span>'
-				: '<span class="text-success"><i class="fas fa-check me-1"></i>Saved! Other Kiln users will see this on your profile.</span>',
+				? '<span class="text-warning"><i class="fas fa-hourglass-half me-1"></i>Saved. Your background image, notes or videos need a quick review before others see the theme.</span>'
+				: saved.inaccessible
+					? '<span class="text-warning"><i class="fas fa-eye-low-vision me-1"></i>Saved, but it was detected as hard to read, so only players who allow inaccessible themes will see it.</span>'
+					: '<span class="text-success"><i class="fas fa-check me-1"></i>Saved! Other Kiln users will see this on your profile.</span>',
 		);
-	});
+		await refreshSlots();
+		return true;
+	}
+
+	saveBtn.addEventListener("click", () => publish());
 
 	visibilityBtn.addEventListener("click", async () => {
 		if (!serverTheme) return;
@@ -2043,6 +2619,7 @@ async function doOpenProfileThemeEditor({
 		clearProfileExtras();
 		updateStateBadge();
 		setStatus('<span class="text-muted">Profile theme deleted.</span>');
+		await refreshSlots();
 	});
 
 	const unEnabled = el<HTMLInputElement>("kiln-pte-un-enabled");
@@ -2055,7 +2632,15 @@ async function doOpenProfileThemeEditor({
 	const unGlowColor = el<HTMLInputElement>("kiln-pte-un-glow-color");
 	const unGlowSize = el<HTMLInputElement>("kiln-pte-un-glow-size");
 	const unGlowLabel = el("kiln-pte-un-glow-label");
-	const unFont = el<HTMLSelectElement>("kiln-pte-un-font");
+	const unFont = initFontPicker(
+		el<HTMLButtonElement>("kiln-pte-un-font"),
+		() =>
+			document
+				.querySelector<HTMLElement>(
+					'.user-right h4.text-themeglow > [class^="userlink-"]',
+				)
+				?.textContent?.trim() || undefined,
+	);
 	const bannerId = el<HTMLInputElement>("kiln-pte-banner-id");
 	const bannerSet = el<HTMLButtonElement>("kiln-pte-banner-set");
 	const bannerClear = el<HTMLButtonElement>("kiln-pte-banner-clear");
@@ -2072,6 +2657,10 @@ async function doOpenProfileThemeEditor({
 	const noteAdd = el<HTMLButtonElement>("kiln-pte-note-add");
 	const noteStatus = el("kiln-pte-note-status");
 	const noteList = el("kiln-pte-note-list");
+	const videoUrl = el<HTMLInputElement>("kiln-pte-video-url");
+	const videoAdd = el<HTMLButtonElement>("kiln-pte-video-add");
+	const videoStatus = el("kiln-pte-video-status");
+	const videoList = el("kiln-pte-video-list");
 	const ambientType = el<HTMLSelectElement>("kiln-pte-ambient-type");
 	const ambientDensity = el<HTMLSelectElement>("kiln-pte-ambient-density");
 	const ambientColor = el<HTMLInputElement>("kiln-pte-ambient-color");
@@ -2109,9 +2698,7 @@ async function doOpenProfileThemeEditor({
 		ambientDensity.value = String(ambient?.density ?? 2);
 		ambientColorAuto.checked = !ambient?.color;
 		ambientColor.value =
-			ambient?.color ??
-			AMBIENT_TYPES.find((t) => t.key === ambient?.type)?.color ??
-			"#ffffff";
+			ambient?.color ?? ambientDefaultColor(ambient?.type) ?? "#ffffff";
 		ambientColor.disabled = !ambient?.color;
 		ambientDensity.disabled = !ambient;
 		ambientColorAuto.disabled = !ambient;
@@ -2120,6 +2707,8 @@ async function doOpenProfileThemeEditor({
 		renderStickerList();
 		noteStatus.textContent = "";
 		renderNoteList();
+		videoStatus.textContent = "";
+		renderVideoList();
 		renderLayoutLists();
 		syncNewExtrasInputs();
 	}
@@ -2212,8 +2801,7 @@ async function doOpenProfileThemeEditor({
 				}
 			: undefined;
 		if (ambientColorAuto.checked)
-			ambientColor.value =
-				AMBIENT_TYPES.find((t) => t.key === type)?.color ?? "#ffffff";
+			ambientColor.value = ambientDefaultColor(type || undefined) ?? "#ffffff";
 		ambientColor.disabled = !type || ambientColorAuto.checked;
 		ambientDensity.disabled = !type;
 		ambientColorAuto.disabled = !type;
@@ -2225,7 +2813,7 @@ async function doOpenProfileThemeEditor({
 
 	function renderStickerList() {
 		const stickers = workingExtras.stickers ?? [];
-		stickerAdd.disabled = stickers.length >= MAX_STICKERS;
+		stickerAdd.disabled = stickers.length >= maxStickers;
 		stickerList.innerHTML = stickers
 			.map(
 				(sticker, i) => `
@@ -2290,7 +2878,7 @@ async function doOpenProfileThemeEditor({
 	}
 
 	stickerAdd.addEventListener("click", async () => {
-		if ((workingExtras.stickers?.length ?? 0) >= MAX_STICKERS) return;
+		if ((workingExtras.stickers?.length ?? 0) >= maxStickers) return;
 		stickerAdd.disabled = true;
 		stickerStatus.textContent = "Looking up decal…";
 		const url = await resolveDecalUrl(stickerId.value);
@@ -2326,7 +2914,7 @@ async function doOpenProfileThemeEditor({
 
 	function renderNoteList() {
 		const notes = workingExtras.notes ?? [];
-		noteAdd.disabled = notes.length >= MAX_NOTES;
+		noteAdd.disabled = notes.length >= maxNotes;
 		noteList.innerHTML = notes
 			.map(
 				(note, i) => `
@@ -2407,7 +2995,7 @@ async function doOpenProfileThemeEditor({
 	noteAdd.addEventListener("click", () => {
 		const text = noteText.value.trim();
 		if (!text) return;
-		if ((workingExtras.notes?.length ?? 0) >= MAX_NOTES) return;
+		if ((workingExtras.notes?.length ?? 0) >= maxNotes) return;
 		const placement = stickerPlacementAt(
 			(window.innerWidth - sidebar.offsetWidth) / 2,
 			window.innerHeight / 2,
@@ -2432,6 +3020,57 @@ async function doOpenProfileThemeEditor({
 	});
 	noteText.addEventListener("keydown", (e) => {
 		if (e.key === "Enter") noteAdd.click();
+	});
+
+	function renderVideoList() {
+		const videos = workingExtras.videos ?? [];
+		videoAdd.disabled = videos.length >= MAX_VIDEOS;
+		videoList.innerHTML = videos
+			.map(
+				(video, i) => `
+			<div class="d-flex align-items-center gap-2 border rounded p-2 mb-2" style="border-color:rgba(128,128,128,0.25)!important;" data-index="${i}">
+				<i class="fab fa-youtube text-danger"></i>
+				<a class="small flex-fill text-truncate" href="https://www.youtube.com/watch?v=${video.videoId}" target="_blank" rel="noopener noreferrer">${video.videoId}</a>
+				<button class="kiln-pte-video-remove" title="Remove"
+				        style="background:none;border:none;padding:0 2px;cursor:pointer;color:rgba(255,255,255,0.4);font-size:0.8rem;line-height:1;flex-shrink:0;">✕</button>
+			</div>`,
+			)
+			.join("");
+
+		for (const row of videoList.querySelectorAll<HTMLElement>("[data-index]")) {
+			const video = videos[Number(row.dataset.index)];
+			row
+				.querySelector<HTMLButtonElement>(".kiln-pte-video-remove")!
+				.addEventListener("click", () => {
+					workingExtras.videos = videos.filter((v) => v !== video);
+					renderVideoList();
+					refreshPreview();
+				});
+		}
+	}
+
+	videoAdd.addEventListener("click", () => {
+		if ((workingExtras.videos?.length ?? 0) >= MAX_VIDEOS) return;
+		const videoId = parseYouTubeId(videoUrl.value);
+		if (!videoId) {
+			videoStatus.textContent = "That doesn't look like a YouTube link.";
+			return;
+		}
+		if (workingExtras.videos?.some((v) => v.videoId === videoId)) {
+			videoStatus.textContent = "That video is already on your profile.";
+			return;
+		}
+		workingExtras.videos = [
+			...(workingExtras.videos ?? []),
+			{ id: crypto.randomUUID(), videoId },
+		];
+		videoUrl.value = "";
+		videoStatus.textContent = "Added.";
+		renderVideoList();
+		refreshPreview();
+	});
+	videoUrl.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") videoAdd.click();
 	});
 
 	function layoutOrder(): string[] {
@@ -2699,6 +3338,7 @@ async function doOpenProfileThemeEditor({
 	verifyNotice.style.display = verified ? "none" : "";
 	syncInputs();
 	updateStateBadge();
+	renderSlots();
 	refreshPreview();
 	if (themeLoadFailed) showLoadError();
 }

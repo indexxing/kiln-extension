@@ -26,6 +26,9 @@ import * as inventory from "./inventory";
 import * as view from "./view";
 
 function isProfileNotFoundPage(): boolean {
+	if (!/^\/(u\/[^/]+|users\/\d+)\/?$/.test(window.location.pathname)) {
+		return false;
+	}
 	return Array.from(document.querySelectorAll("h1.display-4")).some(
 		(el) => el.textContent?.trim() === "Page Not Found",
 	);
@@ -46,6 +49,26 @@ export default defineContentScript({
 		]).then(async ([values, showDisclosures, condensedTabBars]) => {
 			const segment = window.location.pathname.split("/")[2];
 			const isLegacyUrl = window.location.pathname.split("/")[1] === "users";
+
+			if (
+				isLegacyUrl &&
+				segment &&
+				!Number.isNaN(Number(segment)) &&
+				values.enabled.includes("bannedUserDetail") &&
+				isProfileNotFoundPage()
+			) {
+				const lookup = await sendMessage("getActivityUser", Number(segment));
+				if (lookup.ok && lookup.data) {
+					const result = await sendMessage("showBannedUserAlert", lookup.data);
+					if (!result.ok) {
+						console.warn(
+							"[Kiln] Failed to show banned user alert:",
+							result.message,
+						);
+					}
+					return;
+				}
+			}
 
 			if (isLegacyUrl && (!segment || Number.isNaN(Number(segment)))) {
 				if (values.enabled.includes("collectibleOwnerLabels")) {
@@ -91,7 +114,7 @@ export default defineContentScript({
 					}
 				}
 
-				const r = await sendMessage("findUserByUsername", segment);
+				const r = await sendMessage("findUserByUsername", username);
 				if (!r.ok) throw new Error(r.message);
 				userId = r.data;
 			}
@@ -227,6 +250,11 @@ export default defineContentScript({
 							view.creationsTab(userId, condensedTabBars),
 						);
 					}
+					if (values.enabled.includes("userForumPosts")) {
+						runFeature("userForumPosts", () =>
+							view.userForumPosts(userId, showDisclosures, condensedTabBars),
+						);
+					}
 					if (values.enabled.includes("publicAvatarOutfits")) {
 						runFeature("publicAvatarOutfits", () =>
 							view.publicAvatarOutfits(
@@ -254,6 +282,22 @@ export default defineContentScript({
 					if (values.enabled.includes("timezoneSharing")) {
 						runFeature("timezoneSharing", () =>
 							view.publicTimezone(userId, showDisclosures),
+						);
+					}
+					if (values.enabled.includes("editingStatus")) {
+						runFeature("editingStatus", () =>
+							view.editingStatus(userId, showDisclosures),
+						);
+					}
+					if (values.enabled.includes("donationLinks")) {
+						runFeature("donationLinks", () =>
+							getUserDetails().then((self) =>
+								view.donationLink(
+									self?.userId ?? null,
+									userId,
+									showDisclosures,
+								),
+							),
 						);
 					}
 				} else if (values.enabled.includes("basicBlockedInfo")) {

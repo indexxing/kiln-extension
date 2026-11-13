@@ -15,6 +15,13 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import type { Extension, PolyTrack, Polytoria } from "@kiln/schemas";
+import {
+	renderEntry,
+	setLoadMoreState,
+} from "@/entrypoints/forum.content/search";
+import { fetchAllCreations, renderCreationsBrowser } from "@/utils/creations";
+import { createDonationLink } from "@/utils/donationLink";
+import { escapeHtml } from "@/utils/escapeHtml";
 import { openProfileThemeEditor } from "@/utils/profileThemeEditor";
 import {
 	applyProfileExtras,
@@ -184,7 +191,10 @@ export async function likeButton(
 
 			if (result.ok) {
 				liked = !liked;
-				count += liked ? 1 : -1;
+				const fresh = await sendMessage("getLikeCount", targetUserId);
+				count = fresh.ok
+					? fresh.data.data.count
+					: Math.max(0, count + (liked ? 1 : -1));
 			}
 			render();
 			toggleBtn.classList.remove("disabled");
@@ -427,6 +437,65 @@ export async function publicTimezone(userId: number, showDisclosures: boolean) {
 	sendMessage("registerBootstrapElements");
 }
 
+export async function editingStatus(userId: number, showDisclosures: boolean) {
+	const result = await sendMessage("getUserEditingStatus", userId);
+	if (!result.ok || !result.data.data.editing) return;
+
+	const header = document.querySelector<HTMLElement>(".user-right > .mb-2");
+	if (!header || header.querySelector('[data-kiln="editing-status"]')) return;
+
+	const status = document.createElement("p");
+	status.classList.add("mb-0", "text-warning");
+	status.dataset.kiln = "editing-status";
+	status.innerHTML = `
+		<i class="fad fa-hammer me-1"></i>
+		Editing a world${kilnDisclosureBadgeHtml(showDisclosures)}
+	`;
+
+	const playing = header.querySelector(":scope > p");
+	if (playing) playing.insertAdjacentElement("afterend", status);
+	else header.appendChild(status);
+}
+
+export async function donationLink(
+	selfUserId: number | null,
+	userId: number,
+	showDisclosures: boolean,
+) {
+	const card = document.getElementById("user-stats-card");
+	if (!card) return;
+
+	const result = await sendMessage("getUserDonation", userId);
+	const url = result.ok ? result.data.data.url : null;
+	if (!url && selfUserId !== userId) return;
+
+	const row = document.createElement("div");
+	row.classList.add("mb-1");
+	row.dataset.kiln = "donation";
+	row.innerHTML = `
+    <b>
+        <i class="fas fa-hand-holding-heart text-center d-inline-block" style="width:1.3em"></i>
+        Donations${kilnDisclosureBadgeHtml(showDisclosures)}
+    </b>
+    <span class="float-end"></span>
+    `;
+
+	row
+		.querySelector(".float-end")!
+		.replaceChildren(createDonationLink(selfUserId, userId, url));
+
+	const kilnUserRow = card.querySelector('[data-kiln="kiln-user-for"]');
+	const localTimeRow = card.querySelector('[data-kiln="local-time"]');
+	const activityBadge = card.querySelector(
+		".badge.bg-secondary, .badge.bg-warning",
+	);
+	if (kilnUserRow) kilnUserRow.insertAdjacentElement("afterend", row);
+	else if (localTimeRow) localTimeRow.insertAdjacentElement("afterend", row);
+	else if (activityBadge)
+		activityBadge.insertAdjacentElement("beforebegin", row);
+	else card.children[0].appendChild(row);
+}
+
 export async function outfitCost(
 	userId: number,
 	includeIRLRevenue: boolean,
@@ -510,8 +579,8 @@ export async function outfitCost(
 		);
 	}
 	document
-		.querySelector(".section-title:first-child")!
-		.appendChild(calculateBtn);
+		.querySelector(".section-title:has(.fa-user-crown)")
+		?.appendChild(calculateBtn);
 }
 
 // TODO: Make this just replace Historical Records section
@@ -849,36 +918,8 @@ export async function avatarVersions(userId: number, showDisclosures: boolean) {
 	sendMessage("registerBootstrapElements");
 }
 
-const CREATION_TYPE_META: Record<string, { icon: string; label: string }> = {
-	model: { icon: "fad fa-cubes", label: "Models" },
-	audio: { icon: "fad fa-volume-up", label: "Audio" },
-	decal: { icon: "fad fa-image", label: "Images" },
-	mesh: { icon: "fad fa-cube", label: "Meshes" },
-	hat: { icon: "fas fa-hat-cowboy", label: "Hats" },
-	tool: { icon: "fas fa-wrench", label: "Tools" },
-	face: { icon: "fas fa-smile", label: "Faces" },
-	clothing: { icon: "fas fa-tshirt", label: "Clothing" },
-	gamePass: { icon: "fas fa-certificate", label: "Game Passes" },
-	achievement: { icon: "fas fa-medal", label: "Achievements" },
-	body: { icon: "fas fa-person-limbs-wide", label: "Bodies" },
-	profileTheme: { icon: "fas fa-brush", label: "Profile Themes" },
-	consumable: { icon: "fas fa-flask", label: "Consumables" },
-};
-
-function creationTypeLabel(type: string) {
-	return (
-		CREATION_TYPE_META[type]?.label ??
-		type
-			.replace(/([a-z])([A-Z])/g, "$1 $2")
-			.replace(/^\w/, (c) => c.toUpperCase())
-	);
-}
-
-function creationTypeIcon(type: string) {
-	return CREATION_TYPE_META[type]?.icon ?? "fas fa-cube";
-}
-
 const CREATIONS_QUERY_PARAM = "kiln-creations";
+const FORUM_POSTS_QUERY_PARAM = "kiln-forum-posts";
 
 function getProfileContainer(): HTMLElement | null {
 	const anchor = document.getElementsByClassName("user-right")[0];
@@ -1052,30 +1093,14 @@ async function showCreationsPage(userId: number) {
 
 	document.title = username ? `${username}'s Creations` : "Creations";
 
-	let activeType = "all";
-	let searchQuery = "";
-	let currentPage = 1;
-	let searchDebounce: ReturnType<typeof setTimeout>;
 	const activeAudio: { current: HTMLAudioElement | null } = { current: null };
 
-	const first = await sendMessage("getUserCreations", {
-		userId,
-		page: 1,
-		limit: 100,
-	});
-	if (!first.ok) {
+	const assets = await fetchAllCreations((page) =>
+		sendMessage("getUserCreations", { userId, page, limit: 100 }),
+	);
+	if (!assets) {
 		row.innerHTML = `<p class="text-muted text-center py-3">Failed to load creations.</p>`;
 		return;
-	}
-
-	const assets = [...first.data.assets];
-	const rest = await Promise.all(
-		Array.from({ length: first.data.pages - 1 }, (_, i) =>
-			sendMessage("getUserCreations", { userId, page: i + 2, limit: 100 }),
-		),
-	);
-	for (const result of rest) {
-		if (result.ok) assets.push(...result.data.assets);
 	}
 
 	if (assets.length === 0) {
@@ -1083,245 +1108,7 @@ async function showCreationsPage(userId: number) {
 		return;
 	}
 
-	row.innerHTML = `
-		<div class="col-12 col-lg-2 mb-3">
-			<ul class="nav nav-pills flex-column creations-type-nav"></ul>
-		</div>
-		<div class="col-12 col-lg-10">
-			<div class="input-group input-group-sm mb-3">
-				<input type="text" class="form-control" placeholder="Search creations...">
-				<button class="btn btn-secondary" type="button">
-					<i class="fas fa-search"></i>
-				</button>
-			</div>
-			<div class="creations-results"></div>
-		</div>
-	`;
-
-	const typeNav = row.querySelector<HTMLUListElement>(".creations-type-nav")!;
-	const results = row.querySelector<HTMLDivElement>(".creations-results")!;
-	const searchInput = row.querySelector<HTMLInputElement>("input")!;
-	const searchBtn = row.querySelector<HTMLButtonElement>("button")!;
-
-	const presentTypes = [...new Set(assets.map((a) => a.type))].sort((a, b) => {
-		const order = Object.keys(CREATION_TYPE_META);
-		const ai = order.indexOf(a);
-		const bi = order.indexOf(b);
-		if (ai === -1 && bi === -1) return a.localeCompare(b);
-		if (ai === -1) return 1;
-		if (bi === -1) return -1;
-		return ai - bi;
-	});
-
-	const addPill = (
-		type: string,
-		icon: string,
-		label: string,
-		count: number,
-	) => {
-		const li = document.createElement("li");
-		li.classList.add("nav-item");
-
-		const a = document.createElement("a");
-		a.href = "#!";
-		a.classList.add("nav-link");
-		if (type === activeType) a.classList.add("active");
-
-		const iconEl = document.createElement("i");
-		iconEl.classList.add(...icon.split(" "), "me-1");
-		a.appendChild(iconEl);
-
-		const labelEl = document.createElement("span");
-		labelEl.classList.add("pilltitle");
-		labelEl.textContent = label;
-		a.appendChild(labelEl);
-
-		const badge = document.createElement("span");
-		badge.classList.add("badge", "bg-secondary", "float-end");
-		badge.textContent = String(count);
-		a.appendChild(badge);
-
-		a.addEventListener("click", (e) => {
-			e.preventDefault();
-			if (activeType === type) return;
-			activeType = type;
-			currentPage = 1;
-			for (const link of typeNav.querySelectorAll(".nav-link"))
-				link.classList.remove("active");
-			a.classList.add("active");
-			renderResults();
-		});
-
-		li.appendChild(a);
-		typeNav.appendChild(li);
-	};
-
-	addPill("all", "fas fa-layer-group", "All", assets.length);
-	for (const type of presentTypes) {
-		addPill(
-			type,
-			creationTypeIcon(type),
-			creationTypeLabel(type),
-			assets.filter((a) => a.type === type).length,
-		);
-	}
-
-	const renderPagination = (pages: number) => {
-		const existing = results.querySelector(".creations-pagination");
-		existing?.remove();
-		if (pages <= 1) return;
-
-		const items: string[] = [];
-		const pageLink = (label: string, page: number, disabled = false) =>
-			`<li class="page-item ${disabled ? "disabled" : ""}"><a class="page-link" href="#!" data-page="${page}">${label}</a></li>`;
-
-		items.push(pageLink("«", 1, currentPage === 1));
-		items.push(pageLink("‹", Math.max(1, currentPage - 1), currentPage === 1));
-
-		const windowSize = 2;
-		const start = Math.max(1, currentPage - windowSize);
-		const end = Math.min(pages, currentPage + windowSize);
-
-		if (start > 1) {
-			items.push(pageLink("1", 1));
-			if (start > 2)
-				items.push(
-					`<li class="page-item disabled"><a class="page-link">…</a></li>`,
-				);
-		}
-		for (let p = start; p <= end; p++) {
-			items.push(
-				p === currentPage
-					? `<li class="page-item active"><a class="page-link" href="#!" data-page="${p}">${p}</a></li>`
-					: pageLink(String(p), p),
-			);
-		}
-		if (end < pages) {
-			if (end < pages - 1)
-				items.push(
-					`<li class="page-item disabled"><a class="page-link">…</a></li>`,
-				);
-			items.push(pageLink(String(pages), pages));
-		}
-
-		items.push(
-			pageLink("›", Math.min(pages, currentPage + 1), currentPage === pages),
-		);
-		items.push(pageLink("»", pages, currentPage === pages));
-
-		const nav = document.createElement("div");
-		nav.classList.add(
-			"creations-pagination",
-			"d-flex",
-			"justify-content-center",
-			"mt-3",
-		);
-		nav.innerHTML = `<nav><ul class="pagination">${items.join("")}</ul></nav>`;
-		nav.addEventListener("click", (e) => {
-			const target = (e.target as HTMLElement).closest("a[data-page]");
-			if (!target) return;
-			e.preventDefault();
-			const page = Number(target.getAttribute("data-page"));
-			if (Number.isNaN(page) || page === currentPage) return;
-			currentPage = page;
-			renderResults();
-		});
-		results.appendChild(nav);
-	};
-
-	const renderResults = () => {
-		activeAudio.current?.pause();
-		activeAudio.current = null;
-
-		let filtered =
-			activeType === "all"
-				? assets
-				: assets.filter((a) => a.type === activeType);
-		if (searchQuery) {
-			const q = searchQuery.toLowerCase();
-			filtered = filtered.filter((a) => a.name.toLowerCase().includes(q));
-		}
-
-		const pages = Math.max(1, Math.ceil(filtered.length / ITEMS_PER_PAGE));
-		if (currentPage > pages) currentPage = pages;
-
-		const grid = results.querySelector(".itemgrid");
-		grid?.remove();
-		results.querySelector(".creations-empty")?.remove();
-
-		if (filtered.length === 0) {
-			const empty = document.createElement("p");
-			empty.classList.add(
-				"text-muted",
-				"text-center",
-				"py-3",
-				"creations-empty",
-			);
-			empty.textContent = searchQuery
-				? `No creations match "${searchQuery}".`
-				: "No creations in this category.";
-			results.prepend(empty);
-			renderPagination(0);
-			return;
-		}
-
-		const pageItems = filtered.slice(
-			(currentPage - 1) * ITEMS_PER_PAGE,
-			currentPage * ITEMS_PER_PAGE,
-		);
-
-		const itemGrid = document.createElement("div");
-		itemGrid.classList.add("row", "alignleft", "itemgrid");
-		for (const asset of pageItems) {
-			const col = document.createElement("div");
-			col.classList.add("px-0");
-			col.innerHTML = `
-					<a href="/store/${asset.id}" class="text-reset">
-						<div class="card mb-2">
-							<div class="card-body"></div>
-						</div>
-						<h6 class="text-truncate mb-0"></h6>
-					</a>
-				`;
-			const cardBody = col.querySelector<HTMLDivElement>(".card-body")!;
-			if (asset.type === "audio") {
-				cardBody.appendChild(createAudioPlayButton(asset.id, activeAudio));
-			} else {
-				const img = document.createElement("img");
-				img.className = "img-fluid rounded";
-				img.src = asset.thumbnail;
-				img.alt = asset.name;
-				cardBody.appendChild(img);
-			}
-			col.querySelector("h6")!.textContent = asset.name;
-			itemGrid.appendChild(col);
-		}
-		results.prepend(itemGrid);
-
-		renderPagination(pages);
-		sendMessage("registerBootstrapElements");
-	};
-
-	const runSearch = () => {
-		searchQuery = searchInput.value.trim();
-		currentPage = 1;
-		renderResults();
-	};
-
-	searchBtn.addEventListener("click", runSearch);
-	searchInput.addEventListener("keydown", (e) => {
-		if (e.key === "Enter") {
-			e.preventDefault();
-			runSearch();
-		}
-	});
-	searchInput.addEventListener("input", () => {
-		clearTimeout(searchDebounce);
-		searchDebounce = setTimeout(runSearch, 200);
-	});
-
-	renderResults();
-	sendMessage("registerBootstrapElements");
+	renderCreationsBrowser(row, assets, activeAudio, ITEMS_PER_PAGE);
 }
 
 export async function creationsTab(userId: number, condensedTabBar: boolean) {
@@ -1351,6 +1138,220 @@ export async function creationsTab(userId: number, condensedTabBar: boolean) {
 
 	if (new URLSearchParams(window.location.search).has(CREATIONS_QUERY_PARAM)) {
 		await showCreationsPage(userId);
+	}
+}
+
+async function showForumPostsPage(userId: number, showDisclosures: boolean) {
+	const container = getProfileContainer();
+	if (!container || container.querySelector(".kiln-forum-posts-page")) return;
+
+	forumPostsPageOpen = true;
+	releaseProfileThemeHold();
+	clearProfileExtras();
+	if (activeProfileTheme) {
+		applyKilnTheme(null);
+		clearNavbarFrost();
+	}
+
+	const originalTitle = document.title;
+	const basePath = window.location.pathname;
+	const username = getProfileUsername();
+
+	const existingChildren = Array.from(container.children) as HTMLElement[];
+	for (const child of existingChildren) child.style.display = "none";
+
+	const profileThemeStyle = getProfileThemeStyle();
+	if (profileThemeStyle) profileThemeStyle.disabled = true;
+	const hadKilnTheme = await enableKilnTheme();
+
+	const navbar = getStickyNavbar();
+	const restoreNavbarBlur = navbar ? disableNavbarBlur(navbar) : null;
+
+	const kilnBadge = document.createElement("span");
+	kilnBadge.classList.add("badge", "bg-warning", "mb-2");
+	kilnBadge.textContent = "Kiln";
+	container.prepend(kilnBadge);
+
+	const page = document.createElement("div");
+	page.className = "kiln-forum-posts-page px-3 px-lg-0";
+	page.innerHTML = `
+		<nav aria-label="breadcrumb">
+			<ol class="breadcrumb">
+				<li class="breadcrumb-item"><a class="text-muted" href="/users">People</a></li>
+				<li class="breadcrumb-item"><a class="text-muted" data-kiln="back-link"></a></li>
+				<li class="breadcrumb-item active" aria-current="page"><span class="text-light">Forum Posts</span></li>
+			</ol>
+		</nav>
+		<div class="d-flex align-items-center justify-content-between mb-3">
+			<h4 class="mb-0"></h4>
+			<div class="d-flex align-items-center gap-3">
+				<div class="form-check mb-0">
+					<input class="form-check-input" type="checkbox" id="kiln-forum-posts-replies" data-kiln="replies">
+					<label class="form-check-label" for="kiln-forum-posts-replies">Include replies</label>
+				</div>
+				<select class="form-select form-select-sm w-auto" data-kiln="sort">
+					<option value="newest">Newest to oldest</option>
+					<option value="oldest">Oldest to newest</option>
+				</select>
+				<button type="button" class="btn btn-sm btn-outline-secondary" data-kiln="forum-posts-back">
+					<i class="fas fa-arrow-left me-1"></i>Back to Profile
+				</button>
+			</div>
+		</div>
+		<div class="kiln-forum-results" data-kiln="results"></div>
+		<button type="button" class="btn btn-outline-secondary w-75 mx-auto mt-3 mb-3 d-none" data-kiln="load-more">Load More</button>
+	`;
+	const backLink = page.querySelector<HTMLAnchorElement>(
+		'[data-kiln="back-link"]',
+	)!;
+	backLink.href = basePath;
+	backLink.textContent = username || "Profile";
+	const title = page.querySelector("h4")!;
+	title.textContent = username ? `${username}'s forum posts` : "Forum Posts";
+	title.insertAdjacentHTML(
+		"beforeend",
+		kilnDisclosureBadgeHtml(showDisclosures),
+	);
+	kilnBadge.insertAdjacentElement("afterend", page);
+
+	const hr = document.createElement("hr");
+	hr.classList.add("mb-4");
+	page.insertAdjacentElement("afterend", hr);
+
+	const resultsContainer = page.querySelector<HTMLElement>(
+		'[data-kiln="results"]',
+	)!;
+	const loadMoreButton = page.querySelector<HTMLButtonElement>(
+		'[data-kiln="load-more"]',
+	)!;
+	const repliesCheckbox = page.querySelector<HTMLInputElement>(
+		'[data-kiln="replies"]',
+	)!;
+	const sortSelect =
+		page.querySelector<HTMLSelectElement>('[data-kiln="sort"]')!;
+
+	const restore = () => {
+		forumPostsPageOpen = false;
+		window.history.pushState(null, "", basePath);
+		document.title = originalTitle;
+		kilnBadge.remove();
+		page.remove();
+		hr.remove();
+		for (const child of existingChildren) child.style.display = "";
+		if (profileThemeStyle) profileThemeStyle.disabled = nativeThemeSuppressed;
+		if (!profileThemeEditorOpen && activeProfileTheme)
+			holdProfileTheme(activeProfileTheme);
+		else if (!profileThemeEditorOpen && !hadKilnTheme) applyKilnTheme(null);
+		restoreNavbarBlur?.();
+	};
+
+	backLink.addEventListener("click", (e) => {
+		e.preventDefault();
+		restore();
+	});
+	page
+		.querySelector<HTMLButtonElement>('[data-kiln="forum-posts-back"]')!
+		.addEventListener("click", restore);
+
+	document.title = username ? `${username}'s Forum Posts` : "Forum Posts";
+
+	let nextPage: number | null = null;
+	let requestId = 0;
+
+	const loadPage = async (pageNumber: number) => {
+		const id = ++requestId;
+		const result = await sendMessage("getForumSearch", {
+			page: pageNumber,
+			search: "",
+			sort: sortSelect.value,
+			type: repliesCheckbox.checked ? "both" : "thread",
+			authorIds: [userId],
+			categoryIds: [],
+			postedAfter: "",
+			postedBefore: "",
+		});
+		if (id !== requestId) return;
+
+		if (!result.ok) {
+			if (pageNumber === 1) {
+				resultsContainer.innerHTML = `<div class="alert alert-danger">Failed to load forum posts: ${escapeHtml(result.message)}</div>`;
+			} else {
+				setLoadMoreState(loadMoreButton, "error");
+			}
+			return;
+		}
+
+		if (pageNumber === 1) {
+			resultsContainer.innerHTML =
+				result.data.entries.length === 0
+					? `<div class="text-center text-muted border border-secondary rounded p-2">This user hasn't posted anything yet.</div>`
+					: "";
+		}
+
+		for (const entry of result.data.entries) {
+			resultsContainer.appendChild(renderEntry(entry));
+		}
+
+		nextPage = result.data.nextPage;
+		setLoadMoreState(loadMoreButton, nextPage === null ? "done" : "idle");
+	};
+
+	const runSearch = async () => {
+		resultsContainer.innerHTML = `<div class="text-center text-muted p-4"><span class="spinner-border spinner-border-sm"></span> Loading forum posts...</div>`;
+		setLoadMoreState(loadMoreButton, "hidden");
+		await loadPage(1);
+	};
+
+	repliesCheckbox.addEventListener("change", runSearch);
+	sortSelect.addEventListener("change", runSearch);
+
+	loadMoreButton.addEventListener("click", async () => {
+		if (nextPage === null) return;
+		setLoadMoreState(loadMoreButton, "loading");
+		await loadPage(nextPage);
+	});
+
+	await runSearch();
+}
+
+export async function userForumPosts(
+	userId: number,
+	showDisclosures: boolean,
+	condensedTabBar: boolean,
+) {
+	const tabList = document.getElementById("user-info-tabs");
+	if (!tabList) return;
+
+	const navItem = document.createElement("li");
+	navItem.classList.add("nav-item");
+	navItem.setAttribute("role", "presentation");
+	navItem.innerHTML = `
+		<a class="nav-link" href="#!">
+			<i class="fad fa-messages me-1"></i> Forum Posts
+		</a>
+	`;
+	applyKilnDisclosureTitle(
+		navItem.querySelector("a")!,
+		showDisclosures,
+		condensedTabBar ? "Forum Posts" : "Forum posts by this user",
+	);
+	tabList.appendChild(navItem);
+	if (condensedTabBar) condenseTabBar(tabList);
+
+	navItem.querySelector("a")!.addEventListener("click", (e) => {
+		e.preventDefault();
+		window.history.pushState(
+			null,
+			"",
+			`${window.location.pathname}?${FORUM_POSTS_QUERY_PARAM}`,
+		);
+		showForumPostsPage(userId, showDisclosures);
+	});
+
+	if (
+		new URLSearchParams(window.location.search).has(FORUM_POSTS_QUERY_PARAM)
+	) {
+		await showForumPostsPage(userId, showDisclosures);
 	}
 }
 
@@ -1732,7 +1733,7 @@ export async function rankingPositions(
 				.map(
 					([icon, label, value]) => `
 				<div class="mb-1">
-					<b><i class="${icon}" style="width:1em;text-align:center"></i> ${label}</b>
+					<b><i class="${icon}" class="me-1" style="width:1em;text-align:center"></i> ${label}</b>
 					<span class="float-end">#${value}</span>
 				</div>`,
 				)
@@ -1751,6 +1752,7 @@ type PublicProfileTheme = NonNullable<Extension.ProfileThemeApi["data"]>;
 
 export type ProfileThemePreferences = {
 	viewOthers?: boolean;
+	hideInaccessible?: boolean;
 	audio?: boolean;
 	customCss?: boolean;
 	effects?: boolean;
@@ -1761,6 +1763,7 @@ export type ProfileThemePreferences = {
 	banner?: boolean;
 	stickers?: boolean;
 	notes?: boolean;
+	videos?: boolean;
 	cards?: boolean;
 	backdrop?: boolean;
 };
@@ -1769,6 +1772,7 @@ let nativeThemeSuppressed = false;
 let activeProfileTheme: PublicProfileTheme | null = null;
 let profileThemeEditorOpen = false;
 let creationsPageOpen = false;
+let forumPostsPageOpen = false;
 
 const NAVBAR_FROST_STYLE_ID = "kiln-profile-navbar-frost";
 const NAVBAR_FROST_ALPHA_THRESHOLD = 0.85;
@@ -1877,6 +1881,7 @@ function withThemePreferences(
 		banner: prefs.banner === false ? undefined : theme.banner,
 		stickers: prefs.stickers === false ? undefined : theme.stickers,
 		notes: prefs.notes === false ? undefined : theme.notes,
+		videos: prefs.videos === false ? undefined : theme.videos,
 		cardStyle: prefs.cards === false ? undefined : theme.cardStyle,
 		avatarBackdrop: prefs.backdrop === false ? undefined : theme.avatarBackdrop,
 	};
@@ -2007,7 +2012,7 @@ export async function customProfileThemes(
 			const fresh = await fetchProfileTheme(targetUserId);
 			if (fresh) {
 				const preferredFresh = withThemePreferences(fresh, targetPrefs);
-				if (creationsPageOpen) {
+				if (creationsPageOpen || forumPostsPageOpen) {
 					activeProfileTheme = preferredFresh;
 				} else {
 					holdProfileTheme(preferredFresh);
@@ -2050,9 +2055,11 @@ export async function customProfileThemes(
 
 	const theme = await fetchProfileTheme(targetUserId);
 	if (!theme) return;
+	if (!isOwnProfile && prefs.hideInaccessible !== false && theme.inaccessible)
+		return;
 
 	const preferredTheme = withThemePreferences(theme, targetPrefs);
-	if (profileThemeEditorOpen || creationsPageOpen) {
+	if (profileThemeEditorOpen || creationsPageOpen || forumPostsPageOpen) {
 		activeProfileTheme = preferredTheme;
 	} else {
 		holdProfileTheme(preferredTheme);

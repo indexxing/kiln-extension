@@ -50,6 +50,11 @@ export default defineContentScript({
 		]).then(([values, showDisclosures]) => {
 			if (values.enabled.includes("favoritedPlaces"))
 				favoritedPlaces(showDisclosures);
+			if (values.enabled.includes("eventProgressTracker"))
+				eventProgressTracker(
+					showDisclosures,
+					values.config.eventProgressTracker.hideNativeEventCard,
+				);
 			if (values.enabled.includes("bestFriends")) bestFriends(showDisclosures);
 			if (values.enabled.includes("irlBrickPrice"))
 				irlBrickPrice(
@@ -287,6 +292,190 @@ async function favoritedPlaces(showDisclosures: boolean) {
 			ratingsHeader.appendChild(unfavoriteOverlay);
 		}),
 	);
+}
+
+function eventProgressTracker(
+	showDisclosures: boolean,
+	hideNativeEventCard: boolean,
+) {
+	const container = document.createElement("div");
+	container.id = "home-eventProgress";
+	container.innerHTML = `
+		<div class="card card-dash mcard mb-3" style="background: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url('https://cdn.polytoria.com/assets/MS2A5CfZKh2Gs1r_mFAV-Koe4nDi0ukn.png') !important; background-size: cover !important; background-position: center; overflow: hidden;">
+			<div class="card-body pb-0">
+				<div class="row w-100 g-0 align-items-center">
+					<div class="col">
+						<h3 class="text-uppercase mb-2">Trouble in Samhaven${kilnDisclosureBadgeHtml(showDisclosures)}</h3>
+						<a href="/places/145500" class="btn btn-primary btn-sm">Play the Event</a>
+						<a href="/my/avatar/" class="btn btn-success btn-sm ms-1">Customize your Avatar!</a>
+					</div>
+					<div class="col-md-2 text-center">
+						<small class="text-muted text-uppercase">Event Progress</small>
+						<h2 class="mb-0" data-kiln="event-progress">-%</h2>
+					</div>
+					<div class="col-md-2 text-center">
+						<small class="text-muted text-uppercase">Items Collected</small>
+						<h2 class="mb-0" data-kiln="event-collected">-/-</h2>
+					</div>
+					<div class="col-auto ms-auto">
+						<button type="button" class="btn btn-secondary btn-sm" data-kiln="event-refresh" title="Refresh event progress">
+							<i class="fas fa-rotate-right"></i>
+						</button>
+					</div>
+				</div>
+				<div class="progress my-3" role="progressbar" aria-label="Event progress" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+					<div class="progress-bar progress-bar-striped progress-bar-animated text-bg-success" data-kiln="event-progress-bar" style="width: 0%;">0%</div>
+				</div>
+				<hr>
+				<div class="card-body p-0 m-1 mb-0 d-flex" data-kiln="event-items" style="overflow-x: auto; gap: 8px; padding-bottom: 8px;"></div>
+				<div class="row text-center mt-4">
+					<div class="col">
+						<small class="text-muted">Feature of Kiln, happy halloween <3  -Index :&rpar;</small>
+					</div>
+				</div>
+			</div>
+		</div>
+	`;
+
+	const column = document.querySelector<HTMLElement>(".col-lg-8");
+	if (!column) return;
+
+	column.prepend(container);
+
+	if (hideNativeEventCard) {
+		document.querySelector(".home-event-container")?.remove();
+	}
+
+	const itemsContainer = container.querySelector<HTMLElement>(
+		'[data-kiln="event-items"]',
+	)!;
+	const progressEl = container.querySelector<HTMLElement>(
+		'[data-kiln="event-progress"]',
+	)!;
+	const collectedEl = container.querySelector<HTMLElement>(
+		'[data-kiln="event-collected"]',
+	)!;
+	const progressBarEl = container.querySelector<HTMLElement>(
+		'[data-kiln="event-progress-bar"]',
+	)!;
+	const refreshBtn = container.querySelector<HTMLButtonElement>(
+		'[data-kiln="event-refresh"]',
+	)!;
+
+	const setProgressBar = (percent: number) => {
+		progressBarEl.style.width = `${percent}%`;
+		progressBarEl.textContent = `${percent}%`;
+		progressBarEl.parentElement?.setAttribute("aria-valuenow", String(percent));
+	};
+
+	const renderError = (message: string) => {
+		progressEl.textContent = "-%";
+		collectedEl.textContent = "-/-";
+		setProgressBar(0);
+		itemsContainer.innerHTML = `
+			<div class="text-center p-3 w-100">
+				<img src="${errorIcon}" width="80" height="80" alt="">
+				<p class="text-muted mb-0">${escapeHtml(message)}</p>
+			</div>
+		`;
+	};
+
+	const renderItems = (items: Polytoria.EventItemsApi) => {
+		const ownedCount = items.filter((item) => item.isOwned).length;
+		const percent =
+			items.length > 0 ? Math.round((ownedCount / items.length) * 100) : 0;
+
+		progressEl.textContent = `${percent}%`;
+		collectedEl.textContent = `${ownedCount}/${items.length}`;
+		setProgressBar(percent);
+
+		itemsContainer.innerHTML = "";
+
+		for (const item of items) {
+			const link = document.createElement("a");
+			link.href = `/store/${item.assetID}`;
+			link.target = "_blank";
+			link.rel = "noopener noreferrer";
+			link.style.cssText = "flex: 0 0 auto; text-decoration: none;";
+			link.title = item.asset.description || item.asset.name;
+			link.innerHTML = `
+				<div class="scrollFade card place-card force-desktop text-center mb-2" style="background: transparent; width: 132px; height: auto; ${item.isOwned ? "" : "opacity: 0.65; filter: grayscale(1);"}">
+					<div class="card-body p-2">
+						<img src="${escapeHtml(safeHttpUrl(item.asset.thumbnailUrl) || errorIcon)}" class="img-fluid place-card-image" alt="${escapeHtml(item.asset.name)}" style="width: 112px; height: 112px; object-fit: contain;">
+						<div class="place-card-title text-center p-1" style="font-size: 0.8rem; text-align: center; height: auto; max-height: none;">${escapeHtml(item.asset.name)}</div>
+					</div>
+					${
+						item.isOwned
+							? `<span class="badge bg-success position-absolute top-0 start-0 m-1" style="z-index: 2; font-size: 0.7rem;" title="Owned" aria-label="Owned"><i class="fas fa-check"></i></span>`
+							: ""
+					}
+				</div>
+			`;
+			itemsContainer.appendChild(link);
+		}
+	};
+
+	let loading = false;
+	const load = async () => {
+		if (loading) return;
+		loading = true;
+		refreshBtn.disabled = true;
+		refreshBtn.querySelector("i")?.classList.add("fa-spin");
+		progressEl.textContent = "-%";
+		collectedEl.textContent = "-/-";
+		setProgressBar(0);
+		itemsContainer.innerHTML = `
+			<div class="text-center p-4 w-100">
+				<div class="spinner-border text-muted" role="status">
+					<span class="visually-hidden">Loading...</span>
+				</div>
+			</div>
+		`;
+
+		try {
+			const user = await getUserDetails();
+			if (!user) {
+				renderError(
+					"Could not determine your user session. Try refreshing the page.",
+				);
+				return;
+			}
+
+			const result = await sendMessage("getEventProgress", user.userId);
+			if (!result.ok) {
+				renderError(
+					result.code === "API_DISABLED"
+						? "Event progress tracking is currently unavailable. Please check back later!"
+						: result.message,
+				);
+				return;
+			}
+
+			if (result.data.length === 0) {
+				progressEl.textContent = "0%";
+				collectedEl.textContent = "0/0";
+				setProgressBar(0);
+				itemsContainer.innerHTML = `
+					<div class="text-center p-3 w-100">
+						<p class="text-muted mb-0">No items were found for the current event.</p>
+					</div>
+				`;
+				return;
+			}
+
+			renderItems(result.data);
+		} catch (err) {
+			console.error("[Kiln] Failed to load event progress", err);
+			renderError("Sorry! Event progress could not be loaded right now.");
+		} finally {
+			loading = false;
+			refreshBtn.disabled = false;
+			refreshBtn.querySelector("i")?.classList.remove("fa-spin");
+		}
+	};
+
+	refreshBtn.addEventListener("click", () => void load());
+	void load();
 }
 
 function bestFriends(showDisclosures: boolean) {
@@ -1446,6 +1635,7 @@ async function searchFeedPosts() {
 }
 
 const REORDERABLE_SECTION_LABELS: Record<string, string> = {
+	"home-eventProgress": "Event Progress",
 	"home-pinnedWorlds": "Pinned Worlds",
 	"home-friendsOnline": "Friends",
 	"home-news": "News",
@@ -1512,8 +1702,16 @@ async function reorderableHomepage(showDisclosures: boolean) {
 	};
 
 	const applyOrder = async () => {
-		const order = await _homepageSectionOrder.getValue();
-		if (order.length === 0) return;
+		const storedOrder = await _homepageSectionOrder.getValue();
+		if (storedOrder.length === 0) return;
+
+		const order = [...storedOrder];
+		for (const id of defaultOrder) {
+			if (order.includes(id)) continue;
+			const index = defaultOrder.indexOf(id);
+			order.splice(Math.min(index, order.length), 0, id);
+		}
+
 		orderSections(order);
 	};
 

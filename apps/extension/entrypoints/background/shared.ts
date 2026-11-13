@@ -18,6 +18,7 @@ import { Extension } from "@kiln/schemas";
 import type { Runtime } from "webextension-polyfill";
 import type z from "zod";
 import fallbackConfig from "@/utils/static/fallbackConfig.json";
+import { endpoints } from "@/utils/endpoints";
 import metadata from "@/utils/static/metadata.json";
 import { apiSessions, getFeedbackClientId, kilnBans } from "@/utils/storage";
 import type { ApiTypes, KilnBan, Result } from "@/utils/types";
@@ -29,9 +30,11 @@ import {
 } from "@/utils/utilities";
 import { logError } from "./errors";
 
-export const KILN_API_BASE = metadata.endpoints.extension;
+export const KILN_API_BASE = endpoints.extension;
 
-type ResolvedUrls = typeof metadata.endpoints;
+const CONFIG_API_BASE = metadata.endpoints.extension;
+
+type ResolvedUrls = typeof endpoints;
 export type FetchedConfig = Extension.ExtensionConfig & {
 	resolvedUrls: ResolvedUrls;
 };
@@ -172,18 +175,24 @@ export async function safeFetch<T>(
 }
 
 export async function fetchConfig(): Promise<FetchedConfig> {
+	if (import.meta.env.MODE === "development") {
+		return {
+			...fallbackConfig,
+			resolvedUrls: { ...endpoints, extension: KILN_API_BASE },
+		};
+	}
 	return dedupe("getConfig", () =>
 		pullCache(
 			"remoteConfig",
 			async () => {
 				const resolvedUrls = {
-					...metadata.endpoints,
+					...endpoints,
 					extension: KILN_API_BASE,
 				};
 				try {
 					const version = browser.runtime.getManifest().version;
 					const result = await safeFetch(
-						`${KILN_API_BASE}config?v=${version}`,
+						`${CONFIG_API_BASE}config?v=${version}`,
 						Extension.ExtensionConfigSchema,
 						{ method: "GET" },
 					);

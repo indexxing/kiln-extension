@@ -29,6 +29,7 @@ export type ProfileBanner = Extension.ProfileBanner;
 export type ProfileAmbient = Extension.ProfileAmbient;
 export type ProfileSticker = Extension.ProfileSticker;
 export type ProfileNote = Extension.ProfileNote;
+export type ProfileVideo = Extension.ProfileVideo;
 export type ProfileCardStyle = Extension.ProfileCardStyle;
 export type ProfileAvatarBackdrop = Extension.ProfileAvatarBackdrop;
 export type ProfilePointerEffects = Extension.ProfilePointerEffects;
@@ -41,13 +42,49 @@ export type ProfileThemeExtras = {
 	ambient?: ProfileAmbient;
 	stickers?: ProfileSticker[];
 	notes?: ProfileNote[];
+	videos?: ProfileVideo[];
 	cardStyle?: ProfileCardStyle;
 	avatarBackdrop?: ProfileAvatarBackdrop;
 	pointerEffects?: ProfilePointerEffects;
 };
 
-export const MAX_STICKERS = 10;
-export const MAX_NOTES = 10;
+export const DEFAULT_MAX_STICKERS = 30;
+export const DEFAULT_MAX_NOTES = 10;
+export const MAX_VIDEOS = 2;
+
+const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = new Set([
+	"youtube.com",
+	"www.youtube.com",
+	"m.youtube.com",
+	"music.youtube.com",
+	"youtube-nocookie.com",
+	"www.youtube-nocookie.com",
+]);
+
+export function parseYouTubeId(input: string): string | null {
+	const value = input.trim();
+	if (YOUTUBE_ID.test(value)) return value;
+	let url: URL;
+	try {
+		url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+	} catch {
+		return null;
+	}
+	let candidate: string | null = null;
+	if (url.hostname === "youtu.be") {
+		candidate = url.pathname.split("/")[1] ?? null;
+	} else if (YOUTUBE_HOSTS.has(url.hostname)) {
+		const [, kind, id] = url.pathname.split("/");
+		candidate =
+			kind === "watch"
+				? url.searchParams.get("v")
+				: ["embed", "shorts", "live", "v"].includes(kind)
+					? (id ?? null)
+					: null;
+	}
+	return candidate && YOUTUBE_ID.test(candidate) ? candidate : null;
+}
 
 export type ProfileSectionKey =
 	| "info"
@@ -60,6 +97,7 @@ export type ProfileSectionKey =
 	| "achievements"
 	| "creations"
 	| "images"
+	| "videos"
 	| "tabs";
 
 export const PROFILE_SECTIONS: {
@@ -77,6 +115,7 @@ export const PROFILE_SECTIONS: {
 	{ key: "achievements", label: "Pinned Achievements", column: "right" },
 	{ key: "creations", label: "Creations", column: "right" },
 	{ key: "images", label: "Images", column: "right" },
+	{ key: "videos", label: "Videos", column: "right" },
 	{ key: "tabs", label: "Friends / Guilds / Wall", column: "right" },
 ];
 
@@ -97,6 +136,7 @@ const STICKER_CLASS = "kiln-pt-sticker";
 const STICKER_LAYER_ID = "kiln-pt-stickers";
 const NOTE_CLASS = "kiln-pt-note";
 const NOTE_LAYER_ID = "kiln-pt-notes";
+const VIDEOS_ID = "kiln-pt-videos";
 const PAGE_ANCHOR = "page";
 
 const SECTION_TITLE_ICONS: [string, ProfileSectionKey][] = [
@@ -176,6 +216,7 @@ function getColumns(): { left: HTMLElement | null; right: HTMLElement | null } {
 
 function sectionKeyOf(el: Element): ProfileSectionKey | null {
 	if (el.id === "user-streak-card") return "streak";
+	if (el.id === VIDEOS_ID) return "videos";
 	if (el.querySelector("#user-menu-tabs-card")) return "tabs";
 	const title = el.matches("h6.section-title")
 		? el
@@ -249,6 +290,7 @@ function watchColumns() {
 		applyLayout(current?.layout);
 		renderStickers();
 		renderNotes();
+		renderVideos();
 		observeColumns();
 	});
 	observeColumns();
@@ -550,6 +592,55 @@ function renderNotes() {
 	positionNotes();
 }
 
+function renderVideos() {
+	const videos = (current?.videos ?? [])
+		.filter((v) => YOUTUBE_ID.test(v.videoId))
+		.slice(0, MAX_VIDEOS);
+	const existing = document.getElementById(VIDEOS_ID);
+
+	if (videos.length === 0) {
+		existing?.remove();
+		return;
+	}
+
+	const signature = videos.map((v) => v.videoId).join(",");
+	if (existing?.dataset.signature === signature) return;
+
+	const { right } = getColumns();
+	if (!right) return;
+
+	const card = existing ?? document.createElement("div");
+	card.id = VIDEOS_ID;
+	card.className = "card mb-3";
+	card.dataset.signature = signature;
+
+	const body = document.createElement("div");
+	body.className = "card-body d-flex flex-column gap-3";
+	for (const video of videos) {
+		const frame = document.createElement("iframe");
+		frame.src = `https://www.youtube-nocookie.com/embed/${video.videoId}`;
+		frame.title = "YouTube video";
+		frame.loading = "lazy";
+		frame.allowFullscreen = true;
+		frame.referrerPolicy = "strict-origin-when-cross-origin";
+		frame.allow = "encrypted-media; picture-in-picture; fullscreen";
+		Object.assign(frame.style, {
+			width: "100%",
+			aspectRatio: "16 / 9",
+			border: "0",
+			borderRadius: "8px",
+		});
+		body.appendChild(frame);
+	}
+	card.replaceChildren(body);
+
+	if (!existing) {
+		const tabs = findSectionGroup("tabs")?.els[0];
+		if (tabs?.parentElement === right) right.insertBefore(card, tabs);
+		else right.appendChild(card);
+	}
+}
+
 function pinAt(x: number, y: number): HTMLElement | null {
 	const nodes = [STICKER_LAYER_ID, NOTE_LAYER_ID].flatMap((id) => {
 		const layer = document.getElementById(id);
@@ -797,6 +888,7 @@ export function applyProfileExtras(
 	applyPointerEffects(extras?.pointerEffects);
 	renderStickers();
 	renderNotes();
+	renderVideos();
 	syncPinLifecycle();
 	setEditListeners(
 		!!editing && !!(extras?.stickers?.length || extras?.notes?.length),
@@ -821,6 +913,7 @@ export function extrasFromTheme(theme: {
 	ambient?: ProfileAmbient | null;
 	stickers?: ProfileSticker[] | null;
 	notes?: ProfileNote[] | null;
+	videos?: ProfileVideo[] | null;
 	cardStyle?: ProfileCardStyle | null;
 	avatarBackdrop?: ProfileAvatarBackdrop | null;
 	pointerEffects?: ProfilePointerEffects | null;
@@ -832,6 +925,7 @@ export function extrasFromTheme(theme: {
 		ambient: theme.ambient ?? undefined,
 		stickers: theme.stickers?.length ? theme.stickers : undefined,
 		notes: theme.notes?.length ? theme.notes : undefined,
+		videos: theme.videos?.length ? theme.videos : undefined,
 		cardStyle: theme.cardStyle ?? undefined,
 		avatarBackdrop: theme.avatarBackdrop ?? undefined,
 		pointerEffects: theme.pointerEffects ?? undefined,

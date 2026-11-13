@@ -27,3 +27,9 @@ web-ext.config.ts
 *.sln
 *.sw?
 .env
+
+v2-docs
+apps/api/sqlite.db*
+
+test-results
+playwright-report

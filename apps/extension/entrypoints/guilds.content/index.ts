@@ -61,6 +61,12 @@ export default defineContentScript({
 						view.creatorCommentLabels(showDisclosures),
 					);
 				}
+
+				if (values.enabled.includes("guildCreationsTab")) {
+					runFeature("guildCreationsTab", () =>
+						view.creationsTab(Number(second)),
+					);
+				}
 			}
 		});
 	},

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-import type { Extension } from "@kiln/schemas";
+import { type Extension, Theme } from "@kiln/schemas";
 import { hexToRgb } from "@/utils/theme";
 
 export type Ambient = Extension.ProfileAmbient;
@@ -37,12 +37,57 @@ export const AMBIENT_TYPES: {
 	{ key: "petals", label: "Petals", color: "#ffb7d5" },
 ];
 
-export const CARD_PRESET_OPACITY: Record<CardStyle["preset"], number> = {
-	solid: 100,
-	glass: 45,
-	outline: 0,
-	gradient: 85,
-};
+export const HALLOWEEN_AMBIENT_TYPES: typeof AMBIENT_TYPES = [
+	{ key: "bats", label: "Bats", color: "#a58bd6" },
+	{ key: "ghosts", label: "Ghosts", color: "#f2f2ff" },
+	{ key: "spiders", label: "Spiders", color: "#e8e8e8" },
+];
+
+export const HALLOWEEN_POINTER_CLICKS: {
+	key: NonNullable<PointerEffects["click"]>;
+	label: string;
+}[] = [
+	{ key: "pumpkins", label: "Pumpkins" },
+	{ key: "bats", label: "Bats" },
+];
+
+export const HALLOWEEN_POINTER_TRAILS: {
+	key: NonNullable<PointerEffects["trail"]>;
+	label: string;
+}[] = [{ key: "ghosts", label: "Ghosts" }];
+
+export const THANKSGIVING_AMBIENT_TYPES: typeof AMBIENT_TYPES = [
+	{ key: "leaves", label: "Autumn Leaves", color: "#e07a2f" },
+	{ key: "feathers", label: "Feathers", color: "#c9894a" },
+];
+
+export const THANKSGIVING_POINTER_CLICKS: {
+	key: NonNullable<PointerEffects["click"]>;
+	label: string;
+}[] = [
+	{ key: "leaves", label: "Leaves" },
+	{ key: "acorns", label: "Acorns" },
+];
+
+export const THANKSGIVING_POINTER_TRAILS: {
+	key: NonNullable<PointerEffects["trail"]>;
+	label: string;
+}[] = [{ key: "leaves", label: "Leaves" }];
+
+const THANKSGIVING_LEAF_COLORS = ["#d2691e", "#e07a2f", "#b5451b", "#e0a526"];
+
+export function ambientDefaultColor(
+	type: AmbientType | undefined,
+): string | undefined {
+	return [
+		...AMBIENT_TYPES,
+		...HALLOWEEN_AMBIENT_TYPES,
+		...THANKSGIVING_AMBIENT_TYPES,
+	].find((t) => t.key === type)?.color;
+}
+
+export const CARD_PRESET_OPACITY: Record<CardStyle["preset"], number> =
+	Theme.CARD_PRESET_OPACITY;
 
 type Particle = {
 	x: number;
@@ -93,8 +138,7 @@ function startAmbient(
 	if (ambientApplyTokens.get(id) !== token) return;
 
 	const type = ambient.type;
-	const color =
-		ambient.color ?? AMBIENT_TYPES.find((t) => t.key === type)?.color ?? "#fff";
+	const color = ambient.color ?? ambientDefaultColor(type) ?? "#fff";
 	const [r, g, b] = hexToRgb(color);
 	const rgba = (a: number) => `rgba(${r},${g},${b},${a})`;
 
@@ -131,12 +175,41 @@ function startAmbient(
 		bubbles: 25,
 		fireflies: 20,
 		petals: 25,
+		bats: 6,
+		ghosts: 5,
+		spiders: 4,
+		leaves: 30,
+		feathers: 18,
 	};
 	const count = Math.round(
 		perDensity[type] * Math.min(3, Math.max(1, ambient.density)),
 	);
 	const spawn = (anywhere: boolean): Particle => {
-		const rising = type === "bubbles" || type === "fireflies";
+		const phase = Math.random() * Math.PI * 2;
+		if (type === "bats") {
+			const drift = Math.random() < 0.5 ? -1 : 1;
+			return {
+				x: anywhere ? Math.random() * width : drift > 0 ? -20 : width + 20,
+				y: Math.random() * height * 0.75,
+				size: 5 + Math.random() * 5,
+				speed: 1 + Math.random() * 1.4,
+				drift,
+				phase,
+				spin: 0,
+			};
+		}
+		if (type === "spiders")
+			return {
+				x: 20 + Math.random() * Math.max(0, width - 40),
+				y: 40 + Math.random() * height * 0.35,
+				size: 3 + Math.random() * 2,
+				speed: 0.4 + Math.random() * 0.5,
+				drift: 0,
+				phase,
+				spin: 0,
+			};
+		const rising =
+			type === "bubbles" || type === "fireflies" || type === "ghosts";
 		return {
 			x: Math.random() * width,
 			y: anywhere ? Math.random() * height : rising ? height + 20 : -20,
@@ -147,7 +220,13 @@ function startAmbient(
 						? 4 + Math.random() * 10
 						: type === "petals"
 							? 5 + Math.random() * 5
-							: 1 + Math.random() * 2.5,
+							: type === "ghosts"
+								? 9 + Math.random() * 6
+								: type === "leaves"
+									? 6 + Math.random() * 5
+									: type === "feathers"
+										? 7 + Math.random() * 5
+										: 1 + Math.random() * 2.5,
 			speed:
 				type === "rain"
 					? 9 + Math.random() * 6
@@ -155,9 +234,11 @@ function startAmbient(
 						? 0
 						: type === "fireflies"
 							? 0.15 + Math.random() * 0.3
-							: 0.4 + Math.random() * 1.1,
+							: type === "ghosts"
+								? 0.3 + Math.random() * 0.4
+								: 0.4 + Math.random() * 1.1,
 			drift: (Math.random() - 0.5) * 0.6,
-			phase: Math.random() * Math.PI * 2,
+			phase,
 			spin: (Math.random() - 0.5) * 0.04,
 		};
 	};
@@ -234,6 +315,68 @@ function startAmbient(
 					ctx.restore();
 					break;
 				}
+				case "bats": {
+					p.x += p.speed * p.drift;
+					p.y += Math.sin(t * 2 + p.phase) * 0.6;
+					ctx.save();
+					ctx.translate(p.x, p.y);
+					ctx.fillStyle = rgba(0.85);
+					drawBat(ctx, p.size, Math.sin(t * 12 + p.phase));
+					ctx.restore();
+					break;
+				}
+				case "ghosts": {
+					p.y -= p.speed;
+					p.x += Math.sin(t * 0.9 + p.phase) * 0.5 + p.drift * 0.3;
+					ctx.save();
+					ctx.translate(p.x, p.y);
+					ctx.globalAlpha = 0.35 + 0.3 * Math.abs(Math.sin(t * 0.6 + p.phase));
+					ctx.fillStyle = rgba(1);
+					drawGhost(ctx, p.size, t * 3 + p.phase);
+					ctx.restore();
+					break;
+				}
+				case "leaves": {
+					p.y += p.speed * 0.9;
+					p.x += Math.sin(t * 0.8 + p.phase) * 1.1 + p.drift;
+					p.phase += p.spin;
+					ctx.save();
+					ctx.translate(p.x, p.y);
+					ctx.rotate(p.phase + Math.sin(t + p.phase) * 0.6);
+					ctx.fillStyle = rgba(0.9);
+					ctx.strokeStyle = "rgba(60,25,5,0.5)";
+					drawLeaf(ctx, p.size);
+					ctx.restore();
+					break;
+				}
+				case "feathers": {
+					p.y += p.speed * 0.6;
+					p.x += Math.sin(t * 0.7 + p.phase) * 0.9 + p.drift;
+					ctx.save();
+					ctx.translate(p.x, p.y);
+					ctx.rotate(Math.sin(t * 0.9 + p.phase) * 0.9);
+					ctx.fillStyle = rgba(0.85);
+					ctx.strokeStyle = "rgba(60,30,10,0.55)";
+					drawFeather(ctx, p.size);
+					ctx.restore();
+					break;
+				}
+				case "spiders": {
+					const y = p.y + Math.sin(t * p.speed + p.phase) * 24;
+					ctx.strokeStyle = rgba(0.35);
+					ctx.lineWidth = 1;
+					ctx.beginPath();
+					ctx.moveTo(p.x, 0);
+					ctx.lineTo(p.x, y);
+					ctx.stroke();
+					ctx.save();
+					ctx.translate(p.x, y);
+					ctx.fillStyle = rgba(0.9);
+					ctx.strokeStyle = rgba(0.9);
+					drawSpider(ctx, p.size, Math.sin(t * 4 + p.phase));
+					ctx.restore();
+					break;
+				}
 			}
 
 			const out =
@@ -292,6 +435,16 @@ function ensureLiquidGlassFilter(id: string) {
 	document.body.appendChild(svg);
 }
 
+const TILT_MAX_VIEWPORT_RATIO = 0.6;
+
+function isMassiveCard(card: HTMLElement): boolean {
+	const { width, height } = card.getBoundingClientRect();
+	return (
+		width > window.innerWidth * TILT_MAX_VIEWPORT_RATIO ||
+		height > window.innerHeight * TILT_MAX_VIEWPORT_RATIO
+	);
+}
+
 function enableTilt(root: HTMLElement, cardSelector: string): () => void {
 	let tilted: HTMLElement | null = null;
 	const reset = () => {
@@ -303,7 +456,7 @@ function enableTilt(root: HTMLElement, cardSelector: string): () => void {
 			cardSelector,
 		);
 		if (card !== tilted) reset();
-		if (!card || !root.contains(card)) return;
+		if (!card || !root.contains(card) || isMassiveCard(card)) return;
 		tilted = card;
 		const r = card.getBoundingClientRect();
 		const px = (e.clientX - r.left) / r.width - 0.5;
@@ -405,7 +558,18 @@ export function applyCardStyle(
 }
 
 type Spark = {
-	kind: "star" | "heart" | "ring" | "rect" | "dot" | "glow";
+	kind:
+		| "star"
+		| "heart"
+		| "ring"
+		| "rect"
+		| "dot"
+		| "glow"
+		| "pumpkin"
+		| "bat"
+		| "ghost"
+		| "leaf"
+		| "acorn";
 	x: number;
 	y: number;
 	vx: number;
@@ -438,6 +602,166 @@ function drawHeart(ctx: CanvasRenderingContext2D, size: number) {
 	ctx.bezierCurveTo(-s * 1.2, -s * 0.2, -s * 0.5, -s * 1.1, 0, -s * 0.4);
 	ctx.bezierCurveTo(s * 0.5, -s * 1.1, s * 1.2, -s * 0.2, 0, s * 0.6);
 	ctx.fill();
+}
+
+function drawBat(ctx: CanvasRenderingContext2D, s: number, flap: number) {
+	const lift = flap * s * 0.7;
+	ctx.beginPath();
+	ctx.ellipse(0, 0, s * 0.35, s * 0.6, 0, 0, Math.PI * 2);
+	ctx.fill();
+	for (const side of [-1, 1]) {
+		ctx.beginPath();
+		ctx.moveTo(side * s * 0.25, -s * 0.3);
+		ctx.quadraticCurveTo(
+			side * s * 1.1,
+			-s * 0.9 - lift,
+			side * s * 2.1,
+			-s * 0.4 - lift,
+		);
+		ctx.quadraticCurveTo(
+			side * s * 1.75,
+			-s * 0.05 - lift * 0.5,
+			side * s * 1.5,
+			s * 0.25 - lift * 0.4,
+		);
+		ctx.quadraticCurveTo(
+			side * s * 1.2,
+			-s * 0.05 - lift * 0.3,
+			side * s * 0.95,
+			s * 0.3 - lift * 0.2,
+		);
+		ctx.quadraticCurveTo(side * s * 0.65, 0, side * s * 0.25, s * 0.3);
+		ctx.closePath();
+		ctx.fill();
+	}
+	ctx.beginPath();
+	ctx.moveTo(-s * 0.3, -s * 0.45);
+	ctx.lineTo(-s * 0.2, -s * 0.85);
+	ctx.lineTo(-s * 0.05, -s * 0.5);
+	ctx.lineTo(s * 0.05, -s * 0.5);
+	ctx.lineTo(s * 0.2, -s * 0.85);
+	ctx.lineTo(s * 0.3, -s * 0.45);
+	ctx.closePath();
+	ctx.fill();
+}
+
+function drawGhost(ctx: CanvasRenderingContext2D, s: number, wave: number) {
+	const bottom = s * 1.2;
+	const bumps = 3;
+	ctx.beginPath();
+	ctx.arc(0, 0, s, Math.PI, 0);
+	ctx.lineTo(s, bottom);
+	for (let i = 0; i < bumps; i++) {
+		const x0 = s - (2 * s * i) / bumps;
+		const x1 = s - (2 * s * (i + 1)) / bumps;
+		const sway = Math.sin(wave + i) * s * 0.15;
+		ctx.quadraticCurveTo((x0 + x1) / 2, bottom - s * 0.35 + sway, x1, bottom);
+	}
+	ctx.closePath();
+	ctx.fill();
+	ctx.fillStyle = "rgba(20,10,30,0.7)";
+	for (const side of [-1, 1]) {
+		ctx.beginPath();
+		ctx.ellipse(
+			side * s * 0.35,
+			-s * 0.1,
+			s * 0.14,
+			s * 0.22,
+			0,
+			0,
+			Math.PI * 2,
+		);
+		ctx.fill();
+	}
+}
+
+function drawSpider(ctx: CanvasRenderingContext2D, s: number, wiggle: number) {
+	ctx.lineWidth = Math.max(1, s * 0.25);
+	for (const side of [-1, 1])
+		for (let i = 0; i < 4; i++) {
+			const angle = -0.9 + i * 0.6 + wiggle * 0.12 * (i % 2 ? 1 : -1);
+			ctx.beginPath();
+			ctx.moveTo(0, 0);
+			ctx.quadraticCurveTo(
+				side * Math.cos(angle) * s * 1.6,
+				Math.sin(angle) * s * 1.6 - s * 0.6,
+				side * Math.cos(angle) * s * 2.4,
+				Math.sin(angle) * s * 2.4 + s * 0.4,
+			);
+			ctx.stroke();
+		}
+	ctx.beginPath();
+	ctx.ellipse(0, s * 0.3, s * 0.8, s, 0, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.beginPath();
+	ctx.arc(0, -s * 0.75, s * 0.5, 0, Math.PI * 2);
+	ctx.fill();
+}
+
+function drawPumpkin(ctx: CanvasRenderingContext2D, s: number) {
+	const body = ctx.fillStyle;
+	ctx.fillStyle = "#3f6b2a";
+	ctx.fillRect(-s * 0.12, -s * 1.05, s * 0.24, s * 0.4);
+	ctx.fillStyle = body;
+	ctx.beginPath();
+	ctx.ellipse(0, 0, s, s * 0.8, 0, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.strokeStyle = "rgba(0,0,0,0.18)";
+	ctx.lineWidth = 1;
+	ctx.beginPath();
+	ctx.ellipse(0, 0, s * 0.45, s * 0.8, 0, 0, Math.PI * 2);
+	ctx.stroke();
+	ctx.fillStyle = "rgba(40,18,0,0.8)";
+	ctx.beginPath();
+	for (const side of [-1, 1]) {
+		ctx.moveTo(side * s * 0.5, -s * 0.1);
+		ctx.lineTo(side * s * 0.2, -s * 0.1);
+		ctx.lineTo(side * s * 0.35, -s * 0.4);
+		ctx.closePath();
+	}
+	ctx.moveTo(-s * 0.55, s * 0.2);
+	ctx.quadraticCurveTo(0, s * 0.65, s * 0.55, s * 0.2);
+	ctx.quadraticCurveTo(0, s * 0.4, -s * 0.55, s * 0.2);
+	ctx.fill();
+}
+
+function drawLeaf(ctx: CanvasRenderingContext2D, s: number) {
+	ctx.beginPath();
+	ctx.moveTo(0, -s);
+	ctx.bezierCurveTo(s * 1.1, -s * 0.5, s * 0.9, s * 0.6, 0, s);
+	ctx.bezierCurveTo(-s * 0.9, s * 0.6, -s * 1.1, -s * 0.5, 0, -s);
+	ctx.closePath();
+	ctx.fill();
+	ctx.lineWidth = Math.max(0.8, s * 0.1);
+	ctx.beginPath();
+	ctx.moveTo(0, -s * 0.9);
+	ctx.lineTo(0, s * 1.3);
+	ctx.stroke();
+}
+
+function drawFeather(ctx: CanvasRenderingContext2D, s: number) {
+	ctx.beginPath();
+	ctx.ellipse(0, 0, s * 0.35, s, 0, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.lineWidth = Math.max(0.8, s * 0.09);
+	ctx.beginPath();
+	ctx.moveTo(0, -s);
+	ctx.lineTo(0, s * 1.35);
+	ctx.stroke();
+}
+
+function drawAcorn(ctx: CanvasRenderingContext2D, s: number) {
+	const body = ctx.fillStyle;
+	ctx.fillStyle = "#b9803f";
+	ctx.beginPath();
+	ctx.ellipse(0, s * 0.25, s * 0.6, s * 0.8, 0, 0, Math.PI * 2);
+	ctx.fill();
+	ctx.fillStyle = body;
+	ctx.beginPath();
+	ctx.arc(0, -s * 0.1, s * 0.7, Math.PI, 0);
+	ctx.closePath();
+	ctx.fill();
+	ctx.fillRect(-s * 0.07, -s * 0.95, s * 0.14, s * 0.3);
 }
 
 const pointerKeys = new Map<string, string>();
@@ -570,6 +894,21 @@ function startPointerEffects(
 					ctx.fill();
 					break;
 				}
+				case "pumpkin":
+					drawPumpkin(ctx, p.size);
+					break;
+				case "bat":
+					drawBat(ctx, p.size, Math.sin(p.life * 0.9));
+					break;
+				case "ghost":
+					drawGhost(ctx, p.size, p.life * 0.3);
+					break;
+				case "leaf":
+					drawLeaf(ctx, p.size);
+					break;
+				case "acorn":
+					drawAcorn(ctx, p.size);
+					break;
 			}
 			ctx.restore();
 		}
@@ -636,6 +975,69 @@ function startPointerEffects(
 						color: confettiColor(),
 					});
 				break;
+			case "pumpkins":
+				for (let i = 0; i < 5; i++)
+					spark({
+						kind: "pumpkin",
+						x,
+						y,
+						vx: rand(-2.5, 2.5),
+						vy: rand(-5, -2.5),
+						gravity: 0.22,
+						size: rand(7, 11),
+						maxLife: 56,
+						spin: rand(-0.12, 0.12),
+					});
+				break;
+			case "leaves":
+				for (let i = 0; i < 7; i++)
+					spark({
+						kind: "leaf",
+						x,
+						y,
+						vx: rand(-2.5, 2.5),
+						vy: rand(-4, -1.5),
+						gravity: 0.12,
+						size: rand(5, 9),
+						maxLife: 60,
+						spin: rand(-0.15, 0.15),
+						color:
+							effects!.color ??
+							THANKSGIVING_LEAF_COLORS[
+								Math.floor(Math.random() * THANKSGIVING_LEAF_COLORS.length)
+							],
+					});
+				break;
+			case "acorns":
+				for (let i = 0; i < 5; i++)
+					spark({
+						kind: "acorn",
+						x,
+						y,
+						vx: rand(-2.5, 2.5),
+						vy: rand(-5, -2.5),
+						gravity: 0.22,
+						size: rand(5, 8),
+						maxLife: 56,
+						spin: rand(-0.12, 0.12),
+						color: effects!.color ?? "#7a4a1e",
+					});
+				break;
+			case "bats":
+				for (let i = 0; i < 6; i++) {
+					const a = -Math.PI / 2 + rand(-1.1, 1.1);
+					const v = rand(2, 4);
+					spark({
+						kind: "bat",
+						x,
+						y,
+						vx: Math.cos(a) * v,
+						vy: Math.sin(a) * v,
+						size: rand(4, 7),
+						maxLife: 50,
+					});
+				}
+				break;
 		}
 		kick();
 	};
@@ -669,6 +1071,34 @@ function startPointerEffects(
 				break;
 			case "glow":
 				spark({ kind: "glow", x, y, size: 16, grow: -0.3, maxLife: 30 });
+				break;
+			case "leaves":
+				spark({
+					kind: "leaf",
+					x,
+					y,
+					vx: (Math.random() - 0.5) * 0.8,
+					vy: 0.5,
+					size: 6,
+					maxLife: 40,
+					spin: (Math.random() - 0.5) * 0.2,
+					color:
+						effects!.color ??
+						THANKSGIVING_LEAF_COLORS[
+							Math.floor(Math.random() * THANKSGIVING_LEAF_COLORS.length)
+						],
+				});
+				break;
+			case "ghosts":
+				spark({
+					kind: "ghost",
+					x,
+					y,
+					vx: (Math.random() - 0.5) * 0.5,
+					vy: -0.7,
+					size: 6,
+					maxLife: 36,
+				});
 				break;
 		}
 		kick();

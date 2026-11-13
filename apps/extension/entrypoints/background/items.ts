@@ -40,6 +40,23 @@ onMessage("getStore", ({ data: params }) =>
 	}),
 );
 
+onMessage("getStoreBodies", () =>
+	handle(async () => {
+		const config = await withApi("public_api", "public");
+		return pullKVCache(
+			"storeBodies",
+			"all",
+			() =>
+				safeFetch(
+					`${config.resolvedUrls.public}store/?types[]=body&limit=100&page=1`,
+					Polytoria.StoreApiSchema,
+				),
+			24 * 60 * 60 * 1000,
+			false,
+		);
+	}),
+);
+
 onMessage("getItem", ({ data: id }) =>
 	handle(async () => {
 		const config = await withApi("public_api", "public");

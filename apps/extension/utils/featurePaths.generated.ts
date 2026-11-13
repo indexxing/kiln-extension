@@ -4,6 +4,7 @@
 export const PATH_FEATURES = {
 	"https://polytoria.com/*": [
 		"advancedForumSearch",
+		"commandPalette",
 		"disableMembershipThemes",
 		"forumMentions",
 		"friendReqNotifActions",
@@ -16,6 +17,7 @@ export const PATH_FEATURES = {
 		"nftItems",
 		"nlfItems",
 		"pastNotifications",
+		"privateMessaging",
 		"publicAvatarOutfits",
 		"reenableSearch",
 		"stickyNavbar",
@@ -28,6 +30,7 @@ export const PATH_FEATURES = {
 		"bestFriends",
 		"dailyChallengesRefreshing",
 		"disableInfiniteScrolling",
+		"eventProgressTracker",
 		"favoritedPlaces",
 		"homeFriendJoins",
 		"irlBrickPrice",
@@ -40,6 +43,7 @@ export const PATH_FEATURES = {
 		"bestFriends",
 		"dailyChallengesRefreshing",
 		"disableInfiniteScrolling",
+		"eventProgressTracker",
 		"favoritedPlaces",
 		"homeFriendJoins",
 		"irlBrickPrice",
@@ -49,18 +53,26 @@ export const PATH_FEATURES = {
 		"searchFeedPosts"
 	],
 	"https://polytoria.com/create*": [
+		"addonLibrary",
 		"assetApprovedNotifications",
 		"audioToolboxPreviews",
+		"autoPrivateAssetsOnUpload",
 		"favoredDevelopmentGuild",
 		"modelTreeInspector",
-		"v2WorldLabels"
+		"toolboxPageJump",
+		"v2WorldLabels",
+		"worldEditTime"
 	],
 	"https://polytoria.com/create/place*": [
+		"addonLibrary",
 		"assetApprovedNotifications",
 		"audioToolboxPreviews",
+		"autoPrivateAssetsOnUpload",
 		"favoredDevelopmentGuild",
 		"modelTreeInspector",
-		"v2WorldLabels"
+		"toolboxPageJump",
+		"v2WorldLabels",
+		"worldEditTime"
 	],
 	"https://polytoria.com/create/place/*": [
 		"activeChallengesDisplay",
@@ -68,12 +80,14 @@ export const PATH_FEATURES = {
 		"creatorCommentLabels",
 		"detailedPlaceReviews",
 		"disableInfiniteScrolling",
+		"donationLinks",
 		"downloadableCopyableWorlds",
 		"favoritedPlaces",
 		"improvedAchievements",
 		"irlBrickPrice",
 		"legacyWorldDiscoveryLayout",
 		"legacyWorldViewLayout",
+		"placeAIDisclosures",
 		"placeConsumablesTab",
 		"placeManagement",
 		"placeRevenue",
@@ -132,20 +146,24 @@ export const PATH_FEATURES = {
 	],
 	"https://polytoria.com/guilds": [
 		"condensedJoinedGuildsList",
-		"creatorCommentLabels"
+		"creatorCommentLabels",
+		"guildCreationsTab"
 	],
 	"https://polytoria.com/guilds/*": [
 		"condensedJoinedGuildsList",
-		"creatorCommentLabels"
+		"creatorCommentLabels",
+		"guildCreationsTab"
 	],
 	"https://polytoria.com/guilds?*": [
 		"condensedJoinedGuildsList",
-		"creatorCommentLabels"
+		"creatorCommentLabels",
+		"guildCreationsTab"
 	],
 	"https://polytoria.com/home": [
 		"bestFriends",
 		"dailyChallengesRefreshing",
 		"disableInfiniteScrolling",
+		"eventProgressTracker",
 		"favoritedPlaces",
 		"homeFriendJoins",
 		"irlBrickPrice",
@@ -158,6 +176,7 @@ export const PATH_FEATURES = {
 		"bestFriends",
 		"dailyChallengesRefreshing",
 		"disableInfiniteScrolling",
+		"eventProgressTracker",
 		"favoritedPlaces",
 		"homeFriendJoins",
 		"irlBrickPrice",
@@ -173,18 +192,26 @@ export const PATH_FEATURES = {
 		"messagePreviewExpand"
 	],
 	"https://polytoria.com/library": [
+		"addonLibrary",
 		"assetApprovedNotifications",
 		"audioToolboxPreviews",
+		"autoPrivateAssetsOnUpload",
 		"favoredDevelopmentGuild",
 		"modelTreeInspector",
-		"v2WorldLabels"
+		"toolboxPageJump",
+		"v2WorldLabels",
+		"worldEditTime"
 	],
 	"https://polytoria.com/models/*": [
+		"addonLibrary",
 		"assetApprovedNotifications",
 		"audioToolboxPreviews",
+		"autoPrivateAssetsOnUpload",
 		"favoredDevelopmentGuild",
 		"modelTreeInspector",
-		"v2WorldLabels"
+		"toolboxPageJump",
+		"v2WorldLabels",
+		"worldEditTime"
 	],
 	"https://polytoria.com/my/*": [
 		"avatarSandbox",
@@ -200,12 +227,14 @@ export const PATH_FEATURES = {
 		"creatorCommentLabels",
 		"detailedPlaceReviews",
 		"disableInfiniteScrolling",
+		"donationLinks",
 		"downloadableCopyableWorlds",
 		"favoritedPlaces",
 		"improvedAchievements",
 		"irlBrickPrice",
 		"legacyWorldDiscoveryLayout",
 		"legacyWorldViewLayout",
+		"placeAIDisclosures",
 		"placeConsumablesTab",
 		"placeManagement",
 		"placeRevenue",
@@ -223,12 +252,14 @@ export const PATH_FEATURES = {
 		"creatorCommentLabels",
 		"detailedPlaceReviews",
 		"disableInfiniteScrolling",
+		"donationLinks",
 		"downloadableCopyableWorlds",
 		"favoritedPlaces",
 		"improvedAchievements",
 		"irlBrickPrice",
 		"legacyWorldDiscoveryLayout",
 		"legacyWorldViewLayout",
+		"placeAIDisclosures",
 		"placeConsumablesTab",
 		"placeManagement",
 		"placeRevenue",
@@ -246,12 +277,14 @@ export const PATH_FEATURES = {
 		"creatorCommentLabels",
 		"detailedPlaceReviews",
 		"disableInfiniteScrolling",
+		"donationLinks",
 		"downloadableCopyableWorlds",
 		"favoritedPlaces",
 		"improvedAchievements",
 		"irlBrickPrice",
 		"legacyWorldDiscoveryLayout",
 		"legacyWorldViewLayout",
+		"placeAIDisclosures",
 		"placeConsumablesTab",
 		"placeManagement",
 		"placeRevenue",
@@ -274,6 +307,7 @@ export const PATH_FEATURES = {
 		"creatorCommentLabels",
 		"disableInfiniteScrolling",
 		"eventItems",
+		"hideCollectibles",
 		"hoardersList",
 		"irlBrickPrice",
 		"itemOwnerCheck",
@@ -293,6 +327,7 @@ export const PATH_FEATURES = {
 		"creatorCommentLabels",
 		"disableInfiniteScrolling",
 		"eventItems",
+		"hideCollectibles",
 		"hoardersList",
 		"irlBrickPrice",
 		"itemOwnerCheck",
@@ -312,6 +347,7 @@ export const PATH_FEATURES = {
 		"creatorCommentLabels",
 		"disableInfiniteScrolling",
 		"eventItems",
+		"hideCollectibles",
 		"hoardersList",
 		"irlBrickPrice",
 		"itemOwnerCheck",
@@ -361,6 +397,8 @@ export const PATH_FEATURES = {
 		"classicAvatarPerspective",
 		"collectibleOwnerLabels",
 		"customProfileThemes",
+		"donationLinks",
+		"editingStatus",
 		"inventoryCollectibles",
 		"irlBrickPrice",
 		"kilnRegistrationDate",
@@ -373,6 +411,7 @@ export const PATH_FEATURES = {
 		"timezoneSharing",
 		"userAliases",
 		"userCreationsTab",
+		"userForumPosts",
 		"userIdDisplay",
 		"userNotes"
 	],
@@ -384,6 +423,8 @@ export const PATH_FEATURES = {
 		"classicAvatarPerspective",
 		"collectibleOwnerLabels",
 		"customProfileThemes",
+		"donationLinks",
+		"editingStatus",
 		"inventoryCollectibles",
 		"irlBrickPrice",
 		"kilnRegistrationDate",
@@ -396,6 +437,7 @@ export const PATH_FEATURES = {
 		"timezoneSharing",
 		"userAliases",
 		"userCreationsTab",
+		"userForumPosts",
 		"userIdDisplay",
 		"userNotes"
 	],
@@ -407,6 +449,8 @@ export const PATH_FEATURES = {
 		"classicAvatarPerspective",
 		"collectibleOwnerLabels",
 		"customProfileThemes",
+		"donationLinks",
+		"editingStatus",
 		"inventoryCollectibles",
 		"irlBrickPrice",
 		"kilnRegistrationDate",
@@ -419,6 +463,7 @@ export const PATH_FEATURES = {
 		"timezoneSharing",
 		"userAliases",
 		"userCreationsTab",
+		"userForumPosts",
 		"userIdDisplay",
 		"userNotes"
 	],
@@ -430,6 +475,8 @@ export const PATH_FEATURES = {
 		"classicAvatarPerspective",
 		"collectibleOwnerLabels",
 		"customProfileThemes",
+		"donationLinks",
+		"editingStatus",
 		"inventoryCollectibles",
 		"irlBrickPrice",
 		"kilnRegistrationDate",
@@ -442,6 +489,7 @@ export const PATH_FEATURES = {
 		"timezoneSharing",
 		"userAliases",
 		"userCreationsTab",
+		"userForumPosts",
 		"userIdDisplay",
 		"userNotes"
 	]

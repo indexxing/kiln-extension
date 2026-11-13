@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import type { Extension } from "@kiln/schemas";
+import { sendMessage } from "@/utils/messaging";
 import {
 	_forumDrafts,
 	_forumImages,
@@ -28,6 +30,7 @@ import {
 	formatNotificationRelativeTime,
 	getProfanityFilter,
 	kilnDisclosureBadgeHtml,
+	onBrokenImage,
 } from "@/utils/utilities";
 
 const DEFAULT_MAX_CHARS = 5000;
@@ -80,6 +83,36 @@ function getComposerToolbar(
 	return toolbar;
 }
 
+interface ComposerActions {
+	host: HTMLElement;
+	buttonClass: string;
+}
+
+function getComposerActions(
+	textarea: HTMLTextAreaElement,
+	showDisclosures: boolean,
+): ComposerActions {
+	const nativeBar = textarea
+		.closest("form")
+		?.querySelector<HTMLElement>(".markdown-toolbar");
+	if (!nativeBar) {
+		return {
+			host: getComposerToolbar(textarea, showDisclosures).end,
+			buttonClass: "btn btn-sm btn-secondary",
+		};
+	}
+
+	let host = nativeBar.querySelector<HTMLElement>(
+		":scope > .kiln-composer-actions",
+	);
+	if (!host) {
+		host = document.createElement("div");
+		host.className = "kiln-composer-actions d-flex align-items-center ms-auto";
+		nativeBar.appendChild(host);
+	}
+	return { host, buttonClass: "markdown-toolbar-btn" };
+}
+
 function getComposerEditor(textarea: HTMLTextAreaElement): ComposerEditor {
 	const existing = composerEditors.get(textarea);
 	if (existing) return existing;
@@ -99,21 +132,6 @@ function getComposerEditor(textarea: HTMLTextAreaElement): ComposerEditor {
 	const editor = { wrapper, container };
 	composerEditors.set(textarea, editor);
 	return editor;
-}
-
-function getComposerActionBar(textarea: HTMLTextAreaElement): HTMLElement {
-	const container = getComposerEditor(textarea).container;
-	const existing = container.querySelector<HTMLElement>(
-		".kiln-composer-action-bar",
-	);
-	if (existing) return existing;
-
-	const bar = document.createElement("div");
-	bar.className = "kiln-composer-action-bar d-flex align-items-center gap-1";
-	bar.style.cssText =
-		"position: absolute; right: 0.5rem; bottom: 0.5rem; z-index: 2;";
-	container.appendChild(bar);
-	return bar;
 }
 
 export function forumMarkdownButtons(showDisclosures: boolean) {
@@ -200,27 +218,306 @@ export function forumCharacterCount() {
 	getComposerEditor(textarea).container.appendChild(counter);
 }
 
-export function forumPostPreview(
-	autoShow: boolean,
-	showDisclosures: boolean,
-	imageLibraryEnabled: boolean,
-) {
+const mentionSelectorTextareas = new WeakSet<HTMLTextAreaElement>();
+
+export function forumMentionSelector() {
+	const textarea = getComposerTextarea();
+	if (!textarea || mentionSelectorTextareas.has(textarea)) return;
+	mentionSelectorTextareas.add(textarea);
+
+	const { container } = getComposerEditor(textarea);
+
+	const dropdown = document.createElement("div");
+	dropdown.className =
+		"kiln-mention-dropdown list-group position-absolute shadow-sm d-none";
+	dropdown.style.cssText =
+		"z-index: 1000; max-height: 220px; overflow-y: auto;";
+	container.appendChild(dropdown);
+
+	const caretMirror = document.createElement("div");
+	caretMirror.setAttribute("aria-hidden", "true");
+	caretMirror.style.cssText =
+		"position: fixed; top: 0; left: 0; visibility: hidden; pointer-events: none;";
+	document.body.appendChild(caretMirror);
+
+	const caretStyleProps = [
+		"boxSizing",
+		"paddingTop",
+		"paddingRight",
+		"paddingBottom",
+		"paddingLeft",
+		"borderTopWidth",
+		"borderRightWidth",
+		"borderBottomWidth",
+		"borderLeftWidth",
+		"borderStyle",
+		"fontFamily",
+		"fontSize",
+		"fontWeight",
+		"fontStyle",
+		"fontVariant",
+		"letterSpacing",
+		"wordSpacing",
+		"lineHeight",
+		"textAlign",
+		"textIndent",
+		"textTransform",
+		"whiteSpace",
+		"overflowWrap",
+		"wordBreak",
+		"tabSize",
+		"direction",
+	] as const;
+
+	let users: Extension.ActivitySearchApi["data"] = [];
+	let activeIndex = -1;
+	let requestId = 0;
+	let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const cancelPendingSearch = () => {
+		clearTimeout(debounceTimer);
+		requestId++;
+	};
+
+	const hideSuggestions = () => {
+		cancelPendingSearch();
+		dropdown.classList.add("d-none");
+		dropdown.innerHTML = "";
+		users = [];
+		activeIndex = -1;
+	};
+
+	const findMentionToken = (): { start: number; query: string } | null => {
+		if (textarea.selectionStart !== textarea.selectionEnd) return null;
+
+		const cursor = textarea.selectionStart;
+		const before = textarea.value.slice(0, cursor);
+		const atIndex = before.lastIndexOf("@");
+		if (atIndex === -1) return null;
+
+		const preceding = before[atIndex - 1];
+		if (preceding && /[\w@]/.test(preceding)) return null;
+
+		const query = before.slice(atIndex + 1);
+		if (!/^[\w.]*$/.test(query) || !/\w/.test(query)) return null;
+
+		const beforeMention = before.slice(0, atIndex);
+		if ((beforeMention.match(/```/g)?.length ?? 0) % 2 === 1) return null;
+
+		return { start: atIndex, query };
+	};
+
+	const getCaretPosition = () => {
+		if (textarea.selectionStart !== textarea.selectionEnd) return null;
+
+		const cursor = textarea.selectionStart;
+		const style = window.getComputedStyle(textarea);
+		for (const prop of caretStyleProps) {
+			caretMirror.style[prop] = style[prop];
+		}
+		caretMirror.style.boxSizing = "border-box";
+		caretMirror.style.width = `${
+			textarea.clientWidth +
+			(Number.parseFloat(style.borderLeftWidth) || 0) +
+			(Number.parseFloat(style.borderRightWidth) || 0)
+		}px`;
+		caretMirror.style.height = "auto";
+		caretMirror.style.overflow = "hidden";
+		caretMirror.textContent = textarea.value.slice(0, cursor);
+
+		const marker = document.createElement("span");
+		marker.textContent = "\u200b";
+		caretMirror.appendChild(marker);
+
+		const markerRect = marker.getBoundingClientRect();
+		const textareaRect = textarea.getBoundingClientRect();
+		const lineHeight =
+			markerRect.height || Number.parseFloat(style.lineHeight) || 20;
+
+		const position = {
+			left: textareaRect.left + markerRect.left - textarea.scrollLeft,
+			top: textareaRect.top + markerRect.top - textarea.scrollTop,
+			lineHeight,
+		};
+		caretMirror.textContent = "";
+		return position;
+	};
+
+	const positionDropdown = () => {
+		if (dropdown.classList.contains("d-none")) return;
+
+		const caret = getCaretPosition();
+		if (!caret) return;
+
+		const containerRect = container.getBoundingClientRect();
+		const width = Math.min(280, container.clientWidth);
+		const left = Math.max(
+			0,
+			Math.min(caret.left - containerRect.left, container.clientWidth - width),
+		);
+		let top = caret.top - containerRect.top + caret.lineHeight + 2;
+
+		const dropdownHeight = Math.min(
+			220,
+			users.length > 0 ? users.length * 38 : 220,
+		);
+		if (
+			caret.top + caret.lineHeight + dropdownHeight > window.innerHeight &&
+			caret.top - dropdownHeight > 0
+		) {
+			top = caret.top - containerRect.top - dropdownHeight - 2;
+		}
+
+		dropdown.style.width = `${width}px`;
+		dropdown.style.left = `${left}px`;
+		dropdown.style.top = `${top}px`;
+	};
+
+	const setActive = (index: number) => {
+		activeIndex = index;
+		const items = dropdown.querySelectorAll<HTMLElement>(".list-group-item");
+		items.forEach((item, itemIndex) => {
+			item.classList.toggle("active", itemIndex === index);
+		});
+		items[index]?.scrollIntoView({ block: "nearest" });
+	};
+
+	const selectUser = (user: Extension.ActivitySearchApi["data"][number]) => {
+		const token = findMentionToken();
+		if (!token) {
+			hideSuggestions();
+			return;
+		}
+
+		const value = textarea.value;
+		const after = value.slice(textarea.selectionStart);
+		const needsSpace = !/^\s/.test(after);
+		const insertion = `@${user.username}${needsSpace ? " " : ""}`;
+
+		textarea.value = value.slice(0, token.start) + insertion + after;
+		const cursor = token.start + insertion.length;
+		textarea.setSelectionRange(cursor, cursor);
+
+		hideSuggestions();
+		textarea.dispatchEvent(new Event("input", { bubbles: true }));
+		textarea.focus();
+	};
+
+	const renderSuggestions = () => {
+		dropdown.innerHTML = "";
+
+		for (const user of users) {
+			const item = document.createElement("button");
+			item.type = "button";
+			item.className =
+				"kiln-mention-item list-group-item list-group-item-action py-1 px-2 d-flex align-items-center gap-2";
+
+			if (user.thumbnailUrl) {
+				const image = document.createElement("img");
+				image.src = user.thumbnailUrl;
+				image.width = 24;
+				image.height = 24;
+				image.className = "rounded";
+				image.addEventListener("error", () => image.remove());
+				item.appendChild(image);
+			}
+
+			const label = document.createElement("span");
+			label.textContent = user.username;
+			item.appendChild(label);
+
+			item.addEventListener("mousedown", (event) => {
+				event.preventDefault();
+				selectUser(user);
+			});
+
+			dropdown.appendChild(item);
+		}
+
+		dropdown.classList.remove("d-none");
+		positionDropdown();
+		setActive(0);
+	};
+
+	const searchUsers = async (query: string) => {
+		const currentRequest = ++requestId;
+		const result = await sendMessage("searchUsersByActivity", query);
+		if (currentRequest !== requestId) return;
+
+		const token = findMentionToken();
+		if (!token || token.query !== query) return;
+
+		if (!result.ok || result.data.length === 0) {
+			hideSuggestions();
+			return;
+		}
+
+		users = result.data.slice(0, 8);
+		renderSuggestions();
+	};
+
+	const updateSuggestions = () => {
+		cancelPendingSearch();
+		const token = findMentionToken();
+		if (!token) {
+			hideSuggestions();
+			return;
+		}
+
+		positionDropdown();
+		debounceTimer = setTimeout(() => searchUsers(token.query), 250);
+	};
+
+	textarea.addEventListener("input", updateSuggestions);
+	textarea.addEventListener("click", updateSuggestions);
+	textarea.addEventListener("scroll", positionDropdown);
+	window.addEventListener("resize", positionDropdown);
+	textarea.addEventListener("keyup", (event) => {
+		if (
+			event.key === "ArrowLeft" ||
+			event.key === "ArrowRight" ||
+			event.key === "Home" ||
+			event.key === "End"
+		)
+			updateSuggestions();
+	});
+	textarea.addEventListener("keydown", (event) => {
+		const open = !dropdown.classList.contains("d-none") && users.length > 0;
+		if (!open) return;
+
+		if (event.key === "ArrowDown") {
+			event.preventDefault();
+			setActive((activeIndex + 1) % users.length);
+		} else if (event.key === "ArrowUp") {
+			event.preventDefault();
+			setActive((activeIndex - 1 + users.length) % users.length);
+		} else if (event.key === "Escape") {
+			event.preventDefault();
+			hideSuggestions();
+		} else if (event.key === "Enter" || event.key === "Tab") {
+			if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey)
+				return;
+			event.preventDefault();
+			const user = users[activeIndex];
+			if (user) selectUser(user);
+		}
+	});
+	textarea.addEventListener("blur", hideSuggestions);
+}
+
+export function forumPostPreview(autoShow: boolean, showDisclosures: boolean) {
 	const textarea = getComposerTextarea();
 	if (!textarea) return;
 
-	const { start } = getComposerToolbar(textarea, showDisclosures);
+	const actions = getComposerActions(textarea, showDisclosures);
 	const { wrapper, container } = getComposerEditor(textarea);
 
 	const previewBtn = document.createElement("button");
 	previewBtn.type = "button";
-	previewBtn.className = "btn btn-secondary";
+	previewBtn.className = actions.buttonClass;
 	previewBtn.innerHTML = '<i class="fas fa-eye"></i>';
 	previewBtn.title = "Toggle Preview";
-	if (imageLibraryEnabled) {
-		getComposerActionBar(textarea).prepend(previewBtn);
-	} else {
-		start.appendChild(previewBtn);
-	}
+	actions.host.prepend(previewBtn);
 
 	const preview = document.createElement("div");
 	preview.className =
@@ -233,14 +530,23 @@ export function forumPostPreview(
 		preview.style.height = `${textarea.offsetHeight}px`;
 	};
 
+	let filters: RegExp[] = [];
+
 	const updatePreview = () => {
-		preview.innerHTML = renderMarkdown(textarea.value);
+		preview.innerHTML = renderMarkdown(
+			censorFilteredWords(textarea.value, filters),
+		);
 		syncHeight();
 	};
 
 	textarea.addEventListener("input", updatePreview);
 
 	let previewOpen = false;
+
+	getProfanityFilter().then((loadedFilters) => {
+		filters = loadedFilters;
+		if (previewOpen) updatePreview();
+	});
 
 	const openPreview = () => {
 		if (previewOpen) return;
@@ -291,13 +597,14 @@ export function forumImageLibrary() {
 
 	const imageLibraryBtn = document.createElement("button");
 	imageLibraryBtn.type = "button";
-	imageLibraryBtn.className = "btn btn-secondary";
+	const actions = getComposerActions(textarea, false);
+	imageLibraryBtn.className = actions.buttonClass;
 	imageLibraryBtn.innerHTML = '<i class="fas fa-images"></i>';
 	imageLibraryBtn.title = "Starred Images";
 	imageLibraryBtn.addEventListener("click", () => {
 		openImageLibrary(textarea);
 	});
-	getComposerActionBar(textarea).appendChild(imageLibraryBtn);
+	actions.host.appendChild(imageLibraryBtn);
 }
 
 const IMAGES_PER_PAGE = 24;
@@ -331,6 +638,10 @@ function renderImageEntry(
 			<button type="button" class="btn btn-sm btn-danger position-absolute top-0 end-0 m-2" data-kiln="remove-image" aria-label="Remove saved image"><i class="fas fa-trash"></i></button>
 		</div>
 	`;
+
+	onBrokenImage(entry.querySelector("img")!, () => {
+		entry.style.display = "none";
+	});
 
 	entry
 		.querySelector<HTMLElement>('[data-kiln="insert-image"]')!
@@ -815,6 +1126,21 @@ function initFilterHighlighting(field: FilterField, container: HTMLElement) {
 	});
 }
 
+function censorFilteredWords(text: string, filters: RegExp[]): string {
+	if (filters.length === 0) return text;
+
+	const ranges = findFilteredRanges(text, filters);
+	if (ranges.length === 0) return text;
+
+	let censored = "";
+	let lastIndex = 0;
+	for (const [start, end] of ranges) {
+		censored += text.slice(lastIndex, start) + "*".repeat(end - start);
+		lastIndex = end;
+	}
+	return censored + text.slice(lastIndex);
+}
+
 function findFilteredRanges(
 	text: string,
 	filters: RegExp[],
@@ -899,6 +1225,13 @@ function renderMarkdown(text: string): string {
 		.replace(/__(.+?)__/g, "<strong>$1</strong>")
 		.replace(/_(.+?)_/g, "<em>$1</em>")
 		.replace(/~~(.+?)~~/g, "<s>$1</s>")
+		.replace(/^(?:&gt; ?.*(?:\n|$))+/gm, (block) => {
+			const lines = block.replace(/\n$/, "").split("\n");
+			const content = lines
+				.map((line) => line.replace(/^&gt; ?/, ""))
+				.join("<br>");
+			return `<blockquote style="border-left:3px solid rgba(255,255,255,0.25);padding-left:0.75rem;margin:0.25rem 0;">${content}</blockquote>`;
+		})
 		.replace(/\n/g, "<br>");
 
 	return rendered.replace(

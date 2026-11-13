@@ -1,5 +1,5 @@
 {
-	"latestVersion": "2.13.2",
+	"latestVersion": "2.14.0",
 	"notices": [],
 	"apiAvailability": {
 		"public": true,
@@ -12,10 +12,19 @@
 		"apis.usePublicApiProxy": false,
 		"apis.isExtensionApiStable": true,
 		"features.placeConsumablesTab.enabled": false,
+		"features.placeReviews.requireAnonymousText": true,
 		"features.outfitManagement.enabled": false,
 		"features.customProfileThemes.useThisTheme": false,
 		"general.futureOfKilnNotice.visible": false,
-		"apis.extension.newVerificationsEnabled": true
+		"apis.extension.newVerificationsEnabled": true,
+		"features.guildCreationsTab.showOnEventsGuild": true,
+		"features.customProfileThemes.halloweenEffects": true,
+		"features.customProfileThemes.thanksgivingEffects": false,
+		"features.privateMessaging.enabled": false,
+		"features.eventProgressTracker.enabled": true,
+		"general.addon.released": false,
+		"features.privateMessaging.hide": true,
+		"features.addonLibrary.hide": true
 	},
 	"limits": {
 		"maxPinnedWorlds": 25,
@@ -24,9 +33,13 @@
 		"maxNLFItems": 50,
 		"maxBlockedTraders": 200,
 		"maxPublishedThemes": 15,
+		"maxPublishedAddons": 5,
 		"maxPinnedAchievements": 5,
 		"minReviewPlaytimeMinutes": 5,
-		"maxStarredImages": 100
+		"maxStarredImages": 100,
+		"maxProfileThemeSlots": 3,
+		"maxProfileThemeStickers": 30,
+		"maxProfileThemeNotes": 10
 	},
 	"users": {
 		"generativeAI": [

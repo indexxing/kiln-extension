@@ -200,6 +200,48 @@ onMessage("terminateKilnSessionById", ({ data }) =>
 	),
 );
 
+onMessage("getKilnAddonInstalls", ({ data: userId }) =>
+	handle(() =>
+		withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}addon/installs`,
+				Extension.AddonInstallsApi,
+				{ headers: { Authorization: `Bearer ${token}` } },
+			),
+		),
+	),
+);
+
+onMessage("downloadKilnAddon", ({ data: userId }) =>
+	handle(() =>
+		withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}addon/installs`,
+				Extension.DownloadAddonApi,
+				{
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			),
+		),
+	),
+);
+
+onMessage("revokeKilnAddonInstall", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}addon/installs/${encodeURIComponent(data.id)}`,
+				null,
+				{
+					method: "DELETE",
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			).then(() => null),
+		),
+	),
+);
+
 onMessage("getPublishedTheme", ({ data: id }) =>
 	handle(async () => {
 		const config = await withApi("kiln_api", "extension");
@@ -382,64 +424,6 @@ onMessage("adminDeleteProfileTheme", ({ data }) =>
 	),
 );
 
-onMessage("adminListConfigs", ({ data: userId }) =>
-	handle(() =>
-		withAuthSession(userId, (token, config) =>
-			safeFetch(
-				`${config.resolvedUrls.extension}admin/config`,
-				Extension.AdminConfigListApi,
-				{ headers: { Authorization: `Bearer ${token}` } },
-			),
-		),
-	),
-);
-
-onMessage("adminGetConfig", ({ data }) =>
-	handle(() =>
-		withAuthSession(data.userId, (_token, config) =>
-			safeFetch(
-				`${config.resolvedUrls.extension}data/config?v=${encodeURIComponent(data.version)}`,
-				Extension.ExtensionConfigSchema,
-				{},
-			),
-		),
-	),
-);
-
-onMessage("adminUpdateConfig", ({ data }) =>
-	handle(() =>
-		withAuthSession(data.userId, (token, config) =>
-			safeFetch(
-				`${config.resolvedUrls.extension}admin/config/${encodeURIComponent(data.version)}`,
-				Extension.AdminConfigApi,
-				{
-					method: "PUT",
-					headers: {
-						Authorization: `Bearer ${token}`,
-						"Content-Type": "application/json",
-					},
-					body: JSON.stringify(data.patch),
-				},
-			),
-		),
-	),
-);
-
-onMessage("adminDeleteConfig", ({ data }) =>
-	handle(() =>
-		withAuthSession(data.userId, (token, config) =>
-			safeFetch(
-				`${config.resolvedUrls.extension}admin/config/${encodeURIComponent(data.version)}`,
-				Extension.AdminDeleteConfigApi,
-				{
-					method: "DELETE",
-					headers: { Authorization: `Bearer ${token}` },
-				},
-			),
-		),
-	),
-);
-
 onMessage("adminDeleteTheme", ({ data }) =>
 	handle(() =>
 		withAuthSession(data.userId, (token, config) =>
@@ -463,6 +447,91 @@ onMessage("adminDeletePlaceReview", ({ data }) =>
 				Extension.AdminDeletePlaceReviewApi,
 				{
 					method: "DELETE",
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			),
+		),
+	),
+);
+
+onMessage("adminGetPlaceAiDisclosures", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/places/${data.placeId}/ai-disclosures`,
+				Extension.AdminPlaceAiDisclosuresApi,
+				{ headers: { Authorization: `Bearer ${token}` } },
+			),
+		),
+	),
+);
+
+onMessage("adminListAiDisclosedPlaces", ({ data: userId }) =>
+	handle(() =>
+		withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/places/ai-disclosures`,
+				Extension.AdminAiDisclosedPlacesApi,
+				{ headers: { Authorization: `Bearer ${token}` } },
+			),
+		),
+	),
+);
+
+onMessage("adminAddPlaceAiDisclosure", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/places/${data.placeId}/ai-disclosures`,
+				Extension.AdminAiDisclosureOkApi,
+				{
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+					body: JSON.stringify({
+						kind: data.kind,
+						...(data.imageHash ? { imageHash: data.imageHash } : {}),
+					}),
+				},
+			),
+		),
+	),
+);
+
+onMessage("adminRemovePlaceAiDisclosure", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/places/ai-disclosures/${data.id}`,
+				Extension.AdminAiDisclosureOkApi,
+				{
+					method: "DELETE",
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			),
+		),
+	),
+);
+
+onMessage("adminGetAiReports", ({ data: userId }) =>
+	handle(() =>
+		withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/places/ai-reports`,
+				Extension.AdminAiReportsApi,
+				{ headers: { Authorization: `Bearer ${token}` } },
+			),
+		),
+	),
+);
+
+onMessage("adminReviewAiReport", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/places/ai-reports/${encodeURIComponent(data.id)}/${data.action}`,
+				Extension.AdminAiDisclosureOkApi,
+				{
+					method: "POST",
 					headers: { Authorization: `Bearer ${token}` },
 				},
 			),
@@ -514,6 +583,65 @@ onMessage("adminGetBannedUsers", ({ data }) =>
 				{ headers: { Authorization: `Bearer ${token}` } },
 			);
 		}),
+	),
+);
+
+onMessage("adminGetUserRisk", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/users/${data.targetUserId}/risk`,
+				Extension.AdminUserRiskApi,
+				{ headers: { Authorization: `Bearer ${token}` } },
+			),
+		),
+	),
+);
+
+onMessage("adminSetUserTrusted", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/users/${data.targetUserId}/trust`,
+				Extension.AdminTrustUserApi,
+				{
+					method: data.trusted ? "POST" : "DELETE",
+					headers: { Authorization: `Bearer ${token}` },
+					...(data.trusted ? { body: JSON.stringify({}) } : {}),
+				},
+			),
+		),
+	),
+);
+
+onMessage("adminAdjustUserRisk", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/users/${data.targetUserId}/risk/adjust`,
+				Extension.AdminAdjustRiskApi,
+				{
+					method: "POST",
+					headers: { Authorization: `Bearer ${token}` },
+					body: JSON.stringify({ delta: data.delta }),
+				},
+			),
+		),
+	),
+);
+
+onMessage("adminClearUserRiskHits", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}admin/users/${data.targetUserId}/risk/hits`,
+				Extension.AdminClearRiskHitsApi,
+				{
+					method: "DELETE",
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			),
+		),
 	),
 );
 

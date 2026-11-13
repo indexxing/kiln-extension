@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
-import { Extension, Polytoria } from "@kiln/schemas";
+import { Donation, Extension, Polytoria } from "@kiln/schemas";
 import z from "zod";
 import { onMessage } from "@/utils/messaging";
 import {
@@ -25,12 +25,30 @@ import {
 	pullKVCache,
 } from "@/utils/utilities";
 import {
+	dedupe,
 	handle,
 	resolveInjectableTabId,
 	safeFetch,
 	withApi,
 	withAuthSession,
 } from "./shared";
+
+function fetchUserProfile(userId: number): Promise<Extension.UserProfileApi> {
+	return dedupe(`userProfile:${userId}`, async () => {
+		const config = await withApi("kiln_api", "extension");
+		return pullKVCache(
+			"userProfile",
+			String(userId),
+			() =>
+				safeFetch(
+					`${config.resolvedUrls.extension}users/${userId}`,
+					Extension.UserProfileApi,
+				),
+			30 * 1000,
+			false,
+		);
+	});
+}
 
 onMessage("getRetroItems", ({ data: page = 1 }) =>
 	handle(async () => {
@@ -92,6 +110,17 @@ onMessage("getEventItems", ({ data: eventId }) =>
 	}),
 );
 
+onMessage("getEventProgress", ({ data: userId }) =>
+	handle(async () => {
+		const config = await withApi("public_api", "public");
+		return safeFetch(
+			`${config.resolvedUrls.public}events/items/${userId}`,
+			Polytoria.EventItemsApiSchema,
+			{ headers: { "User-Agent": "UnityPlayer/" } },
+		);
+	}),
+);
+
 onMessage("getGreatDivideStats", ({ data: userId }) =>
 	handle(async () => {
 		const config = await withApi("extension_api", "extension");
@@ -117,7 +146,7 @@ onMessage("checkUserActivity", ({ data: { userIds, days } }) =>
 			userIds.map(String),
 			async (missing) => {
 				const response = await safeFetch(
-					`${config.resolvedUrls.extension}activity`,
+					`${config.resolvedUrls.extension}users/activity`,
 					z.object({
 						data: z.record(
 							z.string(),
@@ -144,7 +173,7 @@ onMessage("getAvatarHashes", ({ data: userIds }) =>
 	handle(async () => {
 		const config = await withApi("kiln_api", "extension");
 		const response = await safeFetch(
-			`${config.resolvedUrls.extension}activity/avatars`,
+			`${config.resolvedUrls.extension}users/avatars`,
 			Extension.AvatarHashesApi,
 			{
 				method: "POST",
@@ -589,10 +618,17 @@ onMessage("searchUsersByActivity", ({ data: query }) =>
 	handle(async () => {
 		const config = await withApi("kiln_api", "extension");
 		const response = await safeFetch(
-			`${config.resolvedUrls.extension}activity/search?q=${encodeURIComponent(query)}`,
+			`${config.resolvedUrls.extension}users/search?q=${encodeURIComponent(query)}`,
 			Extension.ActivitySearchApi,
 		);
 		return response.data;
+	}),
+);
+
+onMessage("getActivityUser", ({ data: id }) =>
+	handle(async () => {
+		const { data } = await fetchUserProfile(id);
+		return data.polytoria;
 	}),
 );
 
@@ -713,18 +749,8 @@ onMessage("unmarkItemAsNLF", ({ data: { userId, itemId } }) =>
 
 onMessage("getPinnedAchievements", ({ data: userId }) =>
 	handle(async () => {
-		const config = await withApi("kiln_api", "extension");
-		return pullKVCache(
-			"pinnedAchievements",
-			String(userId),
-			() =>
-				safeFetch(
-					`${config.resolvedUrls.extension}users/${userId}/pinned-achievements`,
-					Extension.PinnedAchievementsApi,
-				),
-			5 * 60 * 1000,
-			false,
-		);
+		const { data } = await fetchUserProfile(userId);
+		return { data: data.kiln?.pinnedAchievements ?? [] };
 	}),
 );
 
@@ -732,7 +758,7 @@ onMessage("pinAchievement", ({ data: { userId, achievementId } }) =>
 	handle(async () => {
 		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/pinned-achievements/${achievementId}`,
+				`${config.resolvedUrls.extension}me/pinned-achievements/${achievementId}`,
 				null,
 				{
 					method: "PUT",
@@ -743,7 +769,7 @@ onMessage("pinAchievement", ({ data: { userId, achievementId } }) =>
 				},
 			),
 		);
-		expireKVCache("pinnedAchievements", String(userId));
+		expireKVCache("userProfile", String(userId));
 		return result as null;
 	}),
 );
@@ -752,7 +778,7 @@ onMessage("unpinAchievement", ({ data: { userId, achievementId } }) =>
 	handle(async () => {
 		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/pinned-achievements/${achievementId}`,
+				`${config.resolvedUrls.extension}me/pinned-achievements/${achievementId}`,
 				null,
 				{
 					method: "DELETE",
@@ -763,59 +789,29 @@ onMessage("unpinAchievement", ({ data: { userId, achievementId } }) =>
 				},
 			),
 		);
-		expireKVCache("pinnedAchievements", String(userId));
+		expireKVCache("userProfile", String(userId));
 		return result as null;
 	}),
 );
 
 onMessage("getLikeCount", ({ data: userId }) =>
 	handle(async () => {
-		const config = await withApi("kiln_api", "extension");
-		return pullKVCache(
-			"userLikeCount",
-			String(userId),
-			() =>
-				safeFetch(
-					`${config.resolvedUrls.extension}users/${userId}/likes`,
-					Extension.LikeCountApi,
-				),
-			5 * 60 * 1000,
-			false,
-		);
+		const { data } = await fetchUserProfile(userId);
+		return { data: { count: data.kiln?.likes ?? 0 } };
 	}),
 );
 
 onMessage("getKilnUsage", ({ data: userId }) =>
 	handle(async () => {
-		const config = await withApi("kiln_api", "extension");
-		return pullKVCache(
-			"userKilnUsage",
-			String(userId),
-			() =>
-				safeFetch(
-					`${config.resolvedUrls.extension}users/${userId}/kiln-usage`,
-					Extension.KilnUsageApi,
-				),
-			5 * 60 * 1000,
-			false,
-		);
+		const { data } = await fetchUserProfile(userId);
+		return { data: { linkedAt: data.kiln?.linkedAt ?? null } };
 	}),
 );
 
 onMessage("getUserTimezone", ({ data: userId }) =>
 	handle(async () => {
-		const config = await withApi("kiln_api", "extension");
-		return pullKVCache(
-			"userTimezone",
-			String(userId),
-			() =>
-				safeFetch(
-					`${config.resolvedUrls.extension}users/${userId}/timezone`,
-					Extension.UserTimezoneApi,
-				),
-			5 * 60 * 1000,
-			false,
-		);
+		const { data } = await fetchUserProfile(userId);
+		return { data: { timezone: data.kiln?.timezone ?? null } };
 	}),
 );
 
@@ -823,10 +819,10 @@ onMessage("setUserTimezone", ({ data: { userId, timezone } }) =>
 	handle(async () => {
 		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/timezone`,
+				`${config.resolvedUrls.extension}me`,
 				z.object({ success: z.boolean() }),
 				{
-					method: "PUT",
+					method: "PATCH",
 					headers: {
 						Authorization: `Bearer ${token}`,
 						"x-kiln-version": browser.runtime.getManifest().version,
@@ -835,7 +831,7 @@ onMessage("setUserTimezone", ({ data: { userId, timezone } }) =>
 				},
 			),
 		);
-		expireKVCache("userTimezone", String(userId));
+		expireKVCache("userProfile", String(userId));
 		return result;
 	}),
 );
@@ -844,32 +840,71 @@ onMessage("clearUserTimezone", ({ data: userId }) =>
 	handle(async () => {
 		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/timezone`,
+				`${config.resolvedUrls.extension}me`,
 				z.object({ success: z.boolean() }),
 				{
-					method: "DELETE",
+					method: "PATCH",
 					headers: {
 						Authorization: `Bearer ${token}`,
 						"x-kiln-version": browser.runtime.getManifest().version,
 					},
+					body: JSON.stringify({ timezone: null }),
 				},
 			),
 		);
-		expireKVCache("userTimezone", String(userId));
+		expireKVCache("userProfile", String(userId));
 		return result;
 	}),
 );
 
-onMessage("getPublicOutfits", ({ data: userId }) =>
+onMessage("getUserEditingStatus", ({ data: userId }) =>
+	handle(async () => {
+		const { data } = await fetchUserProfile(userId);
+		return { data: { editing: data.kiln?.editing ?? false } };
+	}),
+);
+
+onMessage("getWorldEditTime", ({ data: userId }) =>
+	handle(async () =>
+		pullKVCache(
+			"worldEditTime",
+			String(userId),
+			() =>
+				withAuthSession(userId, (token, config) =>
+					safeFetch(
+						`${config.resolvedUrls.extension}me/world-edit-time`,
+						Extension.WorldEditTimeApi,
+						{
+							headers: {
+								Authorization: `Bearer ${token}`,
+								"x-kiln-version": browser.runtime.getManifest().version,
+							},
+						},
+					),
+				),
+			60 * 1000,
+			false,
+		),
+	),
+);
+
+onMessage("getUserDonation", ({ data: userId }) =>
+	handle(async () => {
+		const { data } = await fetchUserProfile(userId);
+		return { data: { url: data.kiln?.donationUrl ?? null } };
+	}),
+);
+
+onMessage("getPlaceAiDisclosures", ({ data: placeId }) =>
 	handle(async () => {
 		const config = await withApi("kiln_api", "extension");
 		return pullKVCache(
-			"publicOutfits",
-			String(userId),
+			"placeAiDisclosures",
+			String(placeId),
 			() =>
 				safeFetch(
-					`${config.resolvedUrls.extension}users/${userId}/public-outfits`,
-					Extension.PublicOutfitsApi,
+					`${config.resolvedUrls.extension}places/${placeId}/ai-disclosures`,
+					Extension.PlaceAiDisclosuresApi,
 				),
 			5 * 60 * 1000,
 			false,
@@ -877,11 +912,250 @@ onMessage("getPublicOutfits", ({ data: userId }) =>
 	}),
 );
 
+onMessage("showPlaceAiReportPrompt", ({ data, sender }) =>
+	handle(async () => {
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) return null;
+
+		const results = await browser.scripting.executeScript({
+			target: { tabId },
+			world: "MAIN",
+			args: [data.hasLabels, data.verified],
+			func: async (hasLabels: boolean, verified: boolean) => {
+				if (!verified) {
+					// @ts-expect-error
+					await window.Swal.fire({
+						icon: "info",
+						title: "Verify to report",
+						text: "Link your Kiln account to report an AI usage label.",
+					});
+					return null;
+				}
+
+				// @ts-expect-error
+				const { value, isConfirmed } = await window.Swal.fire({
+					title: "Report AI Usage",
+					html: `
+						<div class="text-start">
+							<div class="form-check mb-2">
+								<input class="form-check-input" type="radio" name="kiln-ai-report" id="kiln-ai-report-missing" value="missing" checked>
+								<label class="form-check-label" for="kiln-ai-report-missing">This world should have an AI label</label>
+							</div>
+							${
+								hasLabels
+									? `<div class="form-check mb-3">
+								<input class="form-check-input" type="radio" name="kiln-ai-report" id="kiln-ai-report-incorrect" value="incorrect">
+								<label class="form-check-label" for="kiln-ai-report-incorrect">The current label is wrong</label>
+							</div>`
+									: ""
+							}
+							<label class="form-label small text-muted" for="kiln-ai-report-details">Details (optional)</label>
+							<textarea id="kiln-ai-report-details" class="form-control" rows="3" maxlength="500" placeholder="What made you notice? Which image or part is affected?"></textarea>
+						</div>`,
+					showCancelButton: true,
+					confirmButtonText: "Send report",
+					focusConfirm: false,
+					preConfirm: () => {
+						const checked = document.querySelector<HTMLInputElement>(
+							'input[name="kiln-ai-report"]:checked',
+						);
+						const details = document.getElementById(
+							"kiln-ai-report-details",
+						) as HTMLTextAreaElement;
+						return {
+							kind: checked?.value === "incorrect" ? "incorrect" : "missing",
+							details: details.value.trim(),
+						};
+					},
+				});
+				return isConfirmed ? value : null;
+			},
+		});
+
+		return (
+			(results[0]?.result as {
+				kind: "missing" | "incorrect";
+				details: string;
+			} | null) ?? null
+		);
+	}),
+);
+
+onMessage("reportPlaceAiDisclosure", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}places/${data.placeId}/ai-disclosures/reports`,
+				Extension.PlaceAiReportApi,
+				{
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${token}`,
+						"x-kiln-version": browser.runtime.getManifest().version,
+					},
+					body: JSON.stringify({
+						kind: data.kind,
+						...(data.details ? { details: data.details } : {}),
+					}),
+				},
+			),
+		),
+	),
+);
+
+onMessage("setUserDonation", ({ data: { userId, url } }) =>
+	handle(async () => {
+		const result = await withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}me`,
+				z.object({ success: z.boolean() }),
+				{
+					method: "PATCH",
+					headers: {
+						Authorization: `Bearer ${token}`,
+						"x-kiln-version": browser.runtime.getManifest().version,
+					},
+					body: JSON.stringify({ donationUrl: url }),
+				},
+			),
+		);
+		expireKVCache("userProfile", String(userId));
+		return result;
+	}),
+);
+
+onMessage("clearUserDonation", ({ data: userId }) =>
+	handle(async () => {
+		const result = await withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}me`,
+				z.object({ success: z.boolean() }),
+				{
+					method: "PATCH",
+					headers: {
+						Authorization: `Bearer ${token}`,
+						"x-kiln-version": browser.runtime.getManifest().version,
+					},
+					body: JSON.stringify({ donationUrl: null }),
+				},
+			),
+		);
+		expireKVCache("userProfile", String(userId));
+		return result;
+	}),
+);
+
+onMessage("showDonationLinkPrompt", ({ data: { currentUrl }, sender }) =>
+	handle(async () => {
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) return null;
+
+		const results = await browser.scripting.executeScript({
+			target: { tabId },
+			world: "MAIN",
+			args: [currentUrl, Donation.DONATION_PLATFORMS],
+			func: async (
+				currentUrl: string | null,
+				platforms: Donation.DonationPlatform[],
+			) => {
+				const escapeHtml = (value: string) => {
+					const div = document.createElement("div");
+					div.textContent = value;
+					return div.innerHTML;
+				};
+
+				const isSupported = (raw: string) => {
+					let url: URL;
+					try {
+						url = new URL(raw.trim());
+					} catch {
+						return false;
+					}
+					if (url.protocol !== "https:" || url.username || url.password)
+						return false;
+					return platforms.some(
+						(platform) =>
+							(url.hostname === platform.host ||
+								url.hostname.endsWith(`.${platform.host}`)) &&
+							(!platform.pathPrefix ||
+								url.pathname.startsWith(platform.pathPrefix)),
+					);
+				};
+
+				// @ts-expect-error
+				const { value, isConfirmed, isDenied } = await window.Swal.fire({
+					title: "Link Your Donation Page",
+					html: `<p class="mb-2">Paste a link to your donation page. Supported platforms:</p><p class="small text-muted mb-0">${platforms
+						.map((platform) => escapeHtml(platform.name))
+						.join(", ")}</p>`,
+					input: "url",
+					inputValue: currentUrl ?? "",
+					inputPlaceholder: "https://",
+					showCancelButton: true,
+					showDenyButton: currentUrl != null,
+					confirmButtonText: "Save",
+					denyButtonText: "Remove link",
+					inputValidator: (input: string) =>
+						isSupported(input)
+							? undefined
+							: "Enter a secure link from one of the supported platforms.",
+				});
+				if (isDenied) return "";
+				if (!isConfirmed || !value?.trim()) return null;
+				return value.trim();
+			},
+		});
+
+		return (results[0]?.result as string | null) ?? null;
+	}),
+);
+
+onMessage("showDonationWarning", ({ data: { url }, sender }) =>
+	handle(async () => {
+		const tabId = await resolveInjectableTabId(sender);
+		if (tabId == null) return false;
+
+		const results = await browser.scripting.executeScript({
+			target: { tabId },
+			world: "MAIN",
+			args: [url],
+			func: async (url: string) => {
+				const escapeHtml = (value: string) => {
+					const div = document.createElement("div");
+					div.textContent = value;
+					return div.innerHTML;
+				};
+
+				// @ts-expect-error
+				const { isConfirmed } = await window.Swal.fire({
+					icon: "warning",
+					title: "Donate at your own risk",
+					html: `<p>You're about to leave Polytoria for an external donation page:</p><p class="fw-bold text-break">${escapeHtml(url)}</p><p class="mb-0">Donations are voluntary, non-refundable, and made entirely at your own risk. Kiln and Polytoria do not verify donation pages and are not responsible for what happens to your money.</p>`,
+					showCancelButton: true,
+					confirmButtonText: "I understand, continue",
+					cancelButtonText: "Go back",
+					focusCancel: true,
+				});
+				return isConfirmed === true;
+			},
+		});
+
+		return results[0]?.result === true;
+	}),
+);
+
+onMessage("getPublicOutfits", ({ data: userId }) =>
+	handle(async () => {
+		const { data } = await fetchUserProfile(userId);
+		return { data: data.kiln?.publicOutfits ?? [] };
+	}),
+);
+
 onMessage("syncPublicOutfits", ({ data: { userId, outfits } }) =>
 	handle(async () => {
 		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/public-outfits`,
+				`${config.resolvedUrls.extension}me/public-outfits`,
 				z.object({ success: z.boolean() }),
 				{
 					method: "PUT",
@@ -893,7 +1167,7 @@ onMessage("syncPublicOutfits", ({ data: { userId, outfits } }) =>
 				},
 			),
 		);
-		expireKVCache("publicOutfits", String(userId));
+		expireKVCache("userProfile", String(userId));
 		return result;
 	}),
 );
@@ -902,7 +1176,7 @@ onMessage("clearPublicOutfits", ({ data: userId }) =>
 	handle(async () => {
 		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/public-outfits`,
+				`${config.resolvedUrls.extension}me/public-outfits`,
 				z.object({ success: z.boolean() }),
 				{
 					method: "DELETE",
@@ -913,7 +1187,7 @@ onMessage("clearPublicOutfits", ({ data: userId }) =>
 				},
 			),
 		);
-		expireKVCache("publicOutfits", String(userId));
+		expireKVCache("userProfile", String(userId));
 		return result;
 	}),
 );
@@ -926,7 +1200,7 @@ onMessage("getLikeStatus", ({ data: { userId, targetUserId } }) =>
 			() =>
 				withAuthSession(userId, (token, config) =>
 					safeFetch(
-						`${config.resolvedUrls.extension}users/${userId}/likes/${targetUserId}`,
+						`${config.resolvedUrls.extension}me/likes/${targetUserId}`,
 						Extension.LikeStatusApi,
 						{
 							headers: {
@@ -946,7 +1220,7 @@ onMessage("likeUser", ({ data: { userId, targetUserId } }) =>
 	handle(async () => {
 		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/likes/${targetUserId}`,
+				`${config.resolvedUrls.extension}me/likes/${targetUserId}`,
 				z.object({ success: z.boolean() }),
 				{
 					method: "PUT",
@@ -958,7 +1232,7 @@ onMessage("likeUser", ({ data: { userId, targetUserId } }) =>
 			),
 		);
 		expireKVCache("likeStatus", `${userId}_${targetUserId}`);
-		expireKVCache("userLikeCount", String(targetUserId));
+		expireKVCache("userProfile", String(targetUserId));
 		return result;
 	}),
 );
@@ -967,7 +1241,7 @@ onMessage("unlikeUser", ({ data: { userId, targetUserId } }) =>
 	handle(async () => {
 		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/likes/${targetUserId}`,
+				`${config.resolvedUrls.extension}me/likes/${targetUserId}`,
 				z.object({ success: z.boolean() }),
 				{
 					method: "DELETE",
@@ -979,7 +1253,7 @@ onMessage("unlikeUser", ({ data: { userId, targetUserId } }) =>
 			),
 		);
 		expireKVCache("likeStatus", `${userId}_${targetUserId}`);
-		expireKVCache("userLikeCount", String(targetUserId));
+		expireKVCache("userProfile", String(targetUserId));
 		return result;
 	}),
 );
@@ -992,7 +1266,7 @@ onMessage("getBlockedTraders", ({ data: userId }) =>
 			() =>
 				withAuthSession(userId, (token, config) =>
 					safeFetch(
-						`${config.resolvedUrls.extension}users/${userId}/blocked-traders`,
+						`${config.resolvedUrls.extension}me/blocked-traders`,
 						Extension.BlockedTraders,
 						{
 							headers: {
@@ -1012,7 +1286,7 @@ onMessage("blockTrader", ({ data: { userId, blockedUserId } }) =>
 	handle(async () => {
 		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/blocked-traders/${blockedUserId}`,
+				`${config.resolvedUrls.extension}me/blocked-traders/${blockedUserId}`,
 				z.object({ success: z.boolean() }),
 				{
 					method: "PUT",
@@ -1032,7 +1306,7 @@ onMessage("unblockTrader", ({ data: { userId, blockedUserId } }) =>
 	handle(async () => {
 		const result = await withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/blocked-traders/${blockedUserId}`,
+				`${config.resolvedUrls.extension}me/blocked-traders/${blockedUserId}`,
 				z.object({ success: z.boolean() }),
 				{
 					method: "DELETE",

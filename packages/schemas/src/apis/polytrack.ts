@@ -185,3 +185,30 @@ export const FeedSearchApiSchema = z.object({
 		.transform((value) => value ?? null),
 });
 export type FeedSearchApi = z.infer<typeof FeedSearchApiSchema>;
+
+export const SearchHitSchema = z.object({
+	type: z.string(),
+	id: z.string(),
+	title: z.string(),
+	subtitle: z.string().nullable(),
+	meta: z.string().nullable(),
+	polytoriaHref: z.string().nullable(),
+	image: z.string().nullable(),
+	imageShape: z.string().nullable(),
+	badges: z.array(z.object({ label: z.string(), tone: z.string() })),
+});
+export type SearchHit = z.infer<typeof SearchHitSchema>;
+
+export const SearchGroupSchema = z.object({
+	type: z.string(),
+	hits: z.array(SearchHitSchema),
+	hasMore: z.boolean().optional(),
+});
+export type SearchGroup = z.infer<typeof SearchGroupSchema>;
+
+export const SearchApiSchema = z.object({
+	text: z.string(),
+	exact: z.array(SearchHitSchema),
+	groups: z.array(SearchGroupSchema),
+});
+export type SearchApi = z.infer<typeof SearchApiSchema>;

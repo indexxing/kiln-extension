@@ -19,6 +19,7 @@ import type { Runtime } from "webextension-polyfill";
 import z from "zod";
 import { onMessage, sendMessage } from "@/utils/messaging";
 import metadata from "@/utils/static/metadata.json";
+import { _reviewUpvoteThreshold } from "@/utils/storage";
 import {
 	DEFAULT_PLACE_THUMBNAILS,
 	pullBulkKVCache,
@@ -670,7 +671,7 @@ onMessage("getPlaceReviews", ({ data: { placeId, userId } }) =>
 	handle(async () =>
 		withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}places/reviews/${placeId}`,
+				`${config.resolvedUrls.extension}places/${placeId}/reviews`,
 				Extension.PlaceReviewsApi,
 				{
 					headers: {
@@ -689,7 +690,7 @@ onMessage(
 		handle(async () =>
 			withAuthSession(userId, (token, config) =>
 				safeFetch(
-					`${config.resolvedUrls.extension}places/reviews/playtimes/${placeId}`,
+					`${config.resolvedUrls.extension}places/${placeId}/reviews/playtimes`,
 					Extension.PlaceReviewPlaytimesApi,
 					{
 						method: "POST",
@@ -728,12 +729,20 @@ async function showReviewErrorAlert(
 
 onMessage(
 	"submitPlaceReview",
-	({ data: { placeId, userId, rating, body, anonymous }, sender }) =>
+	({ data: { placeId, userId, rating, body, anonymous, wasPublic }, sender }) =>
 		handle(async () => {
-			try {
-				return await withAuthSession(userId, (token, config) =>
+			const fail = async (message: string, cause?: unknown): Promise<never> => {
+				await showReviewErrorAlert(message, sender);
+				throw cause ?? new Error(message);
+			};
+
+			const errorMessage = (err: unknown, fallback: string) =>
+				err instanceof Error && err.message ? err.message : fallback;
+
+			const putToKiln = (nativeRatingId?: number | null) =>
+				withAuthSession(userId, (token, config) =>
 					safeFetch(
-						`${config.resolvedUrls.extension}places/reviews/${placeId}/me`,
+						`${config.resolvedUrls.extension}places/${placeId}/reviews/me`,
 						Extension.PlaceReviewApi,
 						{
 							method: "PUT",
@@ -741,6 +750,7 @@ onMessage(
 								rating,
 								body: body ?? null,
 								anonymous: anonymous ?? false,
+								...(nativeRatingId !== undefined && { nativeRatingId }),
 							}),
 							headers: {
 								Authorization: `Bearer ${token}`,
@@ -749,26 +759,80 @@ onMessage(
 						},
 					),
 				);
-			} catch (err) {
-				await showReviewErrorAlert(
-					err instanceof ApiHttpError
-						? err.message
-						: "Something went wrong submitting your review.",
+
+			const saveToKiln = async (nativeRatingId?: number | null) => {
+				try {
+					return await putToKiln(nativeRatingId);
+				} catch (err) {
+					return fail(
+						err instanceof ApiHttpError
+							? err.message
+							: "Something went wrong submitting your review.",
+						err,
+					);
+				}
+			};
+
+			if (anonymous) {
+				if (wasPublic) {
+					try {
+						await runNativeReviewAction({ kind: "remove", placeId }, sender);
+					} catch (err) {
+						return fail(
+							`Couldn't remove your public review from Polytoria: ${errorMessage(err, "unknown error")}`,
+							err,
+						);
+					}
+				}
+				return saveToKiln();
+			}
+
+			const content = body?.trim();
+			if (!content) {
+				return fail(
+					"Public reviews need a comment because they're posted to Polytoria. Post anonymously to leave a rating without text.",
+				);
+			}
+
+			const saved = await saveToKiln();
+
+			const threshold = Math.min(
+				5,
+				Math.max(1, Math.round((await _reviewUpvoteThreshold.getValue()) || 4)),
+			);
+
+			let nativeId: number | null = null;
+			try {
+				const posted = await runNativeReviewAction(
+					{
+						kind: "upsert",
+						placeId,
+						value: rating >= threshold ? "like" : "dislike",
+						content,
+					},
 					sender,
 				);
-				throw err;
+				nativeId = posted.id ? Number(posted.id) : null;
+			} catch (err) {
+				return fail(
+					`Your rating was saved to Kiln, but Polytoria rejected the review: ${errorMessage(err, "unknown error")}`,
+					err,
+				);
 			}
+
+			if (nativeId === null || Number.isNaN(nativeId)) return saved;
+			return saveToKiln(nativeId);
 		}),
 );
 
-onMessage("deleteMyPlaceReview", ({ data: { placeId, userId } }) =>
+onMessage("unlinkNativePlaceReview", ({ data: { placeId, userId } }) =>
 	handle(() =>
 		withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}places/reviews/${placeId}/me`,
+				`${config.resolvedUrls.extension}places/${placeId}/reviews/me/unlink`,
 				null,
 				{
-					method: "DELETE",
+					method: "POST",
 					headers: {
 						Authorization: `Bearer ${token}`,
 						"x-kiln-version": browser.runtime.getManifest().version,
@@ -779,12 +843,35 @@ onMessage("deleteMyPlaceReview", ({ data: { placeId, userId } }) =>
 	),
 );
 
+onMessage(
+	"deleteMyPlaceReview",
+	({ data: { placeId, userId, wasPublic }, sender }) =>
+		handle(async () => {
+			if (wasPublic) {
+				await runNativeReviewAction({ kind: "remove", placeId }, sender);
+			}
+			return withAuthSession(userId, (token, config) =>
+				safeFetch(
+					`${config.resolvedUrls.extension}places/${placeId}/reviews/me`,
+					null,
+					{
+						method: "DELETE",
+						headers: {
+							Authorization: `Bearer ${token}`,
+							"x-kiln-version": browser.runtime.getManifest().version,
+						},
+					},
+				),
+			);
+		}),
+);
+
 onMessage("submitReviewReply", ({ data: { userId, reviewId, body }, sender }) =>
 	handle(async () => {
 		try {
 			return await withAuthSession(userId, (token, config) =>
 				safeFetch(
-					`${config.resolvedUrls.extension}places/reviews/${reviewId}/replies`,
+					`${config.resolvedUrls.extension}reviews/${reviewId}/replies`,
 					Extension.PlaceReviewReplyApi,
 					{
 						method: "POST",
@@ -812,7 +899,7 @@ onMessage("deleteReviewReply", ({ data: { userId, replyId } }) =>
 	handle(() =>
 		withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}places/reviews/replies/${replyId}`,
+				`${config.resolvedUrls.extension}reviews/replies/${replyId}`,
 				null,
 				{
 					method: "DELETE",
@@ -830,7 +917,7 @@ onMessage("getMigratablePlaceReviews", ({ data: userId }) =>
 	handle(() =>
 		withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}places/reviews/mine`,
+				`${config.resolvedUrls.extension}me/reviews`,
 				Extension.MigratablePlaceReviewsApi,
 				{
 					headers: {
@@ -843,110 +930,181 @@ onMessage("getMigratablePlaceReviews", ({ data: userId }) =>
 	),
 );
 
-onMessage("markPlaceReviewMigrated", ({ data: { userId, reviewId } }) =>
-	handle(() =>
-		withAuthSession(userId, (token, config) =>
-			safeFetch(
-				`${config.resolvedUrls.extension}places/reviews/${encodeURIComponent(reviewId)}/migrated`,
-				Extension.MigratePlaceReviewApi,
-				{
-					method: "POST",
-					headers: {
-						Authorization: `Bearer ${token}`,
-						"x-kiln-version": browser.runtime.getManifest().version,
+onMessage(
+	"markPlaceReviewMigrated",
+	({ data: { userId, reviewId, nativeRatingId } }) =>
+		handle(() =>
+			withAuthSession(userId, (token, config) =>
+				safeFetch(
+					`${config.resolvedUrls.extension}reviews/${encodeURIComponent(reviewId)}/migrated`,
+					Extension.MigratePlaceReviewApi,
+					{
+						method: "POST",
+						body: JSON.stringify({ nativeRatingId: nativeRatingId ?? null }),
+						headers: {
+							Authorization: `Bearer ${token}`,
+							"x-kiln-version": browser.runtime.getManifest().version,
+						},
 					},
-				},
+				),
 			),
 		),
-	),
 );
+
+type NativeReviewAction =
+	| {
+			kind: "upsert";
+			placeId: number;
+			value: "like" | "dislike";
+			content: string;
+	  }
+	| { kind: "remove"; placeId: number };
+
+type NativeReviewResult =
+	| { success: true; id: string | null }
+	| { success: false; error: string };
+
+async function runNativeReviewAction(
+	action: NativeReviewAction,
+	sender?: Runtime.MessageSender,
+) {
+	const tabId = await resolveInjectableTabId(sender);
+	if (tabId == null) throw new Error("No active tab to post the review from");
+
+	const results = await browser.scripting.executeScript({
+		target: { tabId },
+		world: "MAIN",
+		args: [action],
+		func: async (action: NativeReviewAction): Promise<NativeReviewResult> => {
+			const getCookie = (name: string) => {
+				const value = `; ${document.cookie}`;
+				const parts = value.split(`; ${name}=`);
+				if (parts.length === 2) return parts.pop()!.split(";").shift();
+			};
+
+			const xsrfToken = decodeURIComponent(getCookie("XSRF-TOKEN") ?? "");
+
+			const post = (url: string, body: unknown) =>
+				fetch(url, {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"X-XSRF-TOKEN": xsrfToken,
+						Accept: "application/json",
+					},
+					body: JSON.stringify(body),
+					credentials: "include",
+				});
+
+			const readError = async (res: Response) => {
+				const raw = await res.text().catch(() => "");
+				let json: {
+					message?: string;
+					error?: string;
+					errors?: { message?: string }[];
+				} | null = null;
+				try {
+					json = JSON.parse(raw);
+				} catch {}
+				if (/already rated/i.test(raw)) {
+					return "Either you already made a review on this world yourself, or Polytoria thinks you did (it may be a phantom review on their end)";
+				}
+				return (
+					json?.errors?.[0]?.message ??
+					json?.message ??
+					json?.error ??
+					`Polytoria returned ${res.status} ${res.statusText}`
+				);
+			};
+
+			try {
+				const pageRes = await fetch(`/places/${action.placeId}`, {
+					credentials: "include",
+					headers: { Accept: "text/html" },
+				});
+				let existingId: number | null = null;
+				let existingValue: string | null = null;
+				if (pageRes.ok) {
+					const container = new DOMParser()
+						.parseFromString(await pageRes.text(), "text/html")
+						.getElementById("likes-data-container");
+					if (container?.dataset.ratingId) {
+						existingId = Number(container.dataset.ratingId);
+						existingValue = container.dataset.likeStatus ?? null;
+					}
+				}
+
+				const remove = async () => {
+					if (existingId === null) return null;
+					const removed = await post("/api/places/reviews/delete", {
+						id: existingId,
+					});
+					if (removed.ok) return null;
+					return `Couldn't remove your existing Polytoria rating on this world (${removed.status})`;
+				};
+
+				if (action.kind === "remove") {
+					const failure = await remove();
+					return failure
+						? { success: false, error: failure }
+						: { success: true, id: null };
+				}
+
+				if (existingId !== null && existingValue === action.value) {
+					const updated = await post("/api/places/reviews/update", {
+						id: existingId,
+						content: action.content,
+					});
+					if (updated.ok) return { success: true, id: String(existingId) };
+				}
+
+				const failure = await remove();
+				if (failure) return { success: false, error: failure };
+
+				const res = await post("/api/places/reviews/create", {
+					placeID: action.placeId,
+					value: action.value,
+					content: action.content,
+				});
+				if (!res.ok) return { success: false, error: await readError(res) };
+
+				const json = (await res.json().catch(() => null)) as {
+					id?: string | number;
+				} | null;
+				return {
+					success: true,
+					id: json?.id != null ? String(json.id) : null,
+				};
+			} catch (err) {
+				return {
+					success: false,
+					error: err instanceof Error ? err.message : String(err),
+				};
+			}
+		},
+	});
+
+	const result = results[0]?.result as NativeReviewResult | undefined;
+	if (!result?.success) {
+		throw new Error(result?.error ?? "Failed to update your Polytoria review");
+	}
+	return result;
+}
 
 onMessage("createPolytoriaPlaceReview", ({ data, sender }) =>
 	handle(async () => {
-		const tabId = await resolveInjectableTabId(sender);
-		if (tabId == null) throw new Error("No active tab to post the review from");
+		const { id } = await runNativeReviewAction(
+			{ kind: "upsert", ...data },
+			sender,
+		);
+		return { id };
+	}),
+);
 
-		const results = await browser.scripting.executeScript({
-			target: { tabId },
-			world: "MAIN",
-			args: [data],
-			func: async (data: {
-				placeId: number;
-				value: "like" | "dislike";
-				content: string;
-			}) => {
-				const getCookie = (name: string) => {
-					const value = `; ${document.cookie}`;
-					const parts = value.split(`; ${name}=`);
-					if (parts.length === 2) return parts.pop()!.split(";").shift();
-				};
-
-				const xsrfToken = decodeURIComponent(getCookie("XSRF-TOKEN") ?? "");
-
-				try {
-					const res = await fetch("/api/places/reviews/create", {
-						method: "POST",
-						headers: {
-							"Content-Type": "application/json",
-							"X-XSRF-TOKEN": xsrfToken,
-							Accept: "application/json",
-						},
-						body: JSON.stringify({
-							placeID: data.placeId,
-							value: data.value,
-							content: data.content,
-						}),
-						credentials: "include",
-					});
-
-					const raw = await res.text().catch(() => "");
-					let json: {
-						id?: string | number;
-						message?: string;
-						errors?: { message?: string }[];
-					} | null = null;
-					try {
-						json = JSON.parse(raw);
-					} catch {}
-
-					if (!res.ok) {
-						if (/already rated/i.test(raw)) {
-							return {
-								success: false as const,
-								error:
-									"Either you already made a review on this world yourself, or Polytoria thinks you did (it may be a phantom review on their end)",
-							};
-						}
-						return {
-							success: false as const,
-							error:
-								json?.message ??
-								json?.errors?.[0]?.message ??
-								`Polytoria returned ${res.status} ${res.statusText}`,
-						};
-					}
-
-					return {
-						success: true as const,
-						id: json?.id != null ? String(json.id) : null,
-					};
-				} catch (err) {
-					return {
-						success: false as const,
-						error: err instanceof Error ? err.message : String(err),
-					};
-				}
-			},
-		});
-
-		const result = results[0]?.result as
-			| { success: true; id: string | null }
-			| { success: false; error: string }
-			| undefined;
-		if (!result?.success) {
-			throw new Error(result?.error ?? "Failed to post review to Polytoria");
-		}
-		return { id: result.id };
+onMessage("removePolytoriaPlaceReview", ({ data: placeId, sender }) =>
+	handle(async () => {
+		await runNativeReviewAction({ kind: "remove", placeId }, sender);
+		return { ok: true };
 	}),
 );
 
@@ -958,7 +1116,7 @@ onMessage("getTopReviewers", () =>
 			"top-reviewers",
 			() =>
 				safeFetch(
-					`${config.resolvedUrls.extension}places/leaderboards/top-reviewers`,
+					`${config.resolvedUrls.extension}leaderboards/top-reviewers`,
 					Extension.TopReviewersApi,
 				),
 			5 * 60 * 1000,
@@ -975,7 +1133,7 @@ onMessage("getTopReviewers", () =>
 // 			"most-liked-users",
 // 			() =>
 // 				safeFetch(
-// 					`${config.resolvedUrls.extension}places/leaderboards/most-liked-users`,
+// 					`${config.resolvedUrls.extension}leaderboards/most-liked-users`,
 // 					Extension.MostLikedUsersApi,
 // 				),
 // 			5 * 60 * 1000,
@@ -992,7 +1150,7 @@ onMessage("getRatedWorldsLeaderboard", ({ data: order }) =>
 			`rated-worlds-${order}`,
 			() =>
 				safeFetch(
-					`${config.resolvedUrls.extension}places/leaderboards/rated-worlds?order=${order}`,
+					`${config.resolvedUrls.extension}leaderboards/rated-worlds?order=${order}`,
 					Extension.RatedWorldsLeaderboardApi,
 				),
 			5 * 60 * 1000,

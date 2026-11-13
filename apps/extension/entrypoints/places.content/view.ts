@@ -15,20 +15,26 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import type { PolyTrack } from "@kiln/schemas";
+import { createDonationLink } from "@/utils/donationLink";
 import { escapeHtml } from "@/utils/escapeHtml";
 import { sendMessage } from "@/utils/messaging";
 import metadata from "@/utils/static/metadata.json";
+import { _reviewUpvoteThreshold } from "@/utils/storage";
 import type { CurrencyCode } from "@/utils/types";
 import {
 	applyKilnDisclosureTitle,
 	condenseTabBar,
 	formatNotificationRelativeTime,
 	getConfig,
+	getFlag,
 	kilnDisclosureBadgeHtml,
 	pullKVCache,
 } from "@/utils/utilities";
 
 const placeID = +window.location.pathname.split("/")[2];
+
+const REQUIRE_ANONYMOUS_REVIEW_TEXT_FLAG =
+	"features.placeReviews.requireAnonymousText";
 
 export async function favoritedPlaces(
 	userId: number,
@@ -235,6 +241,106 @@ export async function approxPlaceRevenue(
 	}
 
 	value.innerHTML = `<i class="pi pi-brick me-2"></i> ~${revenue.toLocaleString()} ${includeIRLRevenue && revenue > 0 ? `<span class="text-muted">(${await bricksToCurrency(revenue, irlCurrency)})</span>` : ""}`;
+}
+
+export async function donationLink(
+	selfUserId: number,
+	creatorId: number,
+	showDisclosures: boolean,
+) {
+	const infoCard = document.querySelector(".card-body .row:has(.fa-calendar)");
+	if (!infoCard) return;
+
+	const result = await sendMessage("getUserDonation", creatorId);
+	const url = result.ok ? result.data.data.url : null;
+	if (!url && selfUserId !== creatorId) return;
+
+	const key = document.createElement("li");
+	const value = document.createElement("li");
+
+	key.dataset.kiln = "donation";
+	key.innerHTML = `Donations:${kilnDisclosureBadgeHtml(showDisclosures)}`;
+	value.append(createDonationLink(selfUserId, creatorId, url));
+
+	infoCard.children[0].appendChild(key);
+	infoCard.children[1].appendChild(value);
+}
+
+export async function placeAIDisclosures(
+	userId: number,
+	showDisclosures: boolean,
+) {
+	const infoCard = document.querySelector(".card-body .row:has(.fa-calendar)");
+	if (!infoCard) return;
+
+	const result = await sendMessage("getPlaceAiDisclosures", placeID);
+	if (!result.ok) return;
+
+	const { assisted, generated, icon, thumbnails } = result.data.data;
+
+	const labels: string[] = [];
+	if (generated) labels.push("Entirely AI");
+	else if (assisted) labels.push("AI assisted");
+	if (icon) labels.push("AI icon");
+	if (thumbnails > 0) {
+		labels.push(
+			thumbnails === 1 ? "AI thumbnail" : `${thumbnails} AI thumbnails`,
+		);
+	}
+
+	const key = document.createElement("li");
+	const value = document.createElement("li");
+
+	key.dataset.kiln = "ai-usage";
+	key.innerHTML = `AI Usage:${kilnDisclosureBadgeHtml(showDisclosures)}`;
+
+	if (labels.length === 0) {
+		value.classList.add("text-muted");
+		value.textContent = "Unknown";
+	} else {
+		value.classList.add("text-warning");
+		value.innerHTML = `<i class="fas fa-robot me-1"></i>${escapeHtml(labels.join(", "))}`;
+	}
+
+	value.insertAdjacentHTML(
+		"beforeend",
+		` <i class="fa-solid fa-circle-info text-muted" data-bs-toggle="tooltip" data-bs-title="AI usage labels are issued by Index when a world is reported as likely built with AI. &quot;Unknown&quot; means no label has been issued, not that the world doesn't use AI."></i>`,
+	);
+
+	const report = document.createElement("a");
+	report.href = "#";
+	report.className = "ms-2 small";
+	report.textContent = "Report";
+	value.append(report);
+
+	report.addEventListener("click", async (event) => {
+		event.preventDefault();
+
+		const verified = !!(await getApiSession(userId));
+		const prompt = await sendMessage("showPlaceAiReportPrompt", {
+			hasLabels: labels.length > 0,
+			verified,
+		});
+		if (!prompt.ok || !prompt.data) return;
+
+		const result = await sendMessage("reportPlaceAiDisclosure", {
+			userId,
+			placeId: placeID,
+			kind: prompt.data.kind,
+			...(prompt.data.details ? { details: prompt.data.details } : {}),
+		});
+
+		const outcome = document.createElement("span");
+		outcome.className = `ms-2 small ${result.ok ? "text-success" : "text-danger"}`;
+		outcome.textContent = result.ok
+			? "Thanks, report sent."
+			: result.message || "Couldn't send report.";
+		report.replaceWith(outcome);
+	});
+
+	infoCard.children[0].appendChild(key);
+	infoCard.children[1].appendChild(value);
+	sendMessage("registerBootstrapElements");
 }
 
 export async function activeChallenges(showDisclosures: boolean) {
@@ -552,7 +658,7 @@ export async function playtimeTracking(
 	showDisclosures: boolean,
 ) {
 	const SESSIONS_PER_PAGE = 10;
-	const FETCH_PAGE_SIZE = 25; // Polytrack rejects anything above 25
+	const FETCH_PAGE_SIZE = 25;
 	const MAX_FETCH_PAGES = 100;
 
 	const formatMinutes = (minutes: number) => {
@@ -1275,8 +1381,14 @@ export async function detailedPlaceReviews(
 
 	const config = await getConfig();
 	const minReviewPlaytimeMs = config.limits.minReviewPlaytimeMinutes * 60_000;
+	const requireAnonymousText = getFlag(
+		config.flags,
+		REQUIRE_ANONYMOUS_REVIEW_TEXT_FLAG,
+		true,
+	);
 
 	const isVerified = !!(await getApiSession(userId));
+	let upvoteThreshold = await _reviewUpvoteThreshold.getValue();
 
 	const renderStars = (rating: number, interactive = false) => {
 		let html = "";
@@ -1292,6 +1404,8 @@ export async function detailedPlaceReviews(
 			<i class="fas fa-user-secret" style="font-size:${Math.round(size * 0.45)}px;"></i>
 		</span>`;
 
+	const publicBadge = `<span class="badge bg-primary" style="margin-left:5px;vertical-align:text-top;" data-bs-toggle="tooltip" data-bs-title="This review is also posted on Polytoria.">ON POLYTORIA</span>`;
+
 	const anonymousBadge = `<span class="badge bg-secondary" style="margin-left:5px;vertical-align:text-top;" data-bs-toggle="tooltip" data-bs-title="Other users see this as Anonymous.">ANONYMOUS</span>`;
 
 	const renderAnonymousCheckbox = (checked: boolean) => `
@@ -1300,7 +1414,20 @@ export async function detailedPlaceReviews(
 			<label class="form-check-label text-muted small" for="kiln-review-anonymous">
 				<i class="fas fa-user-secret me-1"></i>Post anonymously
 			</label>
+			<div class="text-muted" style="font-size:0.75rem;">
+				Anonymous reviews are only visible to Kiln users and aren't posted to Polytoria. Otherwise, your review is posted to Polytoria as a thumbs up or down, and Kiln adds the stars.
+			</div>
+			<div class="d-flex align-items-center gap-1 text-muted mt-1" style="font-size:0.75rem;">
+				<i class="fas fa-thumbs-up text-success"></i> on Polytoria at
+				<select class="form-select form-select-sm bg-dark text-light border-secondary kiln-review-threshold" style="width:auto;padding-top:0;padding-bottom:0;">
+					${[1, 2, 3, 4, 5].map((n) => `<option value="${n}"${n === upvoteThreshold ? " selected" : ""}>${n}</option>`).join("")}
+				</select>
+				stars or higher
+			</div>
 		</div>`;
+
+	const renderReviewError = () => `
+		<div class="text-danger small mt-1 kiln-review-error" role="alert" style="display:none;"></div>`;
 
 	const renderTimestamp = (iso: string) => {
 		const date = new Date(iso);
@@ -1394,6 +1521,7 @@ export async function detailedPlaceReviews(
 			username: string;
 			thumbnail: string | null;
 			anonymous: boolean;
+			public: boolean;
 			rating: number;
 			body: string | null;
 			createdAt: string;
@@ -1429,6 +1557,7 @@ export async function detailedPlaceReviews(
 									: `<a href="/u/${escapeHtml(review.username)}" class="text-reset"><span class="userlink-default fw-bold">${escapeHtml(review.username)}</span></a>`
 							}
 							${review.anonymous && !masked ? anonymousBadge : ""}
+							${review.public ? publicBadge : ""}
 							<div class="text-muted small">
 								<i class="fad fa-clock me-1"></i>${date}
 								${
@@ -1458,6 +1587,7 @@ export async function detailedPlaceReviews(
 							: `<div class="mb-2">${renderStars(review.rating)}</div>`
 					}
 					${editing ? renderAnonymousCheckbox(pendingAnonymous) : ""}
+					${editing ? renderReviewError() : ""}
 					${
 						editing
 							? `<div class="d-flex gap-2 mb-2">
@@ -1466,44 +1596,61 @@ export async function detailedPlaceReviews(
 							</div>`
 							: ""
 					}
-					${renderRepliesSection(review, creatorId)}
+					${review.public ? "" : renderRepliesSection(review, creatorId)}
 				</div>
 			</div>
 			`;
 	};
 
-	const navItem = document.createElement("li");
-	navItem.className = "nav-item";
-	navItem.setAttribute("role", "presentation");
-	navItem.innerHTML = `
-		<a class="nav-link text-light" href="#!" id="kiln-reviews-tab" data-bs-toggle="tab" role="tab"
-		   data-bs-target="#kiln-reviews-tabpane" aria-controls="kiln-reviews-tabpane" aria-selected="false" tabindex="-1">
-			<i class="fas fa-star me-1"></i>
-			Reviews${kilnDisclosureBadgeHtml(showDisclosures)}
-			<span class="kiln-review-avg-badge"></span>
-		</a>
-	`;
-	tabList.appendChild(navItem);
-	if (condensedTabBar) condenseTabBar(tabList);
+	const nativeRoot = document.querySelector<HTMLElement>(
+		"#reviews-tabpane .reviews-root",
+	);
+	const nativeList = nativeRoot?.querySelector<HTMLElement>("#reviews") ?? null;
 
-	const tabPane = document.createElement("div");
-	tabPane.id = "kiln-reviews-tabpane";
-	tabPane.className = "tab-pane fade";
-	tabPane.setAttribute("role", "tabpanel");
-	tabPane.setAttribute("aria-labelledby", "kiln-reviews-tab");
-	tabPane.innerHTML = `
+	let cardBody: HTMLElement;
+	let avgBadge: HTMLElement;
+
+	if (nativeRoot && nativeList) {
+		cardBody = document.createElement("div");
+		cardBody.id = "kiln-reviews-extra";
+		nativeList.before(cardBody);
+
+		avgBadge = document.createElement("span");
+		avgBadge.className = "kiln-review-avg-badge";
+		document.getElementById("reviews-tab")?.appendChild(avgBadge);
+	} else {
+		const navItem = document.createElement("li");
+		navItem.className = "nav-item";
+		navItem.setAttribute("role", "presentation");
+		navItem.innerHTML = `
+			<a class="nav-link text-light" href="#!" id="kiln-reviews-tab" data-bs-toggle="tab" role="tab"
+			   data-bs-target="#kiln-reviews-tabpane" aria-controls="kiln-reviews-tabpane" aria-selected="false" tabindex="-1">
+				<i class="fas fa-star me-1"></i>
+				Reviews${kilnDisclosureBadgeHtml(showDisclosures)}
+				<span class="kiln-review-avg-badge"></span>
+			</a>
+		`;
+		tabList.appendChild(navItem);
+		if (condensedTabBar) condenseTabBar(tabList);
+
+		const tabPane = document.createElement("div");
+		tabPane.id = "kiln-reviews-tabpane";
+		tabPane.className = "tab-pane fade";
+		tabPane.setAttribute("role", "tabpanel");
+		tabPane.setAttribute("aria-labelledby", "kiln-reviews-tab");
+		tabContent.appendChild(tabPane);
+
+		cardBody = tabPane;
+		avgBadge = navItem.querySelector<HTMLElement>(".kiln-review-avg-badge")!;
+	}
+
+	cardBody.innerHTML = `
 		<div class="d-flex justify-content-center py-3">
 			<div class="spinner-border spinner-border-sm text-secondary" role="status">
 				<span class="visually-hidden">Loading...</span>
 			</div>
 		</div>
 	`;
-	tabContent.appendChild(tabPane);
-
-	const cardBody = tabPane;
-	const avgBadge = navItem.querySelector<HTMLElement>(
-		".kiln-review-avg-badge",
-	)!;
 	avgBadge.innerHTML = `<span class="badge bg-secondary ms-1" style="font-size:0.8rem;">...</span>`;
 
 	if (!isVerified) {
@@ -1512,6 +1659,13 @@ export async function detailedPlaceReviews(
 			<p class="text-muted small mb-2"><i class="fa-regular fa-lock me-1"></i> Verify your Kiln account to leave a review.</p>
 			<a href="/my/settings/kiln?tab=sync" class="btn btn-primary btn-sm">Verify Account</a>`;
 		return;
+	}
+
+	if (nativeList) {
+		const hideNativeCompose = document.createElement("style");
+		hideNativeCompose.textContent =
+			"#review-compose { display: none !important; }";
+		document.head.appendChild(hideNativeCompose);
 	}
 
 	await loadReviews();
@@ -1551,6 +1705,22 @@ export async function detailedPlaceReviews(
 		const isCreator = creatorId !== null && creatorId === userId;
 
 		let { reviews, averageRating, totalReviews, myReview } = result.data.data;
+		const likesContainer = document.getElementById("likes-data-container");
+		if (
+			nativeRoot &&
+			likesContainer &&
+			myReview?.public &&
+			!likesContainer.dataset.ratingId
+		) {
+			void sendMessage("unlinkNativePlaceReview", { placeId: placeID, userId });
+			const unlink = <T extends { id: string }>(review: T): T =>
+				review.id === myReview?.id
+					? { ...review, public: false, nativeRatingId: null }
+					: review;
+			myReview = unlink(myReview);
+			reviews = reviews.map(unlink);
+		}
+
 		let pendingRating = myReview?.rating ?? 0;
 		let pendingAnonymous = myReview?.anonymous ?? false;
 		let isSubmitting = false;
@@ -1564,10 +1734,122 @@ export async function detailedPlaceReviews(
 			avgBadge.innerHTML = `<span class="badge bg-warning text-dark ms-1" style="font-size:0.8rem;"><i class="fas fa-star me-1"></i>${averageRating.toFixed(1)} <span class="fw-normal opacity-75">(${totalReviews})</span></span>`;
 		};
 
+		const nativeCardUserId = (card: Element) =>
+			Number(
+				card
+					.querySelector<HTMLAnchorElement>('a[href^="/users/"]')
+					?.getAttribute("href")
+					?.split("/")[2],
+			);
+
+		const decorateNativeCards = () => {
+			if (!nativeList) return;
+
+			const publicByUser = new Map(
+				(myReview ? [myReview, ...reviews] : reviews)
+					.filter((r) => r.public)
+					.map((r) => [r.userId, r] as const),
+			);
+
+			for (const card of nativeList.querySelectorAll<HTMLElement>(
+				".review-card",
+			)) {
+				card.querySelectorAll(".kiln-native-extra").forEach((el) => {
+					el.remove();
+				});
+
+				const kilnReview = publicByUser.get(nativeCardUserId(card));
+				if (!kilnReview) continue;
+
+				const meta = card.querySelector(".d-flex.gap-3.text-muted");
+				meta?.insertAdjacentHTML(
+					"beforeend",
+					`<span class="kiln-native-extra" data-bs-toggle="tooltip" data-bs-title="Kiln star rating">${renderStars(kilnReview.rating)}</span>`,
+				);
+
+				card
+					.querySelector(".flex-grow-1 > .d-flex.flex-column")
+					?.insertAdjacentHTML(
+						"beforeend",
+						`<div class="kiln-native-extra">${renderRepliesSection(kilnReview, creatorId)}</div>`,
+					);
+
+				bindReplyHandlers(card);
+			}
+
+			sendMessage("registerBootstrapElements");
+		};
+
+		const bindReplyHandlers = (scope: ParentNode) => {
+			scope
+				.querySelectorAll<HTMLButtonElement>(".kiln-reply-submit")
+				.forEach((replySubmitBtn) => {
+					replySubmitBtn.addEventListener("click", async () => {
+						const reviewId = replySubmitBtn.dataset.reviewId!;
+						const replyTextarea = scope.querySelector<HTMLTextAreaElement>(
+							`.kiln-reply-textarea[data-review-id="${reviewId}"]`,
+						)!;
+
+						const replyBody = replyTextarea.value.trim();
+						if (!replyBody) return;
+
+						replySubmitBtn.disabled = true;
+						const res = await sendMessage("submitReviewReply", {
+							userId,
+							reviewId,
+							body: replyBody,
+						});
+
+						if (!res.ok) {
+							replySubmitBtn.disabled = false;
+							return;
+						}
+
+						const target =
+							myReview?.id === reviewId
+								? myReview
+								: reviews.find((r) => r.id === reviewId);
+						target?.replies.push(res.data.data);
+
+						render();
+					});
+				});
+
+			scope
+				.querySelectorAll<HTMLButtonElement>(".kiln-reply-delete")
+				.forEach((deleteReplyBtn) => {
+					deleteReplyBtn.addEventListener("click", async () => {
+						const replyId = deleteReplyBtn.dataset.replyId!;
+						deleteReplyBtn.disabled = true;
+
+						const res = await sendMessage("deleteReviewReply", {
+							userId,
+							replyId,
+						});
+						if (!res.ok) {
+							deleteReplyBtn.disabled = false;
+							return;
+						}
+
+						for (const r of myReview ? [myReview, ...reviews] : reviews) {
+							const idx = r.replies.findIndex((reply) => reply.id === replyId);
+							if (idx !== -1) {
+								r.replies.splice(idx, 1);
+								break;
+							}
+						}
+
+						render();
+					});
+				});
+		};
+
 		const render = () => {
 			updateAvgBadge();
 
-			const otherReviews = reviews.filter((r) => r.userId !== userId);
+			const otherReviews = reviews.filter(
+				(r) => r.userId !== userId && !r.public,
+			);
 
 			const showEditor =
 				isEditing || (!myReview && !isCreator && hasEnoughPlaytime);
@@ -1600,6 +1882,7 @@ export async function detailedPlaceReviews(
 						${renderStars(pendingRating, true)}
 					</div>
 					${renderAnonymousCheckbox(pendingAnonymous)}
+					${renderReviewError()}
 					<div class="d-flex gap-2">
 						<button class="btn btn-primary btn-sm kiln-review-submit" ${pendingRating === 0 ? "disabled" : ""}>
 							Submit
@@ -1623,14 +1906,14 @@ export async function detailedPlaceReviews(
 
 			const othersHTML =
 				otherReviews.length === 0
-					? myReview
+					? myReview || nativeList
 						? ""
 						: `<div class="text-muted fst-italic">No other reviews yet.</div>`
 					: otherReviews.map((r) => renderReviewRow(r, creatorId)).join("");
 
 			const noticeHTML = `
 			<div class="alert alert-dark py-2 px-2 small mb-3 text-warning">
-				<i class="fas fa-triangle-exclamation me-1"></i> Kiln World Reviews will be phased out soon as Polytoria has implemented world reviews natively. If you'd like, you can migrate all of your Kiln reviews to Polytoria's new system in the sync tab.
+				<i class="fas fa-triangle-exclamation me-1"></i> Kiln reviews now work with Polytoria's. Public reviews are posted to Polytoria for you, with Kiln adding the star rating. Reviews made before this change can be moved over in the sync tab.
 				<div class="mt-2">
 					<a href="/my/settings/kiln?tab=sync" class="btn btn-outline-warning btn-sm">Go to Sync Tab</a>
 				</div>
@@ -1639,67 +1922,8 @@ export async function detailedPlaceReviews(
 			cardBody.innerHTML = noticeHTML + formHTML + myReviewHTML + othersHTML;
 			sendMessage("registerBootstrapElements");
 
-			cardBody
-				.querySelectorAll<HTMLButtonElement>(".kiln-reply-submit")
-				.forEach((replySubmitBtn) => {
-					replySubmitBtn.addEventListener("click", async () => {
-						const reviewId = replySubmitBtn.dataset.reviewId!;
-						const replyTextarea = cardBody.querySelector<HTMLTextAreaElement>(
-							`.kiln-reply-textarea[data-review-id="${reviewId}"]`,
-						)!;
-
-						const replyBody = replyTextarea.value.trim();
-						if (!replyBody) return;
-
-						replySubmitBtn.disabled = true;
-						const res = await sendMessage("submitReviewReply", {
-							userId,
-							reviewId,
-							body: replyBody,
-						});
-
-						if (!res.ok) {
-							replySubmitBtn.disabled = false;
-							return;
-						}
-
-						const target =
-							myReview?.id === reviewId
-								? myReview
-								: reviews.find((r) => r.id === reviewId);
-						target?.replies.push(res.data.data);
-
-						render();
-					});
-				});
-
-			cardBody
-				.querySelectorAll<HTMLButtonElement>(".kiln-reply-delete")
-				.forEach((deleteReplyBtn) => {
-					deleteReplyBtn.addEventListener("click", async () => {
-						const replyId = deleteReplyBtn.dataset.replyId!;
-						deleteReplyBtn.disabled = true;
-
-						const res = await sendMessage("deleteReviewReply", {
-							userId,
-							replyId,
-						});
-						if (!res.ok) {
-							deleteReplyBtn.disabled = false;
-							return;
-						}
-
-						for (const r of myReview ? [myReview, ...reviews] : reviews) {
-							const idx = r.replies.findIndex((reply) => reply.id === replyId);
-							if (idx !== -1) {
-								r.replies.splice(idx, 1);
-								break;
-							}
-						}
-
-						render();
-					});
-				});
+			bindReplyHandlers(cardBody);
+			decorateNativeCards();
 
 			cardBody
 				.querySelector<HTMLButtonElement>(".kiln-review-edit")
@@ -1732,6 +1956,7 @@ export async function detailedPlaceReviews(
 				const res = await sendMessage("deleteMyPlaceReview", {
 					placeId: placeID,
 					userId,
+					wasPublic: myReview?.public ?? false,
 				});
 				isSubmitting = false;
 				if (!res.ok) {
@@ -1806,10 +2031,35 @@ export async function detailedPlaceReviews(
 			const anonymousCheckbox = cardBody.querySelector<HTMLInputElement>(
 				".kiln-review-anonymous",
 			)!;
+			const errorField =
+				cardBody.querySelector<HTMLElement>(".kiln-review-error");
+
+			const clearReviewError = () => {
+				textarea.classList.remove("is-invalid");
+				if (!errorField) return;
+				errorField.textContent = "";
+				errorField.style.display = "none";
+			};
+
+			const showReviewError = (message: string) => {
+				if (!errorField) return;
+				errorField.textContent = message;
+				errorField.style.display = "";
+			};
+
+			cardBody
+				.querySelector<HTMLSelectElement>(".kiln-review-threshold")
+				?.addEventListener("change", (event) => {
+					upvoteThreshold = Number((event.target as HTMLSelectElement).value);
+					void _reviewUpvoteThreshold.setValue(upvoteThreshold);
+				});
 
 			anonymousCheckbox.addEventListener("change", () => {
 				pendingAnonymous = anonymousCheckbox.checked;
+				clearReviewError();
 			});
+
+			textarea.addEventListener("input", clearReviewError);
 
 			const bindStarHover = () => {
 				starPicker
@@ -1849,23 +2099,45 @@ export async function detailedPlaceReviews(
 
 			submitBtn.addEventListener("click", async () => {
 				if (isSubmitting || pendingRating === 0) return;
+
+				const body = textarea.value.trim();
+				if (requireAnonymousText && pendingAnonymous && !body) {
+					textarea.classList.add("is-invalid");
+					textarea.focus();
+					showReviewError("Anonymous reviews must include a comment.");
+					return;
+				}
+
+				if (!pendingAnonymous && !body) {
+					textarea.classList.add("is-invalid");
+					textarea.focus();
+					showReviewError(
+						"Public reviews need a comment because they're posted to Polytoria.",
+					);
+					return;
+				}
+
+				clearReviewError();
 				isSubmitting = true;
 				submitBtn.disabled = true;
 				submitBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${myReview ? "Updating..." : "Submitting..."}`;
 
-				const body = textarea.value.trim() || undefined;
 				const res = await sendMessage("submitPlaceReview", {
 					placeId: placeID,
 					userId,
 					rating: pendingRating,
-					body,
+					body: body || undefined,
 					anonymous: pendingAnonymous,
+					wasPublic: myReview?.public ?? false,
 				});
 
 				isSubmitting = false;
 				if (!res.ok) {
 					submitBtn.disabled = false;
 					submitBtn.textContent = myReview ? "Update" : "Submit";
+					showReviewError(
+						res.message || "Something went wrong submitting your review.",
+					);
 					return;
 				}
 
@@ -1892,6 +2164,12 @@ export async function detailedPlaceReviews(
 		};
 
 		render();
+
+		if (nativeList) {
+			new MutationObserver(() => decorateNativeCards()).observe(nativeList, {
+				childList: true,
+			});
+		}
 
 		const reviewIds = [
 			...new Set(

@@ -41,11 +41,12 @@ function composerFeatures(
 			create.forumPostPreview(
 				values.config.forumPostPreview.autoShow,
 				showDisclosures,
-				values.enabled.includes("forumImageLibrary"),
 			),
 		);
 	if (values.enabled.includes("forumCharacterCount"))
 		runFeature("forumCharacterCount", () => create.forumCharacterCount());
+	if (values.enabled.includes("forumMentions"))
+		runFeature("forumMentions", () => create.forumMentionSelector());
 	if (values.enabled.includes("forumImageLibrary"))
 		runFeature("forumImageLibrary", () => create.forumImageLibrary());
 	if (values.enabled.includes("forumFilteredWordHighlight"))

@@ -264,6 +264,21 @@ export const JoinPlaceApiSchema = z.object({
 });
 export type JoinPlaceApi = z.infer<typeof JoinPlaceApiSchema>;
 
+export const EventItemApiSchema = z.object({
+	assetID: z.number(),
+	asset: z.object({
+		name: z.string(),
+		description: z.string(),
+		thumbnailUrl: z.string().url(),
+	}),
+	isOwned: z.boolean(),
+});
+export type EventItemApi = z.infer<typeof EventItemApiSchema>;
+
+// Response of the site's public GET /v1/events/items/:userId (the current event's items)
+export const EventItemsApiSchema = z.array(EventItemApiSchema);
+export type EventItemsApi = z.infer<typeof EventItemsApiSchema>;
+
 export const UserCreationsApiSchema = z.object({
 	assets: z.array(
 		z.object({
@@ -282,6 +297,9 @@ export const UserCreationsApiSchema = z.object({
 	total: z.number().int().nonnegative(),
 });
 export type UserCreationsApi = z.infer<typeof UserCreationsApiSchema>;
+
+export const GuildCreationsApiSchema = UserCreationsApiSchema;
+export type GuildCreationsApi = z.infer<typeof GuildCreationsApiSchema>;
 
 // Response of the site's internal GET /api/avatar/outfits (the signed-in user's outfits)
 export const OutfitsApiSchema = z.object({

@@ -15,15 +15,17 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { addPendingAssetApproval } from "@/utils/storage";
-import { getUserDetails } from "@/utils/utilities";
+import { applyKilnDisclosureTitle, getUserDetails } from "@/utils/utilities";
 
 function isPendingReview(card: HTMLElement): boolean {
 	const title =
-		card.getAttribute("data-bs-original-title") ?? card.getAttribute("title") ?? "";
+		card.getAttribute("data-bs-original-title") ??
+		card.getAttribute("title") ??
+		"";
 	if (/pending review/i.test(title)) return true;
 
-	return Array.from(card.querySelectorAll<HTMLElement>(".badge")).some((badge) =>
-		/pending review/i.test(badge.textContent ?? ""),
+	return Array.from(card.querySelectorAll<HTMLElement>(".badge")).some(
+		(badge) => /pending review/i.test(badge.textContent ?? ""),
 	);
 }
 
@@ -46,5 +48,53 @@ export async function trackPendingAssetApprovals(): Promise<void> {
 		if (assetId === null) continue;
 
 		await addPendingAssetApproval(assetId, user.userId);
+	}
+}
+
+const PRIVATE_CHECKBOX_MARKER = "auto-private-assets";
+
+export function addPrivateCheckboxToUploadForm(
+	privateByDefault: boolean,
+	showDisclosures: boolean,
+): void {
+	const forms = document.querySelectorAll<HTMLFormElement>(
+		'form[action^="/create"]',
+	);
+
+	for (const form of forms) {
+		if (form.querySelector(`[data-kiln="${PRIVATE_CHECKBOX_MARKER}"]`))
+			continue;
+		if (!form.querySelector('input[type="file"]')) continue;
+
+		const wrapper = document.createElement("label");
+		wrapper.classList.add("form-check", "form-switch", "mb-2");
+		wrapper.dataset.kiln = PRIVATE_CHECKBOX_MARKER;
+
+		const checkbox = document.createElement("input");
+		checkbox.type = "checkbox";
+		checkbox.classList.add("form-check-input");
+		checkbox.name = "isPrivate";
+		checkbox.value = "on";
+		checkbox.checked = privateByDefault;
+
+		const label = document.createElement("span");
+		label.classList.add("form-check-label");
+		label.textContent = "Private asset?";
+
+		wrapper.append(checkbox, label);
+		applyKilnDisclosureTitle(wrapper, showDisclosures, "Private asset");
+
+		const submitButton = form.querySelector<HTMLButtonElement>(
+			'button[type="submit"]',
+		);
+		const submitGroup = submitButton?.closest(".form-group");
+
+		if (submitGroup) {
+			submitGroup.insertAdjacentElement("beforebegin", wrapper);
+		} else if (submitButton) {
+			submitButton.insertAdjacentElement("beforebegin", wrapper);
+		} else {
+			form.appendChild(wrapper);
+		}
 	}
 }

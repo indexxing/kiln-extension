@@ -212,7 +212,7 @@ export const EFFECT_TYPE_CONFIGS: Record<
 			kind: "audio-volume",
 			min: 1,
 			max: 2147483647,
-			default: "0:50",
+			default: "0:20",
 		},
 	},
 };
@@ -236,7 +236,7 @@ function buildSingleEffectCSS(
 		case "inputs:border-radius":
 			return `.form-control, .form-select { border-radius: ${effect.value}px !important; }`;
 		case "modals:border-radius":
-			return `.modal-content { border-radius: ${effect.value}px !important; }`;
+			return `.modal-content, .kiln-palette, .kiln-pm-panel { border-radius: ${effect.value}px !important; }`;
 
 		case "cards:box-shadow":
 		case "buttons:box-shadow":
@@ -255,7 +255,7 @@ function buildSingleEffectCSS(
 					: effect.slot === "buttons"
 						? ".btn"
 						: effect.slot === "modals"
-							? ".modal-content"
+							? ".modal-content, .kiln-palette, .kiln-pm-panel"
 							: "nav.navbar";
 			return `${sel} { box-shadow: ${shadow} !important; }`;
 		}
@@ -276,7 +276,7 @@ function buildSingleEffectCSS(
 		case "inputs:border-color":
 			return `.form-control, .form-select { border-color: ${effect.value} !important; }`;
 		case "modals:border-color":
-			return `.modal-content { border-color: ${effect.value} !important; }`;
+			return `.modal-content, .kiln-palette, .kiln-pm-panel { border-color: ${effect.value} !important; }`;
 		case "navbar:border-color":
 			return `nav.navbar { border-bottom-color: ${effect.value} !important; border-bottom-style: solid !important; }`;
 
@@ -294,7 +294,7 @@ function buildSingleEffectCSS(
 		case "navbar:background-color":
 			return `.bg-navbar, nav.navbar { background-color: ${effect.value} !important; }`;
 		case "modals:background-color":
-			return `.modal-content { background-color: ${effect.value} !important; }`;
+			return `.modal-content, .kiln-palette, .kiln-pm-panel { background-color: ${effect.value} !important; }`;
 
 		case "global:letter-spacing":
 			return `body { letter-spacing: ${effect.value}px !important; }`;
@@ -420,6 +420,100 @@ export const FONTS: Record<
 		name: "JetBrains Mono",
 		googleFamily: "JetBrains+Mono:wght@400;500;700",
 		stack: "'JetBrains Mono', monospace",
+	},
+	"open-sans": {
+		name: "Open Sans",
+		googleFamily: "Open+Sans:wght@400;600;700",
+		stack: "'Open Sans', sans-serif",
+	},
+	lato: {
+		name: "Lato",
+		googleFamily: "Lato:wght@400;700",
+		stack: "'Lato', sans-serif",
+	},
+	rubik: {
+		name: "Rubik",
+		googleFamily: "Rubik:wght@400;500;700",
+		stack: "'Rubik', sans-serif",
+	},
+	"work-sans": {
+		name: "Work Sans",
+		googleFamily: "Work+Sans:wght@400;500;600;700",
+		stack: "'Work Sans', sans-serif",
+	},
+	outfit: {
+		name: "Outfit",
+		googleFamily: "Outfit:wght@400;500;600;700",
+		stack: "'Outfit', sans-serif",
+	},
+	lexend: {
+		name: "Lexend",
+		googleFamily: "Lexend:wght@400;500;600;700",
+		stack: "'Lexend', sans-serif",
+	},
+	quicksand: {
+		name: "Quicksand",
+		googleFamily: "Quicksand:wght@400;500;600;700",
+		stack: "'Quicksand', sans-serif",
+	},
+	oswald: {
+		name: "Oswald",
+		googleFamily: "Oswald:wght@400;500;600;700",
+		stack: "'Oswald', sans-serif",
+	},
+	"bebas-neue": {
+		name: "Bebas Neue",
+		googleFamily: "Bebas+Neue:wght@400",
+		stack: "'Bebas Neue', sans-serif",
+	},
+	orbitron: {
+		name: "Orbitron",
+		googleFamily: "Orbitron:wght@400;500;700",
+		stack: "'Orbitron', sans-serif",
+	},
+	righteous: {
+		name: "Righteous",
+		googleFamily: "Righteous:wght@400",
+		stack: "'Righteous', sans-serif",
+	},
+	lora: {
+		name: "Lora",
+		googleFamily: "Lora:wght@400;500;600;700",
+		stack: "'Lora', serif",
+	},
+	merriweather: {
+		name: "Merriweather",
+		googleFamily: "Merriweather:wght@400;700",
+		stack: "'Merriweather', serif",
+	},
+	pacifico: {
+		name: "Pacifico",
+		googleFamily: "Pacifico:wght@400",
+		stack: "'Pacifico', cursive",
+	},
+	caveat: {
+		name: "Caveat",
+		googleFamily: "Caveat:wght@400;600;700",
+		stack: "'Caveat', cursive",
+	},
+	"press-start-2p": {
+		name: "Press Start 2P",
+		googleFamily: "Press+Start+2P:wght@400",
+		stack: "'Press Start 2P', monospace",
+	},
+	"fira-code": {
+		name: "Fira Code",
+		googleFamily: "Fira+Code:wght@400;500;700",
+		stack: "'Fira Code', monospace",
+	},
+	"source-code-pro": {
+		name: "Source Code Pro",
+		googleFamily: "Source+Code+Pro:wght@400;500;700",
+		stack: "'Source Code Pro', monospace",
+	},
+	"comic-sans": {
+		name: "Comic Sans",
+		stack: "'Comic Sans MS', 'Comic Sans', 'Chalkboard SE', cursive",
 	},
 };
 
@@ -603,6 +697,15 @@ export const SELECTOR_REFERENCE: {
 		items: [
 			{ label: "Bootstrap modal content", selector: ".modal-content" },
 			{ label: "Kiln extension modal", selector: ".kiln-extension-modal" },
+			{ label: "Command palette", selector: ".kiln-palette" },
+			{
+				label: "Command palette result",
+				selector: ".kiln-palette-item",
+			},
+			{
+				label: "Active palette result",
+				selector: ".kiln-palette-item.active",
+			},
 			{ label: "SweetAlert popup", selector: ".swal2-popup" },
 			{ label: "SweetAlert title", selector: ".swal2-title" },
 			{ label: "SweetAlert body text", selector: ".swal2-html-container" },
@@ -653,6 +756,39 @@ export const SELECTOR_REFERENCE: {
 				selector: ".forum-post-title-container",
 			},
 			{ label: "Forum user sidebar", selector: ".forum-user-container" },
+			{
+				label: "Mention autocomplete popup",
+				selector: ".kiln-mention-dropdown",
+			},
+			{
+				label: "Mention autocomplete row",
+				selector: ".kiln-mention-item",
+			},
+			{
+				label: "Active mention autocomplete row",
+				selector: ".kiln-mention-item.active",
+			},
+			{ label: "Rendered @mention link", selector: ".kiln-extension-mention" },
+		],
+	},
+	{
+		category: "Private Messaging",
+		items: [
+			{
+				label: "Messages widget",
+				selector: ".kiln-pm",
+				note: "Set the --kiln-pm-bg, --kiln-pm-header-bg, --kiln-pm-inset, --kiln-pm-inset-text, --kiln-pm-border, --kiln-pm-text, --kiln-pm-accent and --kiln-pm-accent-text variables here to recolor the whole widget.",
+			},
+			{ label: "Messages launcher button", selector: ".kiln-pm-launcher" },
+			{ label: "Messages panel", selector: ".kiln-pm-panel" },
+			{ label: "Messages panel header", selector: ".kiln-pm-header" },
+			{ label: "Conversation row", selector: ".kiln-pm-convo" },
+			{ label: "Unread conversation row", selector: ".kiln-pm-convo--unread" },
+			{ label: "Message bubble", selector: ".kiln-pm-bubble" },
+			{ label: "Your message bubble", selector: ".kiln-pm-bubble--mine" },
+			{ label: "Received message bubble", selector: ".kiln-pm-bubble--theirs" },
+			{ label: "Message image", selector: ".kiln-pm-image img" },
+			{ label: "Message composer", selector: ".kiln-pm-composer" },
 		],
 	},
 	{
@@ -804,6 +940,151 @@ export function isValidHex(hex: string): boolean {
 	return /^#[0-9a-f]{6}$/i.test(hex);
 }
 
+function relativeLuminance([r, g, b]: [number, number, number]): number {
+	const toLinear = (c: number) => {
+		const s = c / 255;
+		return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+	};
+	return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+function contrastRatio(
+	a: [number, number, number],
+	b: [number, number, number],
+): number {
+	const la = relativeLuminance(a);
+	const lb = relativeLuminance(b);
+	return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
+function blendRgb(
+	top: [number, number, number],
+	bottom: [number, number, number],
+	alpha: number,
+): [number, number, number] {
+	return [
+		Math.round(top[0] * alpha + bottom[0] * (1 - alpha)),
+		Math.round(top[1] * alpha + bottom[1] * (1 - alpha)),
+		Math.round(top[2] * alpha + bottom[2] * (1 - alpha)),
+	];
+}
+
+export const CARD_PRESET_OPACITY: Record<
+	"solid" | "glass" | "outline" | "gradient",
+	number
+> = {
+	solid: 100,
+	glass: 45,
+	outline: 0,
+	gradient: 85,
+};
+
+export const UNREADABLE_TEXT_RATIO = 2;
+export const UNREADABLE_ACCENT_RATIO = 1.5;
+
+export type ReadabilityInput = {
+	accentColor: string;
+	navbarColor: string;
+	backgroundImage?: string | null;
+	backgroundOverlayColor?: string | null;
+	backgroundOverlayOpacity?: number | null;
+	colorTokens?: Record<string, string> | null;
+	cardStyle?: {
+		preset: keyof typeof CARD_PRESET_OPACITY;
+		tint?: string;
+		opacity?: number;
+	} | null;
+	notes?: { text: string; color: string; background: string }[] | null;
+};
+
+export type ReadabilityIssue = { label: string; ratio: number };
+
+export function profileThemeReadabilityIssues(
+	theme: ReadabilityInput,
+): ReadabilityIssue[] {
+	const color = (value: string | null | undefined, fallback: string) =>
+		hexToRgb(value && isValidHex(value) ? value : fallback);
+	const tokens = theme.colorTokens ?? {};
+	const navbar = theme.navbarColor;
+
+	const baseBg = color(tokens.bodyBg, navbar);
+	let page: [number, number, number] | null = baseBg;
+	if (theme.backgroundImage) {
+		const overlayAlpha = (theme.backgroundOverlayOpacity ?? 0) / 100;
+		page =
+			theme.backgroundOverlayColor && overlayAlpha >= 0.85
+				? blendRgb(
+						color(theme.backgroundOverlayColor, navbar),
+						baseBg,
+						overlayAlpha,
+					)
+				: null;
+	}
+
+	const cardStyle = theme.cardStyle;
+	const cardBase = cardStyle
+		? color(cardStyle.tint, lightenHex(navbar, 7))
+		: color(tokens.cardBg, lightenHex(navbar, 7));
+	const cardAlpha = cardStyle
+		? (cardStyle.opacity ?? CARD_PRESET_OPACITY[cardStyle.preset] ?? 100) / 100
+		: 1;
+	const card =
+		cardAlpha >= 1
+			? cardBase
+			: page
+				? blendRgb(cardBase, page, cardAlpha)
+				: cardAlpha >= 0.85
+					? cardBase
+					: null;
+
+	const issues: ReadabilityIssue[] = [];
+	const check = (
+		label: string,
+		fg: [number, number, number],
+		bg: [number, number, number] | null,
+		threshold: number,
+	) => {
+		if (!bg) return;
+		const ratio = contrastRatio(fg, bg);
+		if (ratio < threshold)
+			issues.push({ label, ratio: Math.round(ratio * 100) / 100 });
+	};
+
+	const bodyText = color(tokens.bodyText, getContrastColor(navbar));
+	check("Body text on cards", bodyText, card, UNREADABLE_TEXT_RATIO);
+	check(
+		"Body text on the page background",
+		bodyText,
+		page,
+		UNREADABLE_TEXT_RATIO,
+	);
+	check(
+		"Links on cards",
+		color(tokens.linkColor, theme.accentColor),
+		card,
+		UNREADABLE_ACCENT_RATIO,
+	);
+	if (tokens.mutedText && isValidHex(tokens.mutedText))
+		check(
+			"Muted text on cards",
+			hexToRgb(tokens.mutedText),
+			card,
+			UNREADABLE_ACCENT_RATIO,
+		);
+
+	(theme.notes ?? []).forEach((note, index) => {
+		if (!note.text?.trim()) return;
+		check(
+			`Sticky note ${index + 1}`,
+			color(note.color, "#000000"),
+			color(note.background, "#ffffff"),
+			UNREADABLE_TEXT_RATIO,
+		);
+	});
+
+	return issues;
+}
+
 const LOGO_BASE_HUE = rgbToHsl(...hexToRgb("#ff5951"))[0];
 
 export function hexToIconFilter(hex: string): string {
@@ -851,6 +1132,11 @@ export function buildThemeCSS(
 
 	const bodyText = getContrastColor(navbarColor);
 	const [btr, btg, btb] = hexToRgb(bodyText);
+
+	const pmIsLight = getContrastColor(cardBg) === "#000000";
+	const pmHeaderBg = pmIsLight ? darkenHex(cardBg, 3) : cardCap;
+	const pmInset = pmIsLight ? darkenHex(cardBg, 8) : secondaryBg;
+	const pmBorder = pmIsLight ? darkenHex(cardBg, 16) : borderColor;
 
 	return `
 :root {
@@ -1013,6 +1299,23 @@ export function buildThemeCSS(
 .forum-category-container { background-color: ${cardBg} !important; }
 .forum-post-title-container { background-color: ${cardBg} !important; }
 
+.kiln-mention-dropdown {
+  background-color: ${dropdownBg} !important;
+  border: 1px solid ${borderColor} !important;
+}
+.kiln-mention-item {
+  background-color: transparent !important;
+  color: ${bodyText} !important;
+  border-color: ${borderColor} !important;
+}
+.kiln-mention-item:hover { background-color: ${secondaryBg} !important; }
+.kiln-mention-item.active {
+  background-color: ${accentColor} !important;
+  border-color: ${accentColor} !important;
+  color: ${btnText} !important;
+}
+.kiln-extension-mention { color: ${accentColor}; }
+
 @media (min-width: 768px) {
   .forum-user-container { background: ${secondaryBg} !important; }
 }
@@ -1078,14 +1381,37 @@ export function buildThemeCSS(
 }
 .friendsPopup .popupItem:hover { background-color: ${secondaryBg} !important; }
 
+.markdown-editor .markdown-toolbar-btn:hover:not(:disabled),
+.markdown-editor .markdown-toolbar-btn[aria-expanded="true"] {
+  color: ${bodyText} !important;
+  background-color: ${borderColor} !important;
+}
+.markdown-editor .markdown-toolbar-divider {
+  background-color: ${borderColor} !important;
+}
+
 html .input-group.nav-search #search-addon,
-html .input-group.nav-search input#gsearch {
+html .input-group.nav-search .input-group-text,
+html .input-group.nav-search input#gsearch,
+html .input-group.nav-search input.form-control {
   background: ${cardBg} !important;
   border-color: ${borderColor} !important;
   color: ${bodyText} !important;
 }
-#gsearch::placeholder { color: rgba(${btr}, ${btg}, ${btb}, 0.5) !important; }
-html .input-group.nav-search input#gsearch:focus {
+.input-group > #storeSearch ~ .input-group-text,
+.input-group:has(> #storeSearch) > .input-group-text {
+  background-color: ${cardBg} !important;
+  border-color: ${borderColor} !important;
+  color: ${bodyText} !important;
+}
+html .input-group.nav-search input.form-control:not(#gsearch) {
+  border: 1px solid ${borderColor} !important;
+  border-left-width: 0 !important;
+}
+#gsearch::placeholder,
+.input-group.nav-search input.form-control::placeholder { color: rgba(${btr}, ${btg}, ${btb}, 0.5) !important; }
+html .input-group.nav-search input#gsearch:focus,
+html .input-group.nav-search input.form-control:focus {
   border-color: ${accentColor} !important;
   box-shadow: 0 0 0 0.25rem rgba(${ar}, ${ag}, ${ab}, 0.25) !important;
 }
@@ -1256,6 +1582,40 @@ ${(() => {
 .kiln-extension-modal {
   background-color: ${cardBg} !important;
   border-color: ${borderColor} !important;
+}
+
+.kiln-palette {
+  background-color: ${cardBg} !important;
+  border-color: ${borderColor} !important;
+  color: ${bodyText} !important;
+}
+.kiln-palette::backdrop { background: rgba(${nr}, ${ng}, ${nb}, 0.73) !important; }
+.kiln-palette .border-top,
+.kiln-palette .border-bottom { border-color: ${borderColor} !important; }
+.kiln-palette input { color: ${bodyText} !important; }
+.kiln-palette-item.active { background-color: ${secondaryBg} !important; }
+.kiln-palette-img,
+.kiln-palette-icon { background-color: ${secondaryBg} !important; }
+.kiln-palette .btn-outline-secondary {
+  --bs-btn-color: ${bodyText};
+  --bs-btn-border-color: ${borderColor};
+  --bs-btn-hover-color: ${btnText};
+  --bs-btn-hover-bg: ${accentColor};
+  --bs-btn-hover-border-color: ${accentColor};
+  --bs-btn-active-color: ${btnText};
+  --bs-btn-active-bg: ${accentColor};
+  --bs-btn-active-border-color: ${accentColor};
+}
+
+html .kiln-pm {
+  --kiln-pm-bg: ${cardBg};
+  --kiln-pm-header-bg: ${pmHeaderBg};
+  --kiln-pm-inset: ${pmInset};
+  --kiln-pm-inset-text: ${getContrastColor(pmInset)};
+  --kiln-pm-border: ${pmBorder};
+  --kiln-pm-text: ${getContrastColor(cardBg)};
+  --kiln-pm-accent: ${accentColor};
+  --kiln-pm-accent-text: ${btnText};
 }
 
 .footer-container { border-top-color: ${borderColor} !important; }

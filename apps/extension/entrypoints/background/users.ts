@@ -542,7 +542,7 @@ onMessage("getAvatarOutfits", ({ data: userId }) =>
 	handle(() =>
 		withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/outfits`,
+				`${config.resolvedUrls.extension}me/outfits`,
 				Extension.AvatarOutfitsApi,
 				{ headers: { Authorization: `Bearer ${token}` } },
 			),
@@ -554,7 +554,7 @@ onMessage("createAvatarOutfit", ({ data: { userId, name, avatarData } }) =>
 	handle(() =>
 		withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/outfits`,
+				`${config.resolvedUrls.extension}me/outfits`,
 				Extension.AvatarOutfitApi,
 				{
 					method: "POST",
@@ -575,7 +575,7 @@ onMessage(
 		handle(() =>
 			withAuthSession(userId, (token, config) =>
 				safeFetch(
-					`${config.resolvedUrls.extension}users/${userId}/outfits/${outfitId}`,
+					`${config.resolvedUrls.extension}me/outfits/${outfitId}`,
 					Extension.AvatarOutfitApi,
 					{
 						method: "PATCH",
@@ -594,7 +594,7 @@ onMessage("deleteAvatarOutfit", ({ data: { userId, outfitId } }) =>
 	handle(() =>
 		withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/outfits/${outfitId}`,
+				`${config.resolvedUrls.extension}me/outfits/${outfitId}`,
 				null,
 				{
 					method: "DELETE",
@@ -609,7 +609,7 @@ onMessage("exportUserData", ({ data: userId }) =>
 	handle(() =>
 		withAuthSession(userId, (token, config) =>
 			safeFetch(
-				`${config.resolvedUrls.extension}users/${userId}/export`,
+				`${config.resolvedUrls.extension}me/export`,
 				Extension.DataExportApi,
 				{ headers: { Authorization: `Bearer ${token}` } },
 			),

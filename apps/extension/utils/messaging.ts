@@ -32,6 +32,30 @@ import type {
 	StoreListingFilters,
 } from "./types";
 
+export type ProfileThemePayload = {
+	accentColor: string;
+	navbarColor: string;
+	fontFamily?: string;
+	customCss?: string;
+	backgroundImage?: string;
+	backgroundOverlayColor?: string;
+	backgroundOverlayOpacity?: number;
+	effects?: import("./types").ThemeEffect[];
+	navbarIconColor?: string;
+	cursorUrl?: string;
+	colorTokens?: Record<string, string>;
+	layout?: Extension.ProfileLayout;
+	usernameStyle?: Extension.ProfileUsernameStyle;
+	banner?: Extension.ProfileBanner;
+	ambient?: Extension.ProfileAmbient;
+	stickers?: Extension.ProfileSticker[];
+	notes?: Extension.ProfileNote[];
+	videos?: Extension.ProfileVideo[];
+	cardStyle?: Extension.ProfileCardStyle;
+	avatarBackdrop?: Extension.ProfileAvatarBackdrop;
+	pointerEffects?: Extension.ProfilePointerEffects;
+};
+
 export interface ProtocolMap {
 	openPreferences(): void;
 	themeAutoUpdated(): void;
@@ -62,6 +86,11 @@ export interface ProtocolMap {
 	getFeedSearch(
 		filters: FeedSearchFilters,
 	): Promise<Result<PolyTrack.FeedSearchApi>>;
+	getPolyTrackSearch(data: {
+		query: string;
+		lane: "entities" | "content";
+		limit: number;
+	}): Promise<Result<PolyTrack.SearchApi>>;
 	openCreator(version: 1 | 2): void;
 	changeUserAlias(data: { userId: number; currentAlias?: string }): void;
 
@@ -70,6 +99,9 @@ export interface ProtocolMap {
 	searchUsersByActivity(
 		query: string,
 	): Promise<Result<Extension.ActivitySearchApi["data"]>>;
+	getActivityUser(
+		id: number,
+	): Promise<Result<Extension.ActivityUserApi["data"]>>;
 	getUserAvatar(id: number): Promise<Result<Polytoria.AvatarApi>>;
 	getBestFriends(userIds: number[]): Promise<Result<Polytoria.UserApi[]>>;
 	getUserInventory(data: {
@@ -93,6 +125,11 @@ export interface ProtocolMap {
 		page?: number;
 		limit?: number;
 	}): Promise<Result<Polytoria.UserCreationsApi>>;
+	getGuildCreations(data: {
+		guildId: number;
+		page?: number;
+		limit?: number;
+	}): Promise<Result<Polytoria.GuildCreationsApi>>;
 	updateBodyColor(data: { bodyPart: string; color: string }): void;
 	getUserCharts(userId: number): Promise<Result<PolyTrack.UserChartsApi>>;
 	getWorldStatsChart(data: {
@@ -121,6 +158,7 @@ export interface ProtocolMap {
 		page?: number;
 		limit?: number;
 	}): Promise<Result<Polytoria.StoreApi>>;
+	getStoreBodies(): Promise<Result<Polytoria.StoreApi>>;
 	getItem(id: number): Promise<Result<Polytoria.ItemApi>>;
 	getItemMesh(id: number): Promise<Result<Polytoria.MeshApi>>;
 	getAssetAudio(id: number): Promise<Result<Polytoria.AudioApi>>;
@@ -205,6 +243,20 @@ export interface ProtocolMap {
 		timezone: string;
 	}): Promise<Result<{ success: boolean }>>;
 	clearUserTimezone(userId: number): Promise<Result<{ success: boolean }>>;
+	getUserEditingStatus(
+		userId: number,
+	): Promise<Result<Extension.UserEditingStatusApi>>;
+	getWorldEditTime(userId: number): Promise<Result<Extension.WorldEditTimeApi>>;
+	getUserDonation(userId: number): Promise<Result<Extension.UserDonationApi>>;
+	setUserDonation(data: {
+		userId: number;
+		url: string;
+	}): Promise<Result<{ success: boolean }>>;
+	clearUserDonation(userId: number): Promise<Result<{ success: boolean }>>;
+	showDonationLinkPrompt(data: {
+		currentUrl: string | null;
+	}): Promise<Result<string | null>>;
+	showDonationWarning(data: { url: string }): Promise<Result<boolean>>;
 	getPublicOutfits(userId: number): Promise<Result<Extension.PublicOutfitsApi>>;
 	syncPublicOutfits(data: {
 		userId: number;
@@ -258,6 +310,16 @@ export interface ProtocolMap {
 		userId: number;
 		sessionId: string;
 	}): Promise<Result<null>>;
+	getKilnAddonInstalls(
+		userId: number,
+	): Promise<Result<Extension.AddonInstallsApi>>;
+	downloadKilnAddon(
+		userId: number,
+	): Promise<Result<Extension.DownloadAddonApi>>;
+	revokeKilnAddonInstall(data: {
+		userId: number;
+		id: string;
+	}): Promise<Result<null>>;
 
 	publishTheme(data: {
 		userId: number;
@@ -297,29 +359,24 @@ export interface ProtocolMap {
 
 	getProfileTheme(userId: number): Promise<Result<Extension.ProfileThemeApi>>;
 	getMyProfileTheme(userId: number): Promise<Result<Extension.ProfileThemeApi>>;
-	saveProfileTheme(data: {
+	saveProfileTheme(
+		data: { userId: number } & ProfileThemePayload,
+	): Promise<Result<Extension.ProfileThemeApi>>;
+	getProfileThemeSlots(
+		userId: number,
+	): Promise<Result<Extension.ProfileThemeSlotsApi>>;
+	saveProfileThemeSlot(
+		data: { userId: number; slot: number } & ProfileThemePayload,
+	): Promise<Result<Extension.ProfileThemeSlotsApi>>;
+	renameProfileThemeSlot(data: {
 		userId: number;
-		accentColor: string;
-		navbarColor: string;
-		fontFamily?: string;
-		customCss?: string;
-		backgroundImage?: string;
-		backgroundOverlayColor?: string;
-		backgroundOverlayOpacity?: number;
-		effects?: import("./types").ThemeEffect[];
-		navbarIconColor?: string;
-		cursorUrl?: string;
-		colorTokens?: Record<string, string>;
-		layout?: Extension.ProfileLayout;
-		usernameStyle?: Extension.ProfileUsernameStyle;
-		banner?: Extension.ProfileBanner;
-		ambient?: Extension.ProfileAmbient;
-		stickers?: Extension.ProfileSticker[];
-		notes?: Extension.ProfileNote[];
-		cardStyle?: Extension.ProfileCardStyle;
-		avatarBackdrop?: Extension.ProfileAvatarBackdrop;
-		pointerEffects?: Extension.ProfilePointerEffects;
-	}): Promise<Result<Extension.ProfileThemeApi>>;
+		slot: number;
+		name: string;
+	}): Promise<Result<Extension.ProfileThemeSlotsApi>>;
+	clearProfileThemeSlot(data: {
+		userId: number;
+		slot: number;
+	}): Promise<Result<Extension.ProfileThemeSlotsApi>>;
 	setProfileThemeEnabled(data: {
 		userId: number;
 		enabled: boolean;
@@ -352,22 +409,6 @@ export interface ProtocolMap {
 		userId: number;
 		targetUserId: number;
 	}): Promise<Result<Extension.ProfileThemeOkApi>>;
-	adminListConfigs(
-		userId: number,
-	): Promise<Result<Extension.AdminConfigListApi>>;
-	adminGetConfig(data: {
-		userId: number;
-		version: string;
-	}): Promise<Result<Extension.ExtensionConfig>>;
-	adminUpdateConfig(data: {
-		userId: number;
-		version: string;
-		patch: Partial<Extension.ExtensionConfig>;
-	}): Promise<Result<Extension.AdminConfigApi>>;
-	adminDeleteConfig(data: {
-		userId: number;
-		version: string;
-	}): Promise<Result<Extension.AdminDeleteConfigApi>>;
 	adminDeleteTheme(data: {
 		userId: number;
 		id: string;
@@ -376,6 +417,31 @@ export interface ProtocolMap {
 		userId: number;
 		id: string;
 	}): Promise<Result<Extension.AdminDeletePlaceReviewApi>>;
+	adminGetPlaceAiDisclosures(data: {
+		userId: number;
+		placeId: number;
+	}): Promise<Result<Extension.AdminPlaceAiDisclosuresApi>>;
+	adminListAiDisclosedPlaces(
+		userId: number,
+	): Promise<Result<Extension.AdminAiDisclosedPlacesApi>>;
+	adminAddPlaceAiDisclosure(data: {
+		userId: number;
+		placeId: number;
+		kind: "icon" | "thumbnail" | "assisted" | "generated";
+		imageHash?: string;
+	}): Promise<Result<Extension.AdminAiDisclosureOkApi>>;
+	adminRemovePlaceAiDisclosure(data: {
+		userId: number;
+		id: number;
+	}): Promise<Result<Extension.AdminAiDisclosureOkApi>>;
+	adminGetAiReports(
+		userId: number,
+	): Promise<Result<Extension.AdminAiReportsApi>>;
+	adminReviewAiReport(data: {
+		userId: number;
+		id: string;
+		action: "resolve" | "dismiss";
+	}): Promise<Result<Extension.AdminAiDisclosureOkApi>>;
 	adminBanUser(data: {
 		userId: number;
 		targetUserId: number;
@@ -390,6 +456,24 @@ export interface ProtocolMap {
 		search?: string;
 		page?: number;
 	}): Promise<Result<Extension.AdminBannedUsersApi>>;
+	adminGetUserRisk(data: {
+		userId: number;
+		targetUserId: number;
+	}): Promise<Result<Extension.AdminUserRiskApi>>;
+	adminSetUserTrusted(data: {
+		userId: number;
+		targetUserId: number;
+		trusted: boolean;
+	}): Promise<Result<Extension.AdminTrustUserApi>>;
+	adminAdjustUserRisk(data: {
+		userId: number;
+		targetUserId: number;
+		delta: number;
+	}): Promise<Result<Extension.AdminAdjustRiskApi>>;
+	adminClearUserRiskHits(data: {
+		userId: number;
+		targetUserId: number;
+	}): Promise<Result<Extension.AdminClearRiskHitsApi>>;
 
 	getConfig(): Promise<Result<Extension.ExtensionConfig>>;
 	getChangelog(): Promise<Result<string>>;
@@ -448,6 +532,21 @@ export interface ProtocolMap {
 		outfitId: string;
 	}): Promise<Result<{ success: boolean }>>;
 
+	getPlaceAiDisclosures(
+		placeId: number,
+	): Promise<Result<Extension.PlaceAiDisclosuresApi>>;
+	showPlaceAiReportPrompt(data: {
+		hasLabels: boolean;
+		verified: boolean;
+	}): Promise<
+		Result<{ kind: "missing" | "incorrect"; details: string } | null>
+	>;
+	reportPlaceAiDisclosure(data: {
+		userId: number;
+		placeId: number;
+		kind: "missing" | "incorrect";
+		details?: string;
+	}): Promise<Result<Extension.PlaceAiReportApi>>;
 	getPlaceReviews(data: {
 		placeId: number;
 		userId: number;
@@ -463,10 +562,12 @@ export interface ProtocolMap {
 		rating: number;
 		body?: string;
 		anonymous?: boolean;
+		wasPublic?: boolean;
 	}): Promise<Result<Extension.PlaceReviewApi>>;
 	deleteMyPlaceReview(data: {
 		placeId: number;
 		userId: number;
+		wasPublic?: boolean;
 	}): Promise<Result<null>>;
 	submitReviewReply(data: {
 		userId: number;
@@ -477,6 +578,42 @@ export interface ProtocolMap {
 		userId: number;
 		replyId: string;
 	}): Promise<Result<null>>;
+	getMessagingStatus(
+		userId: number,
+	): Promise<Result<Extension.MessagingStatusApi>>;
+	setMessagingEnabled(data: {
+		userId: number;
+		enabled: boolean;
+	}): Promise<Result<Extension.MessagingStatusApi["data"]["enabled"]>>;
+	getDirectConversations(
+		userId: number,
+	): Promise<Result<Extension.DirectConversationsApi>>;
+	getDirectMessages(data: {
+		userId: number;
+		partnerId: number;
+		before?: number;
+	}): Promise<Result<Extension.DirectMessagesApi>>;
+	sendDirectMessage(data: {
+		userId: number;
+		recipientId: number;
+		body: string;
+		imageAssetId?: number;
+	}): Promise<Result<Extension.SendDirectMessageApi>>;
+	markDirectConversationRead(data: {
+		userId: number;
+		partnerId: number;
+	}): Promise<Result<null>>;
+	setDirectMessageBlock(data: {
+		userId: number;
+		partnerId: number;
+		blocked: boolean;
+	}): Promise<Result<null>>;
+	reportDirectMessage(data: {
+		userId: number;
+		messageId: number;
+		reason: Extension.MessageReportReason;
+		details?: string;
+	}): Promise<Result<Extension.ReportDirectMessageApi>>;
 	getTopReviewers(): Promise<Result<Extension.TopReviewersApi>>;
 	// getMostLikedUsers(): Promise<Result<Extension.MostLikedUsersApi>>;
 	getRatedWorldsLeaderboard(
@@ -490,12 +627,18 @@ export interface ProtocolMap {
 	markPlaceReviewMigrated(data: {
 		userId: number;
 		reviewId: string;
+		nativeRatingId?: number | null;
 	}): Promise<Result<Extension.MigratePlaceReviewApi>>;
 	createPolytoriaPlaceReview(data: {
 		placeId: number;
 		value: "like" | "dislike";
 		content: string;
 	}): Promise<Result<{ id: string | null }>>;
+	unlinkNativePlaceReview(data: {
+		placeId: number;
+		userId: number;
+	}): Promise<Result<null>>;
+	removePolytoriaPlaceReview(placeId: number): Promise<Result<{ ok: boolean }>>;
 
 	getKilnNotifications(
 		userId: number,
@@ -509,6 +652,7 @@ export interface ProtocolMap {
 	getEventForItem(itemId: number): Promise<Result<Extension.EventForItemApi>>;
 	getEvents(): Promise<Result<Extension.EventsListApi>>;
 	getEventItems(eventId: number): Promise<Result<Extension.EventItemsApi>>;
+	getEventProgress(userId: number): Promise<Result<Polytoria.EventItemsApi>>;
 	getGreatDivideStats(
 		userId: number,
 	): Promise<Result<Extension.GreatDivideStatsApi | Extension.ErrorGeneric>>;
@@ -539,6 +683,29 @@ export interface ProtocolMap {
 	updateOutfit(data: { id: number; name: string }): Promise<Result<unknown>>;
 
 	exportUserData(userId: number): Promise<Result<Extension.DataExportApi>>;
+
+	getLibraryAddons(data: {
+		page: number;
+		search?: string;
+	}): Promise<Result<Extension.AddonLibraryApi>>;
+	getMyAddons(userId: number): Promise<Result<Extension.MyAddonsApi>>;
+	publishAddon(data: {
+		userId: number;
+		name: string;
+		description: string;
+		changelog?: string;
+		content: string;
+	}): Promise<Result<Extension.PublishAddonApi>>;
+	reportAddon(data: {
+		userId: number;
+		id: string;
+		category: "malicious" | "stolen" | "broken" | "inappropriate" | "other";
+		details?: string;
+	}): Promise<Result<Extension.AddonOkApi>>;
+	deleteMyAddon(data: {
+		userId: number;
+		id: string;
+	}): Promise<Result<Extension.AddonOkApi>>;
 }
 
 export const { sendMessage, onMessage } =

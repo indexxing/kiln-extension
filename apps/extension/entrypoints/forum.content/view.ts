@@ -32,6 +32,7 @@ import {
 	formatNotificationRelativeTime,
 	getConfig,
 	kilnDisclosureBadgeHtml,
+	onBrokenImage,
 } from "@/utils/utilities";
 import { CATEGORIES, getOrCreateForumToolbar, renderEntry } from "./search";
 
@@ -216,6 +217,10 @@ export async function forumImageStarring(showDisclosures: boolean) {
 		});
 
 		wrapper.appendChild(starBtn);
+
+		onBrokenImage(img, () => {
+			starBtn.style.display = "none";
+		});
 	});
 }
 

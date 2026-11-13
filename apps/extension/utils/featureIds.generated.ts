@@ -111,7 +111,20 @@ export const ALL_FEATURE_IDS = [
 	"timezoneSharing",
 	"publicAvatarOutfits",
 	"nlfItems",
-	"downloadableCopyableWorlds"
+	"downloadableCopyableWorlds",
+	"guildCreationsTab",
+	"autoPrivateAssetsOnUpload",
+	"commandPalette",
+	"donationLinks",
+	"userForumPosts",
+	"editingStatus",
+	"worldEditTime",
+	"privateMessaging",
+	"placeAIDisclosures",
+	"eventProgressTracker",
+	"hideCollectibles",
+	"toolboxPageJump",
+	"addonLibrary"
 ] as const;
 
 export type FeatureId = (typeof ALL_FEATURE_IDS)[number];

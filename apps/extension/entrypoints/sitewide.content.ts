@@ -23,10 +23,13 @@ import _preferencesJson from "@/public/preferences.json";
 
 const preferencesData = _preferencesJson.preferences;
 
+import { initCommandPalette } from "@/utils/commandPalette";
 import { escapeHtml } from "@/utils/escapeHtml";
 import type { FeatureId } from "@/utils/featureIds.generated";
 import { PATH_FEATURES } from "@/utils/featurePaths.generated";
 import { checkForumMentions } from "@/utils/forumMentionNotifications";
+import { initPrivateMessaging } from "@/utils/privateMessaging";
+import { syncMessagingOptIn } from "@/utils/privateMessagingOptIn";
 import { syncPublicOutfits } from "@/utils/publicOutfits";
 import { syncPublicTimezone } from "@/utils/publicTimezone";
 import { runFeature } from "@/utils/runFeature";
@@ -66,12 +69,13 @@ async function applyActiveKilnTheme(): Promise<void> {
 	if (!values.enabled.includes("themeCreator")) return;
 	const activeId = values.config.themeCreator.activeThemeId || "default";
 	if (activeId === "default") return;
+	const musicWidget = values.config.themeCreator.sitewideMusicWidget !== false;
 	if (activeId in THEME_PRESETS) {
-		applyKilnTheme(THEME_PRESETS[activeId]);
+		applyKilnTheme(THEME_PRESETS[activeId], { musicWidget });
 	} else {
 		const saved = await _savedThemes.getValue();
 		const theme = saved.find((t) => t.id === activeId);
-		applyKilnTheme(theme ?? null);
+		applyKilnTheme(theme ?? null, { musicWidget });
 	}
 }
 
@@ -212,6 +216,16 @@ export default defineContentScript({
 						});
 					}
 
+					if (values.enabled.includes("privateMessaging")) {
+						runFeature("privateMessaging", () =>
+							initPrivateMessaging(user.userId, showDisclosures),
+						);
+					} else {
+						runFeature("privateMessagingOptOut", () =>
+							syncMessagingOptIn(user.userId, false),
+						);
+					}
+
 					if (values.enabled.includes("localizedTimestamps")) {
 						runFeature("localizedTimestamps", () =>
 							localizedTimestamps(showDisclosures),
@@ -265,12 +279,14 @@ export default defineContentScript({
 							const activeId =
 								values.config.themeCreator.activeThemeId || "default";
 							if (activeId === "default") return;
+							const musicWidget =
+								values.config.themeCreator.sitewideMusicWidget !== false;
 							if (activeId in THEME_PRESETS) {
-								applyKilnTheme(THEME_PRESETS[activeId]);
+								applyKilnTheme(THEME_PRESETS[activeId], { musicWidget });
 							} else {
 								const saved = await _savedThemes.getValue();
 								const theme = saved.find((t) => t.id === activeId);
-								applyKilnTheme(theme ?? null);
+								applyKilnTheme(theme ?? null, { musicWidget });
 							}
 						});
 					}
@@ -339,6 +355,12 @@ export default defineContentScript({
 
 					if (values.enabled.includes("reenableSearch")) {
 						runFeature("reenableSearch", () => reenableSearch());
+					}
+
+					if (values.enabled.includes("commandPalette")) {
+						runFeature("commandPalette", () =>
+							initCommandPalette(showDisclosures),
+						);
 					}
 
 					if (values.enabled.includes("advancedForumSearch")) {

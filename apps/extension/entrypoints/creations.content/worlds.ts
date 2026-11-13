@@ -66,3 +66,48 @@ export async function v2WorldLabels(showDisclosures: boolean) {
 		}
 	});
 }
+
+function formatEditTime(totalSeconds: number): string {
+	const minutes = Math.floor(totalSeconds / 60);
+	if (minutes < 1) return "< 1m";
+	const hours = Math.floor(minutes / 60);
+	if (hours < 1) return `${minutes}m`;
+	return `${hours}h ${minutes % 60}m`;
+}
+
+function normalizeWorldName(name: string): string {
+	return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+export async function worldEditTime(userId: number, showDisclosures: boolean) {
+	const result = await sendMessage("getWorldEditTime", userId);
+	if (!result.ok) return;
+
+	const totals = new Map<string, number>();
+	for (const world of result.data.data) {
+		const key = normalizeWorldName(world.name);
+		totals.set(key, (totals.get(key) ?? 0) + world.totalSeconds);
+	}
+	if (totals.size === 0) return;
+
+	document.querySelectorAll(".card.mcard").forEach((card) => {
+		const titleElement = card.querySelector<HTMLElement>(".card-title");
+		if (!titleElement || card.querySelector('[data-kiln="world-edit-time"]'))
+			return;
+
+		const titleClone = titleElement.cloneNode(true) as HTMLElement;
+		titleClone.querySelectorAll(".badge").forEach((badge) => {
+			badge.remove();
+		});
+
+		const totalSeconds = totals.get(normalizeWorldName(titleClone.textContent));
+		if (totalSeconds === undefined) return;
+
+		const line = document.createElement("small");
+		line.classList.add("d-block", "text-muted");
+		line.dataset.kiln = "world-edit-time";
+		line.innerHTML = `<i class="fad fa-clock me-1"></i>${formatEditTime(totalSeconds)} edited`;
+		applyKilnDisclosureTitle(line, showDisclosures, "Edit time");
+		titleElement.insertAdjacentElement("afterend", line);
+	});
+}

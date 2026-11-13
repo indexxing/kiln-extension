@@ -15,6 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import type { Extension } from "@kiln/schemas";
+import { endpoints } from "@/utils/endpoints";
 import { escapeHtml, safeHttpUrl } from "@/utils/escapeHtml";
 import fallbackConfig from "./static/fallbackConfig.json";
 import fallbackCurrencyRates from "./static/fallbackCurrencyRates.json";
@@ -102,16 +103,13 @@ export async function getConfig(): Promise<Extension.ExtensionConfig> {
 }
 
 export function getApiUrl(
-	apiName: keyof typeof staticMetadata.endpoints,
+	apiName: keyof typeof endpoints,
 	flags?: Record<string, boolean>,
 ): string {
 	if (apiName === "public" && getFlag(flags, "apis.usePublicApiProxy", false)) {
-		return staticMetadata.endpoints.proxy;
+		return endpoints.proxy;
 	}
-	if (apiName === "extension" && import.meta.env.MODE === "development") {
-		return "http://localhost:3000/v1/";
-	}
-	return staticMetadata.endpoints[apiName];
+	return endpoints[apiName];
 }
 
 export async function getApiSession(
@@ -1499,4 +1497,30 @@ export function createAudioPlayButton(
 	});
 
 	return cont;
+}
+
+const BROKEN_IMAGE_REGEX =
+	/^https:\/\/cdn\.polytoria\.com\/static\/broken-[^/]+\.png/;
+
+function isBrokenSrc(img: HTMLImageElement): boolean {
+	return (
+		BROKEN_IMAGE_REGEX.test(img.currentSrc) || BROKEN_IMAGE_REGEX.test(img.src)
+	);
+}
+
+export function onBrokenImage(img: HTMLImageElement, callback: () => void) {
+	let fired = false;
+	const check = () => {
+		if (fired || !isBrokenSrc(img)) return;
+		fired = true;
+		callback();
+	};
+
+	img.addEventListener("load", check);
+	img.addEventListener("error", check);
+	new MutationObserver(check).observe(img, {
+		attributes: true,
+		attributeFilter: ["src"],
+	});
+	if (img.complete) check();
 }

@@ -83,6 +83,16 @@ export default defineContentScript({
 						),
 					);
 				}
+				if (values.enabled.includes("donationLinks") && creatorId) {
+					runFeature("donationLinks", () =>
+						view.donationLink(user.userId, +creatorId, showDisclosures),
+					);
+				}
+				if (values.enabled.includes("placeAIDisclosures")) {
+					runFeature("placeAIDisclosures", () =>
+						view.placeAIDisclosures(user.userId, showDisclosures),
+					);
+				}
 				if (values.enabled.includes("playtimeTracking")) {
 					runFeature("playtimeTracking", () =>
 						view.playtimeTracking(user.userId, showDisclosures),

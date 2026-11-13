@@ -17,7 +17,7 @@
 import { Theme } from "@kiln/schemas";
 import { POLYTORIA_CDN_URL } from "@/utils/decal";
 import { sendMessage } from "@/utils/messaging";
-import metadata from "@/utils/static/metadata.json";
+import { endpoints } from "@/utils/endpoints";
 import {
 	type Ambient,
 	applyAmbient,
@@ -42,6 +42,7 @@ export const {
 	darkenHex,
 	lightenHex,
 	getContrastColor,
+	profileThemeReadabilityIssues,
 	isValidHex,
 	hexToIconFilter,
 	buildThemeCSS,
@@ -52,11 +53,11 @@ export function proxyThemeImageUrl(url: string): string {
 	if (
 		!trimmed ||
 		trimmed.startsWith("data:") ||
-		trimmed.startsWith(metadata.endpoints.extension) ||
+		trimmed.startsWith(endpoints.extension) ||
 		POLYTORIA_CDN_URL.test(trimmed)
 	)
 		return trimmed;
-	return `${metadata.endpoints.extension}theme/image?url=${encodeURIComponent(trimmed)}`;
+	return `${endpoints.extension}theme/image?url=${encodeURIComponent(trimmed)}`;
 }
 
 export function buildEffectsCSS(effects: ThemeEffect[]): string {
@@ -100,6 +101,8 @@ function applyClickSound(effects?: ThemeEffect[]) {
 	document.addEventListener("click", clickSoundListener, true);
 }
 
+export const MAX_BG_MUSIC_VOLUME = 30;
+
 export function parseAssetVolume(
 	value: string | number,
 ): { assetId: number; volume: number } | null {
@@ -109,20 +112,66 @@ export function parseAssetVolume(
 	const volume = Number(volumePart);
 	return {
 		assetId,
-		volume: Number.isFinite(volume) ? Math.min(100, Math.max(0, volume)) : 50,
+		volume: Number.isFinite(volume)
+			? Math.min(MAX_BG_MUSIC_VOLUME, Math.max(0, volume))
+			: MAX_BG_MUSIC_VOLUME,
 	};
 }
 
 let bgMusicAudio: HTMLAudioElement | null = null;
 let bgMusicAssetId: number | null = null;
 let bgMusicToken = 0;
-let bgMusicClickListener: (() => void) | null = null;
+const BG_MUSIC_WIDGET_ID = "kiln-bg-music-widget";
+
+function removeBackgroundMusicWidget() {
+	document.getElementById(BG_MUSIC_WIDGET_ID)?.remove();
+}
+
+function createBackgroundMusicWidget(audio: HTMLAudioElement) {
+	removeBackgroundMusicWidget();
+	const button = document.createElement("button");
+	button.id = BG_MUSIC_WIDGET_ID;
+	button.type = "button";
+	Object.assign(button.style, {
+		position: "fixed",
+		left: "16px",
+		bottom: "16px",
+		zIndex: "2147483000",
+		display: "flex",
+		alignItems: "center",
+		gap: "8px",
+		padding: "8px 14px",
+		border: "1px solid rgba(255,255,255,0.18)",
+		borderRadius: "999px",
+		background: "rgba(20,20,24,0.85)",
+		color: "#fff",
+		fontSize: "13px",
+		cursor: "pointer",
+		backdropFilter: "blur(6px)",
+		boxShadow: "0 4px 14px rgba(0,0,0,0.35)",
+	});
+	const render = () => {
+		const playing = !audio.paused;
+		button.innerHTML = `<i class="fa-solid ${playing ? "fa-pause" : "fa-play"}"></i><span>${playing ? "Pause music" : "Play music"}</span>`;
+		button.setAttribute("aria-label", playing ? "Pause music" : "Play music");
+	};
+	button.addEventListener("click", (e) => {
+		e.stopPropagation();
+		if (audio.paused) audio.play().catch(() => {});
+		else audio.pause();
+	});
+	audio.addEventListener("play", render);
+	audio.addEventListener("pause", render);
+	render();
+	document.body.appendChild(button);
+}
 
 function stopBackgroundMusic() {
 	bgMusicAudio?.pause();
 	bgMusicAudio?.remove();
 	bgMusicAudio = null;
 	bgMusicAssetId = null;
+	removeBackgroundMusicWidget();
 	if (bgMusicClickListener) {
 		document.removeEventListener("click", bgMusicClickListener);
 		bgMusicClickListener = null;
@@ -167,7 +216,9 @@ const BG_MUSIC_LOCK_NAME = "kiln-bg-music-playback";
 const HAS_WEB_LOCKS = typeof navigator !== "undefined" && "locks" in navigator;
 
 let bgMusicWantedAssetId: number | null = null;
-let bgMusicWantedVolume = 50;
+let bgMusicWantedVolume = MAX_BG_MUSIC_VOLUME;
+let bgMusicWantedWidget = true;
+let bgMusicClickListener: (() => void) | null = null;
 let bgMusicHasLock = false;
 let bgMusicLockRequested = false;
 let releaseBgMusicLock: (() => void) | null = null;
@@ -195,7 +246,11 @@ async function startWantedBackgroundMusic() {
 		return;
 	}
 
-	if (bgMusicAudio && bgMusicAssetId === bgMusicWantedAssetId) {
+	if (
+		bgMusicAudio &&
+		bgMusicAssetId === bgMusicWantedAssetId &&
+		bgMusicWantedWidget === !!document.getElementById(BG_MUSIC_WIDGET_ID)
+	) {
 		bgMusicAudio.volume = bgMusicWantedVolume / 100;
 		return;
 	}
@@ -228,6 +283,11 @@ async function startWantedBackgroundMusic() {
 	document.body.appendChild(audio);
 	bgMusicAudio = audio;
 
+	if (bgMusicWantedWidget) {
+		createBackgroundMusicWidget(audio);
+		return;
+	}
+
 	const tryPlay = () => {
 		bgMusicClickListener = null;
 		if (audio !== bgMusicAudio) return;
@@ -238,14 +298,15 @@ async function startWantedBackgroundMusic() {
 	document.addEventListener("click", tryPlay, { once: true });
 }
 
-async function applyBackgroundMusic(effects?: ThemeEffect[]) {
+async function applyBackgroundMusic(effects?: ThemeEffect[], widget = true) {
 	const effect = effects?.find(
 		(e) => e.slot === "global" && e.type === "background-music",
 	);
 	const parsed = effect ? parseAssetVolume(effect.value) : null;
 
 	bgMusicWantedAssetId = parsed?.assetId ?? null;
-	bgMusicWantedVolume = parsed?.volume ?? 50;
+	bgMusicWantedVolume = parsed?.volume ?? MAX_BG_MUSIC_VOLUME;
+	bgMusicWantedWidget = widget;
 
 	if (!parsed) {
 		stopBackgroundMusic();
@@ -329,6 +390,7 @@ export function applyKilnTheme(
 		cardStyle?: CardStyle;
 		pointerEffects?: PointerEffects;
 	} | null,
+	options: { musicWidget?: boolean } = {},
 ) {
 	document.getElementById("kiln-custom-theme")?.remove();
 	document.getElementById("kiln-custom-bg")?.remove();
@@ -338,7 +400,7 @@ export function applyKilnTheme(
 
 	const applyEffects = () => {
 		applyClickSound(colors?.effects);
-		applyBackgroundMusic(colors?.effects);
+		applyBackgroundMusic(colors?.effects, options.musicWidget ?? true);
 		applyAmbient("kiln-custom-ambient", colors?.ambient);
 		applyCardStyle(
 			"kiln-custom-cards",

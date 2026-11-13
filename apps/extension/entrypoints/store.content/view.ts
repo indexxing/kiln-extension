@@ -1308,7 +1308,9 @@ export async function pinnedAchievements(userId: number) {
 	});
 }
 
-export const CLOTHING_PREVIEW_BODIES: { id: number | null; name: string }[] = [
+type ClothingPreviewBody = { id: number | null; name: string };
+
+const FALLBACK_CLOTHING_PREVIEW_BODIES: ClothingPreviewBody[] = [
 	{ id: null, name: "Default" },
 	{ id: 203643, name: "Robes" },
 	{ id: 138708, name: "Athlete" },
@@ -1317,6 +1319,21 @@ export const CLOTHING_PREVIEW_BODIES: { id: number | null; name: string }[] = [
 	{ id: 137759, name: "Tubby" },
 	{ id: 137758, name: "Slim" },
 ];
+
+let clothingPreviewBodiesPromise: Promise<ClothingPreviewBody[]> | null = null;
+
+export function getClothingPreviewBodies(): Promise<ClothingPreviewBody[]> {
+	clothingPreviewBodiesPromise ??= (async () => {
+		const result = await sendMessage("getStoreBodies");
+		if (!result.ok || result.data.assets.length === 0)
+			return FALLBACK_CLOTHING_PREVIEW_BODIES;
+		return [
+			{ id: null, name: "Default" },
+			...result.data.assets.map((a) => ({ id: a.id, name: a.name })),
+		];
+	})().catch(() => FALLBACK_CLOTHING_PREVIEW_BODIES);
+	return clothingPreviewBodiesPromise;
+}
 
 export async function clothing3DPreview(showDisclosures: boolean) {
 	const hero = document.querySelector<HTMLElement>(".item-hero");
@@ -1333,6 +1350,7 @@ export async function clothing3DPreview(showDisclosures: boolean) {
 	hero.appendChild(btn);
 
 	btn.addEventListener("click", async () => {
+		const previewBodies = await getClothingPreviewBodies();
 		modal.innerHTML = `
 		<div class="d-flex justify-content-between align-items-center mb-2">
 			<h5 class="mb-0" style="color: #fff;">Clothing Preview${kilnDisclosureBadgeHtml(showDisclosures)}</h5>
@@ -1343,7 +1361,7 @@ export async function clothing3DPreview(showDisclosures: boolean) {
 		</p>
 		<div class="mb-2">
 			<select class="form-select form-select-sm" id="p-back-body-select">
-				${CLOTHING_PREVIEW_BODIES.map(
+				${previewBodies.map(
 					(b) => `<option value="${b.id ?? ""}">${b.name}</option>`,
 				).join("")}
 			</select>

@@ -37,6 +37,12 @@
 			"icon": "fas fa-code"
 		},
 		{
+			"id": "addon",
+			"name": "Addon",
+			"description": "Features that work together with the Kiln creator addon.",
+			"icon": "fas fa-puzzle-piece"
+		},
+		{
 			"id": "deprecated",
 			"name": "Deprecated",
 			"description": "Features that are on their way out and will be removed in a future update.",
@@ -1032,6 +1038,14 @@
 			"name": "Theme Creator",
 			"desc": "Unleash your creativity and customize the Polytoria website to your liking!",
 			"id": "themeCreator",
+			"config": [
+				{
+					"type": "check",
+					"subsetting": "sitewideMusicWidget",
+					"label": "Show a play button for theme music instead of autoplaying",
+					"default": true
+				}
+			],
 			"tags": [
 				"expression"
 			]
@@ -1417,7 +1431,6 @@
 			"id": "forumImageLibrary",
 			"defaultEnabled": true,
 			"tags": [
-				"new",
 				"utility"
 			]
 		},
@@ -1682,8 +1695,7 @@
 			"defaultEnabled": true,
 			"tags": [
 				"utility",
-				"expression",
-				"new"
+				"expression"
 			]
 		},
 		{
@@ -1692,7 +1704,6 @@
 			"id": "favoredDevelopmentGuild",
 			"defaultEnabled": true,
 			"tags": [
-				"new",
 				"utility",
 				"development"
 			]
@@ -1704,7 +1715,6 @@
 			"requiresSync": true,
 			"defaultEnabled": true,
 			"tags": [
-				"new",
 				"social"
 			]
 		},
@@ -1713,7 +1723,6 @@
 			"desc": "Revert the worlds list page (where you browse and search all worlds, not an individual world's page) to the old layout from before September 2026.",
 			"id": "legacyWorldDiscoveryLayout",
 			"tags": [
-				"new",
 				"expression"
 			]
 		},
@@ -1723,7 +1732,6 @@
 			"id": "kilnRegistrationDate",
 			"defaultEnabled": true,
 			"tags": [
-				"new",
 				"utility",
 				"social"
 			]
@@ -1748,8 +1756,7 @@
 				}
 			],
 			"tags": [
-				"utility",
-				"new"
+				"utility"
 			]
 		},
 		{
@@ -1759,8 +1766,7 @@
 			"defaultEnabled": true,
 			"tags": [
 				"utility",
-				"social",
-				"new"
+				"social"
 			]
 		},
 		{
@@ -1769,7 +1775,6 @@
 			"id": "clothingUploadBodyPreviews",
 			"defaultEnabled": true,
 			"tags": [
-				"new",
 				"utility"
 			]
 		},
@@ -1778,7 +1783,6 @@
 			"desc": "Disable membership themes to let your custom made themes shine through!",
 			"id": "disableMembershipThemes",
 			"tags": [
-				"new",
 				"expression"
 			]
 		},
@@ -1788,7 +1792,6 @@
 			"id": "pastNotifications",
 			"defaultEnabled": true,
 			"tags": [
-				"new",
 				"utility"
 			]
 		},
@@ -1797,7 +1800,6 @@
 			"desc": "Get notified as soon as your asset(s) get past the moderation queue!",
 			"id": "assetApprovedNotifications",
 			"tags": [
-				"new",
 				"development"
 			]
 		},
@@ -1807,7 +1809,6 @@
 			"id": "bannedUserDetail",
 			"defaultEnabled": true,
 			"tags": [
-				"new",
 				"utility"
 			]
 		},
@@ -1822,6 +1823,12 @@
 					"type": "check",
 					"subsetting": "viewOthers",
 					"label": "View other users' themes",
+					"default": true
+				},
+				{
+					"type": "check",
+					"subsetting": "hideInaccessible",
+					"label": "Disable profile themes detected as inaccessible",
 					"default": true
 				},
 				{
@@ -1886,6 +1893,12 @@
 				},
 				{
 					"type": "check",
+					"subsetting": "videos",
+					"label": "Show Embedded YouTube Videos",
+					"default": true
+				},
+				{
+					"type": "check",
 					"subsetting": "cards",
 					"label": "Apply Card Styling",
 					"default": true
@@ -1898,7 +1911,6 @@
 				}
 			],
 			"tags": [
-				"new",
 				"expression"
 			]
 		},
@@ -1926,7 +1938,6 @@
 				}
 			],
 			"tags": [
-				"new",
 				"social"
 			]
 		},
@@ -1954,7 +1965,6 @@
 				}
 			],
 			"tags": [
-				"new",
 				"social"
 			]
 		},
@@ -1965,7 +1975,6 @@
 			"defaultEnabled": true,
 			"requiresSync": true,
 			"tags": [
-				"new",
 				"economy"
 			]
 		},
@@ -1973,6 +1982,228 @@
 			"name": "Quick Copyable World Downloads",
 			"desc": "Quickly download a world that is uncopylocked! Adds a \"Download\" button to the right of the \"Favorite\" button.",
 			"id": "downloadableCopyableWorlds",
+			"tags": [
+				"utility",
+				"development"
+			]
+		},
+		{
+			"name": "Guild Creations Tab",
+			"desc": "View a guild's creations with a tab directly on the guild's page.",
+			"id": "guildCreationsTab",
+			"defaultEnabled": true,
+			"tags": [
+				"new",
+				"utility",
+				"development"
+			]
+		},
+		{
+			"name": "Private Assets on Upload",
+			"desc": "Adds a \"Private\" checkbox to the asset upload form so you can keep an asset out of the public library before uploading it.",
+			"id": "autoPrivateAssetsOnUpload",
+			"defaultEnabled": true,
+			"config": [
+				{
+					"type": "check",
+					"subsetting": "privateByDefault",
+					"label": "Enable \"Private\" by Default",
+					"default": false
+				}
+			],
+			"tags": [
+				"new"
+			]
+		},
+		{
+			"name": "Command Palette Search",
+			"desc": "Replaces the sitewide search with a command palette. Press Ctrl/Cmd + K or / (or click the search bar) to search users, worlds, guilds, store items, forum posts, and feed posts all in one place.",
+			"id": "commandPalette",
+			"notes": [
+				{
+					"type": "info",
+					"text": "Search results for everything except store items are powered by PolyTrack."
+				}
+			],
+			"tags": [
+				"new",
+				"utility"
+			]
+		},
+		{
+			"name": "Donation Links",
+			"desc": "Link your donation page (such as Patreon or Ko-fi) in the Info section of your profile, and see other users' donation links on theirs.",
+			"id": "donationLinks",
+			"defaultEnabled": true,
+			"requiresSync": true,
+			"notes": [
+				{
+					"type": "info",
+					"text": "Linking your donation page requires a linked Kiln account. Click \"[click here to link to your donation page]\" in the Info section of your own profile."
+				},
+				{
+					"type": "warning",
+					"text": "Donations are made at your own risk. Kiln does not verify donation pages, and other users are warned before opening any link."
+				}
+			],
+			"tags": [
+				"new",
+				"social"
+			]
+		},
+		{
+			"name": "User Forum Posts Tab",
+			"desc": "Quickly find a user's forum posts on their profile with a tab. Quickly find people such as kay1eigh's deep dives or Polytoria Headline News posts with this!",
+			"id": "userForumPosts",
+			"defaultEnabled": true,
+			"notes": [
+				{
+					"type": "info",
+					"text": "Results are provided by PolyTrack. Thank you to them for allowing Kiln to pull from their data <3"
+				}
+			],
+			"tags": [
+				"new"
+			]
+		},
+		{
+			"name": "Editing Status on Profiles",
+			"desc": "See when a user is editing a world! Shows under their username on their profile.",
+			"id": "editingStatus",
+			"defaultEnabled": true,
+			"requiresAddon": true,
+			"notes": [
+				{
+					"type": "info",
+					"text": "Only shows for users who have the Kiln creator addon installed with editing status enabled."
+				}
+			],
+			"tags": [
+				"addon",
+				"new",
+				"social",
+				"experimental"
+			]
+		},
+		{
+			"name": "World Edit Time",
+			"desc": "See how long you've spent editing each world, right on your creations page.",
+			"id": "worldEditTime",
+			"defaultEnabled": true,
+			"requiresAddon": true,
+			"requiresSync": true,
+			"notes": [
+				{
+					"type": "info",
+					"text": "Requires the Kiln creator addon with edit time tracking turned on. The world name you give the addon must match the world's title on Polytoria."
+				}
+			],
+			"tags": [
+				"addon",
+				"new",
+				"development",
+				"experimental"
+			]
+		},
+		{
+			"name": "Private Messaging",
+			"desc": "Chat one-on-one with other Kiln users from a little box in the corner of any page.",
+			"id": "privateMessaging",
+			"defaultEnabled": false,
+			"requiresSync": true,
+			"notes": [
+				{
+					"type": "info",
+					"text": "Requires a linked Kiln account in good standing. Both people in a conversation need to have this feature turned on."
+				},
+				{
+					"type": "warning",
+					"text": "Messages are stored by Kiln and may be reviewed by moderators if they are flagged or reported."
+				}
+			],
+			"tags": [
+				"new",
+				"social",
+				"experimental"
+			]
+		},
+		{
+			"name": "World AI Disclosures",
+			"desc": "See which worlds use AI in the Info section of a world, whether that's an AI generated icon or thumbnail, or the entire world. You can also report a missing or incorrect label.",
+			"id": "placeAIDisclosures",
+			"defaultEnabled": true,
+			"requiresSync": true,
+			"notes": [
+				{
+					"type": "info",
+					"text": "Disclosures are labeled by Kiln's maintainers. A disclosure for an icon or thumbnail goes away if the image is changed. You can see labels without a linked Kiln account, but reporting one requires it."
+				}
+			],
+			"tags": [
+				"new",
+				"utility"
+			],
+			"hide": true
+		},
+		{
+			"name": "Event Progress Tracker",
+			"desc": "Track your progress through Polytoria's current event right from your homepage. Shows every event item and whether you own it.",
+			"id": "eventProgressTracker",
+			"defaultEnabled": true,
+			"config": [
+				{
+					"type": "check",
+					"subsetting": "hideNativeEventCard",
+					"label": "Hide Polytoria's Native Event Card",
+					"default": true
+				}
+			],
+			"tags": [
+				"new",
+				"utility",
+				"economy"
+			]
+		},
+		{
+			"name": "Hide Collectibles Store Filter",
+			"desc": "Adds a \"Hide Collectibles\" store filter that hides every collectible from the store gallery.",
+			"id": "hideCollectibles",
+			"defaultEnabled": true,
+			"notes": [
+				{
+					"type": "info",
+					"text": "Collectibles are hidden on the page after they load, so a page may show fewer items than usual."
+				}
+			],
+			"tags": [
+				"new",
+				"utility",
+				"economy"
+			]
+		},
+		{
+			"name": "Toolbox Page Jumping",
+			"desc": "Turns the current page number in the \"Community Creations\" toolbox pagination into an input, so you can type any page number and jump straight to it.",
+			"id": "toolboxPageJump",
+			"defaultEnabled": true,
+			"tags": [
+				"new",
+				"utility",
+				"development"
+			]
+		},
+		{
+			"name": "Creator Addon Library",
+			"desc": "Replaces the \"Addons\" tab in \"Community Creations\" with Kiln's library of Polytoria 2.0 creator addons, and lets you publish your own from the \"Addons\" creation page. Every addon shows what it can access and is reviewed before it goes live.",
+			"id": "addonLibrary",
+			"defaultEnabled": true,
+			"requiresSync": true,
+			"notes": [
+				{
+					"type": "info",
+					"text": "This is a Kiln library, not an official Polytoria one. Addons are third-party code, so you're responsible for what you install."
+				}
+			],
 			"tags": [
 				"new",
 				"utility",

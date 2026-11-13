@@ -325,6 +325,10 @@ export function legacyWorldDiscoveryLayout(
 		const card = document.createElement("div");
 		card.className = `mcard card place-card${!place.isLegacy ? " twopointo-demo-place" : ""} mb-2 me-2`;
 		card.style.textAlign = "left";
+		if (isEvent) {
+			card.style.width = "167px";
+			card.style.height = "248px";
+		}
 		card.innerHTML = `
 			${!place.isLegacy ? `<div class="twopointo-title">2.0</div>` : ""}
 			<div class="card-body">
@@ -345,6 +349,9 @@ export function legacyWorldDiscoveryLayout(
 		const icon = card.querySelector<HTMLImageElement>(".place-card-image")!;
 		icon.src = iconUrl;
 		icon.alt = place.name;
+		if (isEvent) {
+			Object.assign(icon.style, { display: "block", margin: "0 auto" });
+		}
 
 		card.querySelector(".kiln-legacy-place-name")!.textContent = place.name;
 
@@ -365,6 +372,12 @@ export function legacyWorldDiscoveryLayout(
 		if (isEvent) {
 			const wrapper = document.createElement("div");
 			wrapper.className = "event-card";
+			Object.assign(wrapper.style, {
+				width: "fit-content",
+				display: "inline-flex",
+				verticalAlign: "middle",
+				margin: "0 0.5rem 0.5rem 0",
+			});
 			wrapper.appendChild(card);
 			link.appendChild(wrapper);
 		} else {
@@ -429,7 +442,7 @@ export function legacyWorldDiscoveryLayout(
 	if (search) searchInput.value = search;
 
 	applyKilnDisclosureTitle(
-		container,
+		container.querySelector<HTMLElement>(".force-mcard")!,
 		showDisclosures,
 		"Legacy world discovery layout",
 	);
@@ -442,7 +455,7 @@ export function legacyWorldDiscoveryLayout(
 	if (disableAutoScroll) {
 		const loadMoreButton = document.createElement("button");
 		loadMoreButton.type = "button";
-		loadMoreButton.className = "btn btn-outline-secondary w-100 mb-3";
+		loadMoreButton.className = "btn btn-outline-secondary d-block mx-auto mb-3 px-5";
 		loadMoreButton.innerHTML = `Load More${kilnDisclosureBadgeHtml(showDisclosures)}`;
 		placesContainer.insertAdjacentElement("afterend", loadMoreButton);
 

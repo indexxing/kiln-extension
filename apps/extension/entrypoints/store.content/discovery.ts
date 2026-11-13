@@ -415,6 +415,95 @@ export async function ownedTags(userId: number, showDisclosures: boolean) {
 	}
 }
 
+export function hideCollectibles(showDisclosures: boolean) {
+	const toggleId = "kiln-hide-collectibles";
+	const styleId = "kiln-hide-collectibles-css";
+
+	const applyState = (hidden: boolean) => {
+		let style = document.getElementById(styleId);
+		if (!style) {
+			style = document.createElement("style");
+			style.id = styleId;
+			document.head.appendChild(style);
+		}
+		style.textContent = hidden
+			? `.store-listing-item:has(.ribbon-limited), .itemCardCont:has(.ribbon-limited) { display: none !important; }`
+			: "";
+	};
+
+	const inject = () => {
+		if (document.getElementById(toggleId)) return;
+
+		const nonCollectible = document.getElementById(
+			"hide-non-collectible",
+		) as HTMLInputElement | null;
+		const anchor = nonCollectible?.closest(".form-check");
+		if (!nonCollectible || !anchor) return;
+
+		const wrapper = document.createElement("div");
+		wrapper.className = "form-check form-switch mb-0";
+
+		const input = document.createElement("input");
+		input.className = "form-check-input";
+		input.type = "checkbox";
+		input.id = toggleId;
+		input.checked = false;
+
+		const label = document.createElement("label");
+		label.className = "form-check-label text-white";
+		label.htmlFor = toggleId;
+		label.textContent = "Hide Collectibles";
+		if (showDisclosures) {
+			label.insertAdjacentHTML("beforeend", kilnDisclosureBadgeHtml(true));
+		}
+
+		input.addEventListener("change", () => {
+			applyState(input.checked);
+			if (input.checked && nonCollectible.checked) {
+				nonCollectible.checked = false;
+				nonCollectible.dispatchEvent(new Event("change", { bubbles: true }));
+			}
+		});
+
+		nonCollectible.addEventListener("change", () => {
+			if (nonCollectible.checked && input.checked) {
+				input.checked = false;
+				applyState(false);
+			}
+		});
+
+		for (const radio of document.querySelectorAll<HTMLInputElement>(
+			'input[name="storecat"]',
+		)) {
+			radio.addEventListener("change", () => {
+				setTimeout(() => {
+					if (nonCollectible.checked && input.checked) {
+						input.checked = false;
+						applyState(false);
+					}
+				}, 0);
+			});
+		}
+
+		wrapper.append(input, label);
+		anchor.insertAdjacentElement("afterend", wrapper);
+	};
+
+	const start = () => {
+		inject();
+		new MutationObserver(inject).observe(document.body, {
+			childList: true,
+			subtree: true,
+		});
+	};
+
+	if (document.readyState === "loading") {
+		document.addEventListener("DOMContentLoaded", start);
+	} else {
+		start();
+	}
+}
+
 function parseStorePriceInput(value: string): number | null {
 	if (!value) return null;
 	const parsed = Number.parseInt(value, 10);
@@ -705,15 +794,9 @@ const LEGACY_DISCOVERY_HTML = `
 					</label>
 				</div>
 				<div class="form-check store-item-check fw-bold">
-					<input class="form-check-input" name="storeitem" type="checkbox" value="shirt" id="store-shirts">
-					<label class="form-check-label" for="store-shirts">
-						<i class="fad fa-tshirt"></i> Shirts
-					</label>
-				</div>
-				<div class="form-check store-item-check fw-bold">
-					<input class="form-check-input" name="storeitem" type="checkbox" value="pants" id="store-pants">
-					<label class="form-check-label" for="store-pants">
-						<i class="fad fa-socks"></i> Pants
+					<input class="form-check-input" name="storeitem" type="checkbox" value="clothing" id="store-clothing">
+					<label class="form-check-label" for="store-clothing">
+						<i class="fad fa-tshirt"></i> Clothing
 					</label>
 				</div>
 				<div class="form-check store-item-check fw-bold">
@@ -1109,7 +1192,7 @@ function wireLegacyDiscovery(root: HTMLElement): void {
 				break;
 			case "storecat-usercreations":
 				allItemsCheck.checked = false;
-				for (const c of typeChecks) c.checked = c.value === "profileTheme";
+				for (const c of typeChecks) c.checked = c.value === "clothing";
 				break;
 		}
 	};

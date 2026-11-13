@@ -59,7 +59,7 @@ const TYPE_OPTIONS = [
 ];
 
 const DEFAULT_SORT = "newest";
-const DEFAULT_TYPE = "thread";
+const DEFAULT_TYPE = "both";
 const DEFAULT_MY_POSTS_SORT = "newest";
 
 function getForumBasePath(): string {

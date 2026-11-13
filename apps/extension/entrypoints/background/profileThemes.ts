@@ -15,7 +15,7 @@
 // along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import { Extension } from "@kiln/schemas";
-import { onMessage } from "@/utils/messaging";
+import { onMessage, type ProfileThemePayload } from "@/utils/messaging";
 import { expireKVCache, pullKVCache } from "@/utils/utilities";
 import {
 	dedupe,
@@ -27,6 +27,40 @@ import {
 } from "./shared";
 
 const PROFILE_THEME_CACHE_TTL = 60 * 1000;
+
+function profileThemeBody(data: ProfileThemePayload): string {
+	return JSON.stringify({
+		accentColor: data.accentColor,
+		navbarColor: data.navbarColor,
+		...(data.fontFamily && data.fontFamily !== "default"
+			? { fontFamily: data.fontFamily }
+			: {}),
+		...(data.customCss ? { customCss: data.customCss } : {}),
+		...(data.backgroundImage ? { backgroundImage: data.backgroundImage } : {}),
+		...(data.backgroundOverlayColor
+			? { backgroundOverlayColor: data.backgroundOverlayColor }
+			: {}),
+		...(data.backgroundOverlayOpacity !== undefined
+			? { backgroundOverlayOpacity: data.backgroundOverlayOpacity }
+			: {}),
+		...(data.effects?.length ? { effects: data.effects } : {}),
+		...(data.navbarIconColor ? { navbarIconColor: data.navbarIconColor } : {}),
+		...(data.cursorUrl ? { cursorUrl: data.cursorUrl } : {}),
+		...(data.colorTokens && Object.keys(data.colorTokens).length
+			? { colorTokens: data.colorTokens }
+			: {}),
+		...(data.layout ? { layout: data.layout } : {}),
+		...(data.usernameStyle ? { usernameStyle: data.usernameStyle } : {}),
+		...(data.banner ? { banner: data.banner } : {}),
+		...(data.ambient ? { ambient: data.ambient } : {}),
+		...(data.stickers?.length ? { stickers: data.stickers } : {}),
+		...(data.notes?.length ? { notes: data.notes } : {}),
+		...(data.videos?.length ? { videos: data.videos } : {}),
+		...(data.cardStyle ? { cardStyle: data.cardStyle } : {}),
+		...(data.avatarBackdrop ? { avatarBackdrop: data.avatarBackdrop } : {}),
+		...(data.pointerEffects ? { pointerEffects: data.pointerEffects } : {}),
+	});
+}
 
 onMessage("getProfileTheme", ({ data: userId }) =>
 	handle(async () => {
@@ -71,52 +105,78 @@ onMessage("saveProfileTheme", ({ data }) =>
 						Authorization: `Bearer ${token}`,
 						"Content-Type": "application/json",
 					},
-					body: JSON.stringify({
-						accentColor: data.accentColor,
-						navbarColor: data.navbarColor,
-						...(data.fontFamily && data.fontFamily !== "default"
-							? { fontFamily: data.fontFamily }
-							: {}),
-						...(data.customCss ? { customCss: data.customCss } : {}),
-						...(data.backgroundImage
-							? { backgroundImage: data.backgroundImage }
-							: {}),
-						...(data.backgroundOverlayColor
-							? { backgroundOverlayColor: data.backgroundOverlayColor }
-							: {}),
-						...(data.backgroundOverlayOpacity !== undefined
-							? { backgroundOverlayOpacity: data.backgroundOverlayOpacity }
-							: {}),
-						...(data.effects?.length ? { effects: data.effects } : {}),
-						...(data.navbarIconColor
-							? { navbarIconColor: data.navbarIconColor }
-							: {}),
-						...(data.cursorUrl ? { cursorUrl: data.cursorUrl } : {}),
-						...(data.colorTokens && Object.keys(data.colorTokens).length
-							? { colorTokens: data.colorTokens }
-							: {}),
-						...(data.layout ? { layout: data.layout } : {}),
-						...(data.usernameStyle
-							? { usernameStyle: data.usernameStyle }
-							: {}),
-						...(data.banner ? { banner: data.banner } : {}),
-						...(data.ambient ? { ambient: data.ambient } : {}),
-						...(data.stickers?.length ? { stickers: data.stickers } : {}),
-						...(data.notes?.length ? { notes: data.notes } : {}),
-						...(data.cardStyle ? { cardStyle: data.cardStyle } : {}),
-						...(data.avatarBackdrop
-							? { avatarBackdrop: data.avatarBackdrop }
-							: {}),
-						...(data.pointerEffects
-							? { pointerEffects: data.pointerEffects }
-							: {}),
-					}),
+					body: profileThemeBody(data),
 				},
 			),
 		);
 		await expireKVCache("profileThemes", String(data.userId));
 		return result;
 	}),
+);
+
+onMessage("getProfileThemeSlots", ({ data: userId }) =>
+	handle(() =>
+		withAuthSession(userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}profile-themes/me/slots`,
+				Extension.ProfileThemeSlotsApi,
+				{ headers: { Authorization: `Bearer ${token}` } },
+			),
+		),
+	),
+);
+
+onMessage("saveProfileThemeSlot", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}profile-themes/me/slots/${data.slot}`,
+				Extension.ProfileThemeSlotsApi,
+				{
+					method: "PUT",
+					headers: {
+						Authorization: `Bearer ${token}`,
+						"Content-Type": "application/json",
+					},
+					body: profileThemeBody(data),
+				},
+			),
+		),
+	),
+);
+
+onMessage("renameProfileThemeSlot", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}profile-themes/me/slots/${data.slot}`,
+				Extension.ProfileThemeSlotsApi,
+				{
+					method: "PATCH",
+					headers: {
+						Authorization: `Bearer ${token}`,
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({ name: data.name }),
+				},
+			),
+		),
+	),
+);
+
+onMessage("clearProfileThemeSlot", ({ data }) =>
+	handle(() =>
+		withAuthSession(data.userId, (token, config) =>
+			safeFetch(
+				`${config.resolvedUrls.extension}profile-themes/me/slots/${data.slot}`,
+				Extension.ProfileThemeSlotsApi,
+				{
+					method: "DELETE",
+					headers: { Authorization: `Bearer ${token}` },
+				},
+			),
+		),
+	),
 );
 
 onMessage("setProfileThemeEnabled", ({ data }) =>

@@ -31,6 +31,7 @@ import {
 	EFFECT_TYPE_CONFIGS,
 	hexToRgb,
 	isValidHex,
+	MAX_BG_MUSIC_VOLUME,
 	parseAssetVolume,
 	rgbToHex,
 	SELECTOR_REFERENCE,
@@ -436,16 +437,23 @@ export function openThemeGallery(
 			return;
 		}
 
-		const uniqueUserIds = [...new Set(themes.map((t) => t.userId))];
-		const userResults = await Promise.all(
-			uniqueUserIds.map((id) => sendMessage("getUser", id)),
-		);
 		const usernameMap: Record<number, string> = {};
-		for (let i = 0; i < uniqueUserIds.length; i++) {
+		for (const t of themes) {
+			if (t.username) usernameMap[t.userId] = t.username;
+		}
+		const missingUserIds = [
+			...new Set(
+				themes.filter((t) => !usernameMap[t.userId]).map((t) => t.userId),
+			),
+		];
+		const userResults = await Promise.all(
+			missingUserIds.map((id) => sendMessage("getUser", id)),
+		);
+		for (let i = 0; i < missingUserIds.length; i++) {
 			const r = userResults[i];
-			usernameMap[uniqueUserIds[i]] = r.ok
+			usernameMap[missingUserIds[i]] = r.ok
 				? r.data.username
-				: `User #${uniqueUserIds[i]}`;
+				: `User #${missingUserIds[i]}`;
 		}
 
 		body.innerHTML = `<div class="row g-2" id="kiln-gallery-grid"></div>`;
@@ -473,6 +481,11 @@ export function openThemeGallery(
 					}
 					<div class="card-body py-2 px-2">
 						<div class="fw-semibold small text-truncate">${escapeHtml(theme.name)}</div>
+						${
+							theme.inaccessible
+								? `<span class="badge bg-warning text-dark mt-1" style="font-size:0.65em;" title="Some text in this theme has very low contrast and may be hard to read."><i class="fas fa-eye-low-vision me-1"></i>Hard to Read</span>`
+								: ""
+						}
 						<div class="d-flex align-items-center justify-content-between mt-1">
 							<div class="text-muted text-truncate" style="font-size:0.75em;">by ${escapeHtml(creatorName)}</div>
 							<button class="kiln-gallery-report btn btn-link p-0 text-muted" title="Report theme" style="font-size:0.7em;flex-shrink:0;line-height:1;">
@@ -698,10 +711,10 @@ export function renderEffectValueInput(
 			       min="${cfg.min}" max="${cfg.max}" step="1" placeholder="e.g. 43589" value="${defId === "0" ? "" : defId}" />
 			<div class="d-flex align-items-center gap-2">
 				<span class="small text-muted" style="white-space:nowrap;min-width:4.5em;">Volume</span>
-				<input type="range" id="${prefix}-efv-audio-volume" min="0" max="100" step="1" value="${defVolume}" class="flex-fill" style="min-width:0;" />
+				<input type="range" id="${prefix}-efv-audio-volume" min="0" max="${MAX_BG_MUSIC_VOLUME}" step="1" value="${defVolume}" class="flex-fill" style="min-width:0;" />
 				<span id="${prefix}-efv-audio-volume-label" class="small text-muted" style="min-width:2.5em;text-align:right;">${defVolume}%</span>
 			</div>
-			<div class="small text-muted mt-1">Loops in the background. Autoplay may not start until the visitor's first click.</div>`;
+			<div class="small text-muted mt-1">Loops in the background. Visitors start it with a play button in the bottom-left corner; volume is capped at ${MAX_BG_MUSIC_VOLUME}%.</div>`;
 		const volumeSlider = row.querySelector<HTMLInputElement>(
 			`#${prefix}-efv-audio-volume`,
 		)!;

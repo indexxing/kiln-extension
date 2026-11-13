@@ -24,6 +24,7 @@ import {
 	_errorLog,
 	_forumFeedbackRedirectBanner,
 	_kilnUpdatesCategory,
+	_reviewUpvoteThreshold,
 	_savedThemes,
 	_showKilnDisclosures,
 	_textTruncateFix,
@@ -63,6 +64,7 @@ type Tags =
 	| "economy"
 	| "development"
 	| "expression"
+	| "addon"
 	| "experimental"
 	| "new"
 	| "deprecated";
@@ -94,6 +96,7 @@ type SettingData = {
 	hide?: boolean;
 	desktopOnly?: boolean;
 	chromeOnly?: boolean;
+	requiresAddon?: boolean;
 };
 
 function isNewerVersion(latest: string, current: string): boolean {
@@ -129,15 +132,15 @@ export async function kilnSettings() {
 		"col-lg-10",
 	)[0] as HTMLElement;
 	const version = browser.runtime.getManifest().version;
-	const showDebug =
-		import.meta.env.MODE == "development" ||
-		new URLSearchParams(window.location.search).has("kiln-debug");
-
 	const sessions = await apiSessions.getValue();
 	const adminSession = sessions.find(
 		(s) => s.state === "verified" && s.userId === 2782 && s.accessToken,
 	);
 	const showAdmin = !!adminSession;
+	const showDebug =
+		showAdmin ||
+		import.meta.env.MODE == "development" ||
+		new URLSearchParams(window.location.search).has("kiln-debug");
 
 	content.innerHTML = `
 		<div id="kiln-ban-notice"></div>
@@ -145,7 +148,7 @@ export async function kilnSettings() {
 			<button type="button" class="btn btn-primary flex-grow-1" id="kiln-tab-about">About</button>
 			<button type="button" class="btn btn-secondary flex-grow-1" id="kiln-tab-prefs">Preferences</button>
 			<button type="button" class="btn btn-secondary flex-grow-1" id="kiln-tab-changelog">Changelog</button>
-			<button type="button" class="btn btn-secondary flex-grow-1" id="kiln-tab-sync">Sync</button>
+			<button type="button" class="btn btn-secondary flex-grow-1" id="kiln-tab-sync">Sync &amp; Extras</button>
 			${showAdmin ? '<button type="button" class="btn btn-secondary flex-grow-1" id="kiln-tab-admin">Admin</button>' : ""}
 			${showDebug ? '<button type="button" class="btn btn-secondary flex-grow-1" id="kiln-tab-debug">Debug</button>' : ""}
 		</div>
@@ -638,11 +641,17 @@ export async function kilnSettings() {
 		const mobile = isMobileDevice();
 		const chrome = isChrome();
 
+		const addonReleased = getFlag(config.flags, "general.addon.released");
+		const remotelyHidden = (id: string) =>
+			config.flags[`features.${id}.hide`] === true;
 		const MODIFIER_TAGS = new Set(["experimental"]);
 		const categories = data.categories as CategoryData[];
 		const usedTags = new Set(
 			(data.preferences as SettingData[]).flatMap((s) =>
-				s.hide || (mobile && s.desktopOnly)
+				s.hide ||
+				remotelyHidden(s.id) ||
+				(mobile && s.desktopOnly) ||
+				(s.requiresAddon && !addonReleased)
 					? []
 					: s.tags.filter((t) => !MODIFIER_TAGS.has(t)),
 			),
@@ -699,7 +708,13 @@ export async function kilnSettings() {
 		);
 
 		for (const setting of sortedPreferences) {
-			if (setting.hide || (mobile && setting.desktopOnly)) continue;
+			if (
+				setting.hide ||
+				remotelyHidden(setting.id) ||
+				(mobile && setting.desktopOnly)
+			)
+				continue;
+			if (setting.requiresAddon && !addonReleased) continue;
 
 			const primaryTags = setting.tags.filter((t) => !MODIFIER_TAGS.has(t));
 			if (primaryTags.length === 0) continue;
@@ -743,6 +758,14 @@ export async function kilnSettings() {
 							{
 								type: "info" as NoteType,
 								text: "Requires a linked Kiln account.",
+							},
+						]
+					: []),
+				...(setting.requiresAddon
+					? [
+							{
+								type: "info" as NoteType,
+								text: "Requires the Kiln creator addon.",
 							},
 						]
 					: []),
@@ -856,15 +879,17 @@ export async function kilnSettings() {
 					};
 
 					const isThemeConfig = setting.id === "customProfileThemes";
+					const themeTopLevelSubs = ["viewOthers", "hideInaccessible"];
 					const themeEffectSubs = isThemeConfig
 						? setting.config.filter(
-								(s) => !s.hide && s.subsetting !== "viewOthers",
+								(s) => !s.hide && !themeTopLevelSubs.includes(s.subsetting),
 							)
 						: [];
 
 					for (const sub of setting.config) {
 						if (sub.hide) continue;
-						if (isThemeConfig && sub.subsetting !== "viewOthers") continue;
+						if (isThemeConfig && !themeTopLevelSubs.includes(sub.subsetting))
+							continue;
 
 						if (sub.type === "select") {
 							const select = document.createElement("select");
@@ -1241,6 +1266,22 @@ export async function kilnSettings() {
 				});
 			detailViewEl.appendChild(header);
 
+			if (tag === "addon") {
+				const addonNotice = document.createElement("div");
+				addonNotice.className = "alert border-info small mb-2";
+				addonNotice.innerHTML = `
+					<i class="fas fa-puzzle-piece text-info me-1"></i>
+					These features need the Kiln creator addon. Go to the <a href="#" class="kiln-addon-sync-link">Sync tab</a> to download and install it.
+				`;
+				addonNotice
+					.querySelector<HTMLAnchorElement>(".kiln-addon-sync-link")!
+					.addEventListener("click", (e) => {
+						e.preventDefault();
+						document.getElementById("kiln-tab-sync")?.click();
+					});
+				detailViewEl.appendChild(addonNotice);
+			}
+
 			if (newGroupBodies[tag].children.length > 0) {
 				const newCard = document.createElement("div");
 				newCard.className = "card mb-2";
@@ -1362,767 +1403,297 @@ export async function kilnSettings() {
 	switchTab(tabParam && tabParam in panels ? tabParam : "about");
 }
 
-function initAdminGeneralTab(userId: number, panel: HTMLElement) {
-	panel.innerHTML = `<p class="text-muted small">Loading…</p>`;
-	load();
+const AI_DISCLOSURE_LABELS: Record<string, string> = {
+	icon: "AI icon",
+	thumbnail: "AI thumbnail",
+	assisted: "AI assisted",
+	generated: "Entirely AI",
+};
 
-	async function load() {
-		const [result, config] = await Promise.all([
-			sendMessage("adminGetStats", userId),
-			getConfig(),
-		]);
-		if (!result.ok) {
-			panel.innerHTML = `<p class="text-danger small">Failed to load: ${result.message}</p>`;
-			return;
-		}
-
-		const { totalVerifiedUsers, pendingFeedback, versions } = result.data.data;
-		const latestVersion = config.latestVersion;
-
-		const sorted = [...versions]
-			.filter((v): v is { version: string; users: number } => !!v.version)
-			.sort((a, b) => {
-				if (isNewerVersion(a.version, b.version)) return -1;
-				if (isNewerVersion(b.version, a.version)) return 1;
-				return 0;
-			});
-
-		const latestUsers =
-			sorted.find((v) => v.version === latestVersion)?.users ?? 0;
-		const onLatestPct = totalVerifiedUsers
-			? Math.round((latestUsers / totalVerifiedUsers) * 100)
-			: 0;
-		const maxUsers = Math.max(...sorted.map((v) => v.users), 1);
-
-		const statTile = (
-			label: string,
-			value: string,
-			sub: string,
-			icon: string,
-			tone: string,
-		) => `
-			<div class="col-sm-4">
-				<div class="card h-100">
-					<div class="card-body py-2">
-						<div class="d-flex align-items-center gap-2 text-muted small mb-1">
-							<i class="fas fa-${icon} fa-fw"></i>${label}
-						</div>
-						<div class="fs-4 fw-semibold ${tone}">${value}</div>
-						<div class="text-muted" style="font-size:0.72rem;">${sub}</div>
-					</div>
-				</div>
-			</div>
-		`;
-
-		const bars = sorted.length
-			? sorted
-					.map((v) => {
-						const isLatest = v.version === latestVersion;
-						const pct = totalVerifiedUsers
-							? Math.round((v.users / totalVerifiedUsers) * 100)
-							: 0;
-						const width = Math.max(2, Math.round((v.users / maxUsers) * 100));
-						return `
-							<div class="mb-2">
-								<div class="d-flex justify-content-between align-items-center small">
-									<span>
-										<code>v${escapeHtml(v.version)}</code>
-										${isLatest ? '<span class="badge bg-success ms-1">Latest</span>' : ""}
-									</span>
-									<span class="text-muted">${v.users.toLocaleString()} user${v.users !== 1 ? "s" : ""} · ${pct}%</span>
-								</div>
-								<div class="progress mt-1" style="height:8px;">
-									<div class="progress-bar ${isLatest ? "bg-success" : "bg-primary"}" style="width:${width}%;"></div>
-								</div>
-							</div>
-						`;
-					})
-					.join("")
-			: '<p class="text-muted small mb-0">No version data yet.</p>';
-
-		panel.innerHTML = `
-			<div class="row g-2 mb-2">
-				${statTile("Verified Users", totalVerifiedUsers.toLocaleString(), "Linked Kiln accounts", "user-check", "")}
-				${statTile("Pending Feedback", pendingFeedback.toLocaleString(), "Open, unresolved submissions", "inbox", pendingFeedback > 0 ? "text-warning" : "")}
-				${statTile("On Latest Version", `${onLatestPct}%`, `v${escapeHtml(latestVersion)} · ${latestUsers.toLocaleString()} users`, "arrow-up", "text-success")}
-			</div>
-			<div class="card">
-				<div class="card-header small fw-semibold d-flex justify-content-between align-items-center">
-					<span>Version Migration</span>
-					<button id="kadmin-general-refresh" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Refresh">
-						<i class="fas fa-sync-alt" style="font-size:0.75rem;"></i>
-					</button>
-				</div>
-				<div class="card-body">
-					<p class="text-muted small mb-2">Linked users by the extension version they last reported.</p>
-					${bars}
-				</div>
-			</div>
-		`;
-
-		document
-			.getElementById("kadmin-general-refresh")
-			?.addEventListener("click", load);
-	}
-}
-
-function initAdminBansTab(userId: number, panel: HTMLElement) {
+function initAdminWorldsTab(userId: number, panel: HTMLElement) {
 	panel.innerHTML = `
 		<div class="card mb-2">
-			<div class="card-header small fw-semibold">Ban a User</div>
+			<div class="card-header small fw-semibold">Label a World</div>
 			<div class="card-body">
 				<div class="d-flex gap-2 align-items-center flex-wrap">
-					<input id="kadmin-ban-user-id" type="text" class="form-control form-control-sm" style="max-width:200px;" placeholder="User ID…" />
-					<input id="kadmin-ban-reason" type="text" maxlength="500" class="form-control form-control-sm" style="max-width:300px;" placeholder="Ban reason (shown to the user)…" />
-					<button id="kadmin-ban-btn" class="btn btn-danger btn-sm">Ban</button>
-					<span id="kadmin-ban-status" class="small"></span>
+					<input id="kadmin-world-id" type="text" class="form-control form-control-sm" style="max-width:200px;" placeholder="World ID…" />
+					<button id="kadmin-world-load" class="btn btn-primary btn-sm">Load</button>
+					<span id="kadmin-world-status" class="small"></span>
 				</div>
-				<p class="text-muted small mb-0 mt-2">Banning immediately revokes all of the user's sessions.</p>
 			</div>
 		</div>
-		<div class="d-flex gap-2 mb-2 align-items-center">
-			<input id="kadmin-bans-search" type="text" class="form-control form-control-sm" style="max-width:260px;" placeholder="Search by username, user ID, or reason…" />
-			<button id="kadmin-bans-refresh" class="btn btn-sm btn-outline-secondary py-0 px-2" title="Refresh">
-				<i class="fas fa-sync-alt" style="font-size:0.75rem;"></i>
-			</button>
-		</div>
-		<div id="kadmin-bans-list"></div>
-		<div id="kadmin-bans-pagination" class="d-flex justify-content-between align-items-center mt-2"></div>
+		<div class="small fw-semibold mb-2">Open reports</div>
+		<div id="kadmin-world-reports" class="mb-3"></div>
+		<div id="kadmin-world-detail"></div>
+		<div class="small fw-semibold mb-2 mt-3">Worlds with AI disclosures</div>
+		<div id="kadmin-world-list"></div>
 	`;
 
-	const banInput = document.getElementById(
-		"kadmin-ban-user-id",
-	) as HTMLInputElement;
-	const banReason = document.getElementById(
-		"kadmin-ban-reason",
-	) as HTMLInputElement;
-	const banBtn = document.getElementById("kadmin-ban-btn") as HTMLButtonElement;
-	const banStatus = document.getElementById("kadmin-ban-status")!;
-	const searchInput = document.getElementById(
-		"kadmin-bans-search",
-	) as HTMLInputElement;
-	const list = document.getElementById("kadmin-bans-list")!;
-	const pagination = document.getElementById("kadmin-bans-pagination")!;
+	const input = document.getElementById("kadmin-world-id") as HTMLInputElement;
+	const loadBtn = document.getElementById(
+		"kadmin-world-load",
+	) as HTMLButtonElement;
+	const status = document.getElementById("kadmin-world-status")!;
+	const detail = document.getElementById("kadmin-world-detail")!;
+	const list = document.getElementById("kadmin-world-list")!;
+	const reports = document.getElementById("kadmin-world-reports")!;
 
-	let page = 1;
+	const setStatus = (el: HTMLElement, text: string, tone = "muted") => {
+		el.className = `small text-${tone}`;
+		el.textContent = text;
+	};
 
-	async function load() {
+	async function loadReports() {
+		reports.innerHTML = `<p class="text-muted small">Loading…</p>`;
+		const result = await sendMessage("adminGetAiReports", userId);
+		if (!result.ok) {
+			reports.innerHTML = `<p class="text-danger small">Failed to load: ${escapeHtml(result.message)}</p>`;
+			return;
+		}
+		if (result.data.data.length === 0) {
+			reports.innerHTML = `<p class="text-muted small mb-0">No open reports.</p>`;
+			return;
+		}
+		reports.innerHTML = result.data.data
+			.map(
+				(r) => `
+				<div class="card mb-2">
+					<div class="card-body py-2">
+						<div class="d-flex align-items-center gap-2 flex-wrap">
+							<a class="small" href="/places/${r.placeId}" target="_blank" rel="noreferrer noopener">World ${r.placeId}</a>
+							<span class="badge ${r.kind === "missing" ? "bg-warning text-dark" : "bg-info text-dark"}">${r.kind === "missing" ? "Needs a label" : "Label is wrong"}</span>
+							<a class="small text-muted" href="/users/${r.userId}" target="_blank" rel="noreferrer noopener">User ${r.userId}</a>
+							<div class="ms-auto d-flex gap-1">
+								<button class="btn btn-outline-secondary btn-sm py-0" data-open="${r.placeId}">Open</button>
+								<button class="btn btn-success btn-sm py-0" data-review="${r.id}" data-action="resolve">Resolve</button>
+								<button class="btn btn-outline-danger btn-sm py-0" data-review="${r.id}" data-action="dismiss">Dismiss</button>
+							</div>
+						</div>
+						${r.details ? `<div class="small mt-1" style="white-space:pre-wrap;overflow-wrap:anywhere;">${escapeHtml(r.details)}</div>` : ""}
+					</div>
+				</div>`,
+			)
+			.join("");
+		for (const btn of reports.querySelectorAll<HTMLButtonElement>(
+			"[data-open]",
+		)) {
+			btn.addEventListener("click", () => {
+				input.value = btn.dataset.open!;
+				loadWorld(Number(btn.dataset.open));
+			});
+		}
+		for (const btn of reports.querySelectorAll<HTMLButtonElement>(
+			"[data-review]",
+		)) {
+			btn.addEventListener("click", async () => {
+				btn.disabled = true;
+				const outcome = await sendMessage("adminReviewAiReport", {
+					userId,
+					id: btn.dataset.review!,
+					action: btn.dataset.action as "resolve" | "dismiss",
+				});
+				if (!outcome.ok) {
+					btn.disabled = false;
+					btn.insertAdjacentHTML(
+						"afterend",
+						`<span class="text-danger small ms-1">Failed: ${escapeHtml(outcome.message)}</span>`,
+					);
+					return;
+				}
+				loadReports();
+			});
+		}
+	}
+
+	async function loadList() {
 		list.innerHTML = `<p class="text-muted small">Loading…</p>`;
-		pagination.innerHTML = "";
-
-		const result = await sendMessage("adminGetBannedUsers", {
-			userId,
-			search: searchInput.value.trim() || undefined,
-			page,
-		});
-
+		const result = await sendMessage("adminListAiDisclosedPlaces", userId);
 		if (!result.ok) {
 			list.innerHTML = `<p class="text-danger small">Failed to load: ${escapeHtml(result.message)}</p>`;
 			return;
 		}
-
-		const { data: items, meta } = result.data;
-		if (items.length === 0) {
-			list.innerHTML = `<p class="text-muted small">${searchInput.value.trim() ? "No banned users match this search." : "No users are currently banned."}</p>`;
+		const worlds = result.data.data;
+		if (worlds.length === 0) {
+			list.innerHTML = `<p class="text-muted small">No worlds have been labelled yet.</p>`;
 			return;
 		}
-
-		list.innerHTML = items
-			.map((item) => {
-				const metaLine = [
-					`Banned ${new Date(item.bannedAt).toLocaleString()}`,
-					item.version && `Kiln v${escapeHtml(item.version)}`,
-				]
-					.filter(Boolean)
-					.join(" · ");
-
-				const linkedHtml = item.linkedAccounts.length
-					? `
-						<div class="mt-2 pt-2 border-top">
-							<div class="text-muted" style="font-size:0.72rem;">Possible alt accounts</div>
-							${item.linkedAccounts
-								.map((linked) => {
-									const shared = [
-										linked.signals.includes("client") && "same install",
-										linked.signals.includes("ip") && "same network",
-									]
-										.filter(Boolean)
-										.join(", ");
-									return `
-										<div class="d-flex justify-content-between align-items-center gap-2 mt-1">
-											<div class="small" style="min-width:0;">
-												<a href="/users/${linked.userId}" target="_blank">${linked.username ? escapeHtml(linked.username) : `User ${linked.userId}`}</a>
-												<span class="text-muted" style="font-size:0.72rem;">#${linked.userId} · ${shared} · seen ${new Date(linked.lastSeenAt).toLocaleDateString()}</span>
-												${linked.bannedAt ? '<span class="badge bg-danger ms-1">Banned</span>' : ""}
-											</div>
-											${linked.bannedAt ? "" : `<button class="btn btn-outline-danger btn-sm flex-shrink-0 py-0" data-prefill-ban="${linked.userId}">Ban…</button>`}
-										</div>
-									`;
-								})
-								.join("")}
-						</div>
-					`
-					: "";
-
-				return `
-					<div class="card mb-2">
-						<div class="card-body py-2">
-							<div class="d-flex justify-content-between align-items-start gap-2">
-								<div style="min-width:0;">
-									<a href="/users/${item.userId}" target="_blank" class="fw-semibold small">${item.username ? escapeHtml(item.username) : `User ${item.userId}`}</a>
-									${item.username ? `<span class="text-muted" style="font-size:0.72rem;">#${item.userId}</span>` : ""}
-									<div class="text-muted" style="font-size:0.72rem;">${metaLine}</div>
-									<div class="small mt-1">${item.reason ? escapeHtml(item.reason) : '<span class="text-muted fst-italic">No reason given</span>'}</div>
-								</div>
-								<button class="btn btn-outline-success btn-sm flex-shrink-0" data-unban="${item.userId}">Unban</button>
-							</div>
-							${linkedHtml}
-						</div>
+		list.innerHTML = worlds
+			.map(
+				(w) => `
+				<div class="card mb-2">
+					<div class="card-body py-2 d-flex align-items-center gap-2 flex-wrap">
+						<a class="small" href="/places/${w.placeId}" target="_blank" rel="noreferrer noopener">World ${w.placeId}</a>
+						${w.kinds.map((k) => `<span class="badge bg-warning text-dark">${escapeHtml(AI_DISCLOSURE_LABELS[k] ?? k)}</span>`).join(" ")}
+						<button class="btn btn-outline-secondary btn-sm ms-auto" data-edit="${w.placeId}">Edit</button>
 					</div>
-				`;
-			})
+				</div>`,
+			)
 			.join("");
-
-		pagination.innerHTML = `
-			<button class="btn btn-outline-secondary btn-sm" id="kadmin-bans-prev" ${meta.currentPage <= 1 ? "disabled" : ""}>← Prev</button>
-			<span class="text-muted small">Page ${meta.currentPage} of ${meta.totalPages} (${meta.totalCount} total)</span>
-			<button class="btn btn-outline-secondary btn-sm" id="kadmin-bans-next" ${meta.currentPage >= meta.totalPages ? "disabled" : ""}>Next →</button>
-		`;
-		document
-			.getElementById("kadmin-bans-prev")
-			?.addEventListener("click", () => {
-				page = Math.max(1, page - 1);
-				load();
-			});
-		document
-			.getElementById("kadmin-bans-next")
-			?.addEventListener("click", () => {
-				page += 1;
-				load();
-			});
-
-		for (const btn of list.querySelectorAll<HTMLButtonElement>(
-			"[data-prefill-ban]",
-		)) {
+		for (const btn of list.querySelectorAll<HTMLButtonElement>("[data-edit]")) {
 			btn.addEventListener("click", () => {
-				banInput.value = btn.dataset.prefillBan ?? "";
-				banReason.value = "Ban evasion";
-				banInput.scrollIntoView({ behavior: "smooth", block: "center" });
-				banInput.focus();
-			});
-		}
-
-		for (const btn of list.querySelectorAll<HTMLButtonElement>(
-			"[data-unban]",
-		)) {
-			btn.addEventListener("click", async () => {
-				const target = Number(btn.dataset.unban);
-				btn.disabled = true;
-				const result = await sendMessage("adminUnbanUser", {
-					userId,
-					targetUserId: target,
-				});
-				if (!result.ok) {
-					btn.disabled = false;
-					btn.textContent = "Failed";
-					btn.title = result.message;
-					return;
-				}
-				if (items.length === 1 && page > 1) page -= 1;
-				await load();
+				input.value = btn.dataset.edit!;
+				loadWorld(Number(btn.dataset.edit));
 			});
 		}
 	}
 
-	banBtn.addEventListener("click", async () => {
-		const target = Number(banInput.value.trim());
-		if (!Number.isInteger(target) || target <= 0) {
-			banStatus.className = "small text-danger";
-			banStatus.textContent = "Enter a valid user ID.";
-			return;
-		}
-
-		banBtn.disabled = true;
-		banStatus.className = "small text-muted";
-		banStatus.textContent = "Working…";
-
-		const reason = banReason.value.trim();
-		const result = await sendMessage("adminBanUser", {
+	async function loadWorld(placeId: number) {
+		setStatus(status, "Loading…");
+		const result = await sendMessage("adminGetPlaceAiDisclosures", {
 			userId,
-			targetUserId: target,
-			...(reason ? { reason } : {}),
+			placeId,
 		});
-
-		banBtn.disabled = false;
 		if (!result.ok) {
-			banStatus.className = "small text-danger";
-			banStatus.textContent = `Failed: ${result.message}`;
+			detail.innerHTML = "";
+			setStatus(status, `Failed: ${result.message}`, "danger");
 			return;
 		}
+		setStatus(status, "");
 
-		banStatus.className = "small text-success";
-		banStatus.textContent = `Banned ${target} and revoked their sessions.`;
-		banInput.value = "";
-		banReason.value = "";
-		page = 1;
-		await load();
+		const { images, disclosures } = result.data.data;
+		const find = (kind: string, hash = "") =>
+			disclosures.find(
+				(d) => d.kind === kind && d.imageHash === hash && d.active,
+			);
+
+		const toggle = (kind: string, label: string, hash = "") => `
+			<div class="form-check">
+				<input class="form-check-input" type="checkbox" id="kadmin-ai-${kind}-${escapeHtml(hash)}" data-kind="${kind}" data-hash="${escapeHtml(hash)}" ${find(kind, hash) ? "checked" : ""}>
+				<label class="form-check-label small" for="kadmin-ai-${kind}-${escapeHtml(hash)}">${label}</label>
+			</div>`;
+
+		const image = (
+			img: { hash: string; url: string },
+			kind: string,
+			size: number,
+		) => `
+			<div class="d-flex flex-column gap-1">
+				<img src="${escapeHtml(img.url)}" alt="" style="width:${size}px;height:auto;border-radius:6px;">
+				<code style="font-size:0.65rem;word-break:break-all;max-width:${size}px;">${escapeHtml(img.hash)}</code>
+				${toggle(kind, "AI generated", img.hash)}
+			</div>`;
+
+		const stale = disclosures.filter((d) => !d.active);
+
+		detail.innerHTML = `
+			<div class="card mb-2">
+				<div class="card-body">
+					<div class="mb-3">
+						<div class="text-muted small mb-1">Whole world</div>
+						${toggle("assisted", "Made with AI assistance")}
+						${toggle("generated", "Made entirely with AI")}
+					</div>
+					<div class="mb-3">
+						<div class="text-muted small mb-1">Icon</div>
+						${images.icon ? image(images.icon, "icon", 96) : '<span class="small text-muted">No icon found.</span>'}
+					</div>
+					<div>
+						<div class="text-muted small mb-1">Thumbnails</div>
+						<div class="d-flex gap-3 flex-wrap">
+							${images.thumbnails.map((t) => image(t, "thumbnail", 160)).join("") || '<span class="small text-muted">No thumbnails found.</span>'}
+						</div>
+					</div>
+					<div id="kadmin-world-action-status" class="small mt-2"></div>
+				</div>
+			</div>
+			${
+				stale.length
+					? `<div class="card mb-2"><div class="card-body">
+						<div class="text-muted small mb-2">Outdated (the image was changed, so these no longer show)</div>
+						${stale
+							.map(
+								(d) => `
+							<div class="d-flex align-items-center gap-2 mb-1 small">
+								<span class="badge bg-secondary">${escapeHtml(AI_DISCLOSURE_LABELS[d.kind] ?? d.kind)}</span>
+								<code style="font-size:0.7rem;">${escapeHtml(d.imageHash)}</code>
+								<button class="btn btn-outline-danger btn-sm py-0 ms-auto" data-remove="${d.id}">Remove</button>
+							</div>`,
+							)
+							.join("")}
+					</div></div>`
+					: ""
+			}
+		`;
+
+		const actionStatus = document.getElementById("kadmin-world-action-status")!;
+
+		for (const box of detail.querySelectorAll<HTMLInputElement>(
+			"[data-kind]",
+		)) {
+			box.addEventListener("change", async () => {
+				const kind = box.dataset.kind as
+					| "icon"
+					| "thumbnail"
+					| "assisted"
+					| "generated";
+				const hash = box.dataset.hash ?? "";
+				box.disabled = true;
+				setStatus(actionStatus, "Saving…");
+
+				const existing = find(kind, hash);
+				const outcome = box.checked
+					? await sendMessage("adminAddPlaceAiDisclosure", {
+							userId,
+							placeId,
+							kind,
+							...(hash ? { imageHash: hash } : {}),
+						})
+					: existing
+						? await sendMessage("adminRemovePlaceAiDisclosure", {
+								userId,
+								id: existing.id,
+							})
+						: { ok: true as const };
+
+				if (!outcome.ok) {
+					box.checked = !box.checked;
+					box.disabled = false;
+					setStatus(actionStatus, `Failed: ${outcome.message}`, "danger");
+					return;
+				}
+				await loadWorld(placeId);
+				loadList();
+				const fresh = document.getElementById("kadmin-world-action-status");
+				if (fresh) setStatus(fresh, "Saved.", "success");
+			});
+		}
+
+		for (const btn of detail.querySelectorAll<HTMLButtonElement>(
+			"[data-remove]",
+		)) {
+			btn.addEventListener("click", async () => {
+				btn.disabled = true;
+				const outcome = await sendMessage("adminRemovePlaceAiDisclosure", {
+					userId,
+					id: Number(btn.dataset.remove),
+				});
+				if (!outcome.ok) {
+					btn.disabled = false;
+					setStatus(actionStatus, `Failed: ${outcome.message}`, "danger");
+					return;
+				}
+				await loadWorld(placeId);
+				loadList();
+			});
+		}
+	}
+
+	loadBtn.addEventListener("click", () => {
+		const id = Number(input.value.trim());
+		if (Number.isInteger(id) && id > 0) loadWorld(id);
+		else setStatus(status, "Enter a valid world ID.", "danger");
+	});
+	input.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") loadBtn.click();
 	});
 
-	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
-	searchInput.addEventListener("input", () => {
-		if (searchDebounce) clearTimeout(searchDebounce);
-		searchDebounce = setTimeout(() => {
-			page = 1;
-			load();
-		}, 250);
-	});
-	document
-		.getElementById("kadmin-bans-refresh")!
-		.addEventListener("click", load);
-
-	load();
+	loadReports();
+	loadList();
 }
 
 function initAdminTab(userId: number) {
 	const inner = document.getElementById("kiln-admin-inner") as HTMLElement;
-
-	inner.innerHTML = `
-		<div class="d-flex gap-2 mb-3">
-			<button class="btn btn-primary flex-grow-1" id="kadmin-tab-general">General</button>
-			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-themes">Themes</button>
-			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-profile-themes">Profile Themes</button>
-			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-feedback">Feedback</button>
-			<button class="btn btn-secondary flex-grow-1" id="kadmin-tab-bans">Bans</button>
-		</div>
-		<div id="kadmin-general"></div>
-		<div id="kadmin-themes" style="display:none;"></div>
-		<div id="kadmin-profile-themes" style="display:none;"></div>
-		<div id="kadmin-feedback" style="display:none;"></div>
-		<div id="kadmin-bans" style="display:none;"></div>
-	`;
-
-	const generalPanel = document.getElementById("kadmin-general")!;
-	const themesPanel = document.getElementById("kadmin-themes")!;
-	const profileThemesPanel = document.getElementById("kadmin-profile-themes")!;
-	const feedbackPanel = document.getElementById("kadmin-feedback")!;
-	const bansPanel = document.getElementById("kadmin-bans")!;
-
-	const adminPanels: Record<string, HTMLElement> = {
-		general: generalPanel,
-		themes: themesPanel,
-		"profile-themes": profileThemesPanel,
-		feedback: feedbackPanel,
-		bans: bansPanel,
-	};
-	const adminTabBtns: Record<string, HTMLElement> = {
-		general: document.getElementById("kadmin-tab-general")!,
-		themes: document.getElementById("kadmin-tab-themes")!,
-		"profile-themes": document.getElementById("kadmin-tab-profile-themes")!,
-		feedback: document.getElementById("kadmin-tab-feedback")!,
-		bans: document.getElementById("kadmin-tab-bans")!,
-	};
-
-	let themesLoaded = false;
-	let feedbackLoaded = false;
-	let profileThemesLoaded = false;
-	let bansLoaded = false;
-	for (const [name, btn] of Object.entries(adminTabBtns)) {
-		btn.addEventListener("click", () => {
-			for (const [key, panel] of Object.entries(adminPanels)) {
-				panel.style.display = key === name ? "" : "none";
-			}
-			for (const [key, b] of Object.entries(adminTabBtns)) {
-				b.className = `btn flex-grow-1 ${key === name ? "btn-primary" : "btn-secondary"}`;
-			}
-			if (name === "themes" && !themesLoaded) {
-				themesLoaded = true;
-				renderPendingThemes();
-			}
-			if (name === "feedback" && !feedbackLoaded) {
-				feedbackLoaded = true;
-				initAdminFeedbackTab(userId, feedbackPanel);
-			}
-			if (name === "profile-themes" && !profileThemesLoaded) {
-				profileThemesLoaded = true;
-				initAdminProfileThemesTab(userId, profileThemesPanel);
-			}
-			if (name === "bans" && !bansLoaded) {
-				bansLoaded = true;
-				initAdminBansTab(userId, bansPanel);
-			}
-		});
-	}
-
-	initAdminGeneralTab(userId, generalPanel);
-
-	async function renderPendingThemes() {
-		themesPanel.innerHTML = `<p class="text-muted small">Loading…</p>`;
-		const result = await sendMessage("adminGetPendingThemes", userId);
-		if (!result.ok) {
-			themesPanel.innerHTML = `<p class="text-danger small">Failed to load: ${result.message}</p>`;
-			return;
-		}
-		const themes = result.data.data;
-
-		const deleteForm = `
-			<div class="card mb-3">
-				<div class="card-body py-2">
-					<div class="d-flex gap-2 align-items-center">
-						<input id="kadmin-delete-id" type="text" class="form-control form-control-sm" style="max-width:200px;" placeholder="Theme ID…" />
-						<button id="kadmin-delete-btn" class="btn btn-danger btn-sm">Delete</button>
-						<span id="kadmin-delete-status" class="small"></span>
-					</div>
-				</div>
-			</div>
-		`;
-
-		if (themes.length === 0) {
-			themesPanel.innerHTML = `${deleteForm}<p class="text-muted small">No pending themes.</p>`;
-		} else {
-			themesPanel.innerHTML =
-				deleteForm +
-				themes
-					.map(
-						(t) => `
-				<div class="card mb-3" data-theme-id="${t.id}">
-					<div class="card-body">
-						<div class="d-flex align-items-start gap-3">
-							<div class="d-flex gap-1 flex-shrink-0">
-								<div style="width:32px;height:32px;border-radius:6px;background:${escapeHtml(t.accentColor)};" title="Accent"></div>
-								<div style="width:32px;height:32px;border-radius:6px;background:${escapeHtml(t.navbarColor)};" title="Navbar"></div>
-							</div>
-							<div class="flex-grow-1 min-w-0">
-								<div class="fw-semibold">${escapeHtml(t.name)}</div>
-								<div class="text-muted small">ID: <code>${t.id}</code> &middot; User ID: ${t.userId}${t.fontFamily ? ` &middot; Font: ${escapeHtml(t.fontFamily)}` : ""}</div>
-								${
-									t.customCss
-										? `<pre id="css-pre-${t.id}" class="mt-2 mb-1 p-2 rounded bg-black text-success" style="font-size:0.7rem;max-height:120px;overflow:hidden;white-space:pre-wrap;">${t.customCss.replace(/</g, "&lt;").slice(0, 500)}${t.customCss.length > 500 ? "\n…" : ""}</pre><button class="btn btn-link btn-sm p-0 text-secondary" style="font-size:0.75rem;" data-expand="${t.id}">View full CSS (${t.customCss.length} chars)</button>`
-										: ""
-								}
-							</div>
-							<div class="d-flex gap-2 flex-shrink-0">
-								<button class="btn btn-success btn-sm" data-action="approve" data-id="${t.id}">Approve</button>
-								<button class="btn btn-danger btn-sm" data-action="decline" data-id="${t.id}">Decline</button>
-								<button class="btn btn-outline-danger btn-sm" data-action="delete" data-id="${t.id}">Delete</button>
-							</div>
-						</div>
-					</div>
-				</div>
-			`,
-					)
-					.join("");
-
-			for (const t of themes) {
-				if (!t.customCss) continue;
-				const expandBtn = themesPanel.querySelector<HTMLButtonElement>(
-					`[data-expand="${t.id}"]`,
-				);
-				const pre = document.getElementById(`css-pre-${t.id}`);
-				if (!expandBtn || !pre) continue;
-				expandBtn.addEventListener("click", () => {
-					pre.textContent = t.customCss!;
-					pre.style.maxHeight = "none";
-					expandBtn.remove();
-				});
-			}
-
-			for (const btn of themesPanel.querySelectorAll<HTMLButtonElement>(
-				"[data-action]",
-			)) {
-				btn.addEventListener("click", async () => {
-					const id = btn.dataset.id!;
-					const action = btn.dataset.action as "approve" | "decline" | "delete";
-					btn.disabled = true;
-					if (action === "delete") {
-						const result = await sendMessage("adminDeleteTheme", {
-							userId,
-							id,
-						});
-						if (result.ok) {
-							await renderPendingThemes();
-						} else {
-							btn.disabled = false;
-							btn.insertAdjacentHTML(
-								"afterend",
-								`<span class="text-danger small ms-2">Failed: ${result.message}</span>`,
-							);
-						}
-					} else {
-						const result = await sendMessage("adminReviewTheme", {
-							userId,
-							id,
-							action,
-						});
-						if (result.ok) {
-							await renderPendingThemes();
-						} else {
-							btn.disabled = false;
-							btn.insertAdjacentHTML(
-								"afterend",
-								`<span class="text-danger small ms-2">Failed: ${result.message}</span>`,
-							);
-						}
-					}
-				});
-			}
-		}
-
-		const deleteBtn = document.getElementById(
-			"kadmin-delete-btn",
-		) as HTMLButtonElement;
-		const deleteInput = document.getElementById(
-			"kadmin-delete-id",
-		) as HTMLInputElement;
-		const deleteStatus = document.getElementById(
-			"kadmin-delete-status",
-		) as HTMLElement;
-		deleteBtn.addEventListener("click", async () => {
-			const id = deleteInput.value.trim();
-			if (!id) return;
-			deleteBtn.disabled = true;
-			deleteStatus.textContent = "Deleting…";
-			deleteStatus.className = "small text-muted";
-			const result = await sendMessage("adminDeleteTheme", { userId, id });
-			if (result.ok) {
-				deleteInput.value = "";
-				deleteStatus.textContent = "Deleted.";
-				deleteStatus.className = "small text-success";
-				await renderPendingThemes();
-			} else {
-				deleteStatus.textContent = `Failed: ${result.message}`;
-				deleteStatus.className = "small text-danger";
-				deleteBtn.disabled = false;
-			}
-		});
-	}
-}
-
-const POLYTORIA_CDN_PREFIX = "https://cdn.polytoria.com/";
-
-function safeColor(value: string | null | undefined, fallback: string): string {
-	return value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : fallback;
-}
-
-function safeUrl(value: string): string | null {
-	try {
-		const parsed = new URL(value);
-		return parsed.protocol === "https:" || parsed.protocol === "http:"
-			? value
-			: null;
-	} catch {
-		return null;
-	}
-}
-
-function initAdminProfileThemesTab(userId: number, panel: HTMLElement) {
-	renderPendingProfileThemes();
-
-	async function renderPendingProfileThemes() {
-		panel.innerHTML = `<p class="text-muted small">Loading…</p>`;
-		const result = await sendMessage("adminGetPendingProfileThemes", userId);
-		if (!result.ok) {
-			panel.innerHTML = `<p class="text-danger small">Failed to load: ${result.message}</p>`;
-			return;
-		}
-		const themes = result.data.data;
-
-		const manualForm = `
-			<div class="card mb-3">
-				<div class="card-body py-2">
-					<div class="d-flex gap-2 align-items-center flex-wrap">
-						<input id="kadmin-pt-id" type="text" class="form-control form-control-sm" style="max-width:200px;" placeholder="User ID…" />
-						<button id="kadmin-pt-decline" class="btn btn-danger btn-sm">Decline</button>
-						<button id="kadmin-pt-delete" class="btn btn-outline-danger btn-sm">Delete</button>
-						<span id="kadmin-pt-status" class="small"></span>
-					</div>
-				</div>
-			</div>
-		`;
-
-		if (themes.length === 0) {
-			panel.innerHTML = `${manualForm}<p class="text-muted small">No pending profile themes.</p>`;
-		} else {
-			panel.innerHTML =
-				manualForm +
-				themes
-					.map((t) => {
-						const notes = t.notes ?? [];
-						const reviewed = t.updatedAt || t.createdAt;
-						const imageBlock = (
-							url: string | null | undefined,
-							label: string,
-							maxHeight: number,
-						) => {
-							if (!url) return "";
-							const external = !url.startsWith(POLYTORIA_CDN_PREFIX);
-							const safe = safeUrl(url);
-							const badge = `<span class="badge ${safe ? (external ? "bg-warning text-dark" : "bg-secondary") : "bg-danger"}">${label}${safe ? (external ? " (external)" : " (CDN)") : " (unsupported scheme)"}</span>`;
-							if (!safe) {
-								return `
-								<div class="mt-2">
-									<div class="d-flex align-items-center gap-2 mb-1">
-										${badge}
-										<code class="small" style="max-width:320px;overflow-wrap:anywhere;">${escapeHtml(url)}</code>
-									</div>
-								</div>
-							`;
-							}
-							return `
-								<div class="mt-2">
-									<div class="d-flex align-items-center gap-2 mb-1">
-										${badge}
-										<a class="small text-truncate" href="${escapeHtml(safe)}" target="_blank" rel="noreferrer noopener" style="max-width:320px;">${escapeHtml(safe)}</a>
-									</div>
-									<img src="${escapeHtml(safe)}" alt="" style="max-height:${maxHeight}px;max-width:100%;border-radius:6px;" />
-								</div>
-							`;
-						};
-
-						return `
-				<div class="card mb-3" data-pt-card="${t.userId}">
-					<div class="card-body">
-						<div class="d-flex align-items-start gap-3">
-							<div class="d-flex gap-1 flex-shrink-0">
-								<div style="width:32px;height:32px;border-radius:6px;background:${safeColor(t.accentColor, "#888888")};" title="Accent"></div>
-								<div style="width:32px;height:32px;border-radius:6px;background:${safeColor(t.navbarColor, "#888888")};" title="Navbar"></div>
-							</div>
-							<div class="flex-grow-1 min-w-0">
-								<div class="fw-semibold"><a href="https://polytoria.com/users/${t.userId}" target="_blank" rel="noreferrer noopener">User ${t.userId}</a></div>
-								<div class="text-muted small">${reviewed ? `Submitted ${new Date(reviewed).toLocaleString()}` : ""}${t.fontFamily ? ` &middot; Font: ${escapeHtml(t.fontFamily)}` : ""}${t.enabled ? "" : " &middot; hidden by owner"}</div>
-								${imageBlock(t.backgroundImage, "Background", 140)}
-								${imageBlock(t.cursorUrl, "Cursor", 48)}
-								${
-									notes.length
-										? `<div class="mt-2">
-												<div class="text-muted" style="font-size:0.7rem;">Notes (${notes.length})</div>
-												<div class="d-flex flex-column gap-1 mt-1">
-													${notes
-														.map(
-															(n) =>
-																`<div class="small px-2 py-1 rounded" style="color:${safeColor(n.color, "#000000")};background:${safeColor(n.background, "#ffff88")};white-space:pre-wrap;overflow-wrap:anywhere;">${escapeHtml(n.text)}</div>`,
-														)
-														.join("")}
-												</div>
-											</div>`
-										: ""
-								}
-								${
-									t.customCss
-										? `<pre id="pt-css-pre-${t.userId}" class="mt-2 mb-1 p-2 rounded bg-black text-success" style="font-size:0.7rem;max-height:120px;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere;">${escapeHtml(t.customCss.slice(0, 500))}${t.customCss.length > 500 ? "\n…" : ""}</pre><button class="btn btn-link btn-sm p-0 text-secondary" style="font-size:0.75rem;" data-pt-expand="${t.userId}">View full CSS (${t.customCss.length} chars)</button>`
-										: ""
-								}
-							</div>
-							<div class="d-flex gap-2 flex-shrink-0">
-								<button class="btn btn-success btn-sm" data-pt-action="approve" data-pt-user="${t.userId}">Approve</button>
-								<button class="btn btn-danger btn-sm" data-pt-action="decline" data-pt-user="${t.userId}">Decline</button>
-								<button class="btn btn-outline-danger btn-sm" data-pt-action="delete" data-pt-user="${t.userId}">Delete</button>
-							</div>
-						</div>
-					</div>
-				</div>
-			`;
-					})
-					.join("");
-
-			for (const t of themes) {
-				if (!t.customCss) continue;
-				const expandBtn = panel.querySelector<HTMLButtonElement>(
-					`[data-pt-expand="${t.userId}"]`,
-				);
-				const pre = document.getElementById(`pt-css-pre-${t.userId}`);
-				if (!expandBtn || !pre) continue;
-				expandBtn.addEventListener("click", () => {
-					pre.textContent = t.customCss!;
-					pre.style.maxHeight = "none";
-					expandBtn.remove();
-				});
-			}
-
-			for (const btn of panel.querySelectorAll<HTMLButtonElement>(
-				"[data-pt-action]",
-			)) {
-				btn.addEventListener("click", async () => {
-					const targetUserId = Number(btn.dataset.ptUser);
-					const action = btn.dataset.ptAction as
-						| "approve"
-						| "decline"
-						| "delete";
-					btn.disabled = true;
-					const result =
-						action === "delete"
-							? await sendMessage("adminDeleteProfileTheme", {
-									userId,
-									targetUserId,
-								})
-							: await sendMessage("adminReviewProfileTheme", {
-									userId,
-									targetUserId,
-									action,
-								});
-					if (result.ok) {
-						await renderPendingProfileThemes();
-					} else {
-						btn.disabled = false;
-						btn.insertAdjacentHTML(
-							"afterend",
-							`<span class="text-danger small ms-2">Failed: ${result.message}</span>`,
-						);
-					}
-				});
-			}
-		}
-
-		const manualInput = document.getElementById(
-			"kadmin-pt-id",
-		) as HTMLInputElement;
-		const manualStatus = document.getElementById(
-			"kadmin-pt-status",
-		) as HTMLElement;
-		const manualBtns: [HTMLButtonElement, "decline" | "delete"][] = [
-			[
-				document.getElementById("kadmin-pt-decline") as HTMLButtonElement,
-				"decline",
-			],
-			[
-				document.getElementById("kadmin-pt-delete") as HTMLButtonElement,
-				"delete",
-			],
-		];
-		for (const [btn, action] of manualBtns) {
-			btn.addEventListener("click", async () => {
-				const targetUserId = Number(manualInput.value.trim());
-				if (!targetUserId) return;
-				for (const [b] of manualBtns) b.disabled = true;
-				manualStatus.textContent =
-					action === "delete" ? "Deleting…" : "Declining…";
-				manualStatus.className = "small text-muted";
-				const result =
-					action === "delete"
-						? await sendMessage("adminDeleteProfileTheme", {
-								userId,
-								targetUserId,
-							})
-						: await sendMessage("adminReviewProfileTheme", {
-								userId,
-								targetUserId,
-								action,
-							});
-				if (result.ok) {
-					await renderPendingProfileThemes();
-					const freshStatus = document.getElementById("kadmin-pt-status");
-					if (freshStatus) {
-						freshStatus.textContent =
-							action === "delete" ? "Deleted." : "Declined.";
-						freshStatus.className = "small text-success";
-					}
-				} else {
-					manualStatus.textContent = `Failed: ${result.message}`;
-					manualStatus.className = "small text-danger";
-					for (const [b] of manualBtns) b.disabled = false;
-				}
-			});
-		}
-	}
+	initAdminWorldsTab(userId, inner);
 }
 
 const FEEDBACK_TYPE_LABELS = {
@@ -2130,213 +1701,6 @@ const FEEDBACK_TYPE_LABELS = {
 	feature: "Suggestion",
 	bug: "Bug Report",
 } as const;
-
-function initAdminFeedbackTab(userId: number, panel: HTMLElement) {
-	panel.innerHTML = `
-		<div class="d-flex gap-2 mb-2 flex-wrap">
-			<input id="kadmin-fb-search" type="text" class="form-control form-control-sm" style="max-width:220px;" placeholder="Search message or username…" />
-			<select id="kadmin-fb-type" class="form-select form-select-sm" style="max-width:150px;">
-				<option value="">All types</option>
-				<option value="general">General</option>
-				<option value="feature">Suggestion</option>
-				<option value="bug">Bug Report</option>
-			</select>
-			<select id="kadmin-fb-status" class="form-select form-select-sm" style="max-width:150px;">
-				<option value="">All statuses</option>
-				<option value="open">Open</option>
-				<option value="resolved">Resolved</option>
-			</select>
-			<div class="form-check align-self-center">
-				<input class="form-check-input" type="checkbox" id="kadmin-fb-unanswered">
-				<label class="form-check-label small" for="kadmin-fb-unanswered">No response yet</label>
-			</div>
-		</div>
-		<div id="kadmin-fb-list"></div>
-		<div id="kadmin-fb-pagination" class="d-flex justify-content-between align-items-center mt-2"></div>
-	`;
-
-	const searchInput = document.getElementById(
-		"kadmin-fb-search",
-	) as HTMLInputElement;
-	const typeSelect = document.getElementById(
-		"kadmin-fb-type",
-	) as HTMLSelectElement;
-	const statusSelect = document.getElementById(
-		"kadmin-fb-status",
-	) as HTMLSelectElement;
-	const unansweredCheck = document.getElementById(
-		"kadmin-fb-unanswered",
-	) as HTMLInputElement;
-	const list = document.getElementById("kadmin-fb-list")!;
-	const pagination = document.getElementById("kadmin-fb-pagination")!;
-
-	let page = 1;
-
-	async function load() {
-		list.innerHTML = `<p class="text-muted small">Loading…</p>`;
-		pagination.innerHTML = "";
-
-		const result = await sendMessage("adminGetFeedback", {
-			userId,
-			type: (typeSelect.value || undefined) as
-				| "feature"
-				| "general"
-				| "bug"
-				| undefined,
-			status: (statusSelect.value || undefined) as
-				| "open"
-				| "resolved"
-				| undefined,
-			unanswered: unansweredCheck.checked,
-			search: searchInput.value.trim() || undefined,
-			page,
-		});
-
-		if (!result.ok) {
-			list.innerHTML = `<p class="text-danger small">Failed to load: ${result.message}</p>`;
-			return;
-		}
-
-		const { data: items, meta } = result.data;
-		if (items.length === 0) {
-			list.innerHTML = `<p class="text-muted small">No feedback matches these filters.</p>`;
-			return;
-		}
-
-		list.innerHTML = items
-			.map((item) => {
-				const statusBadge =
-					item.status === "resolved"
-						? '<span class="badge bg-success">Resolved</span>'
-						: '<span class="badge bg-secondary">Open</span>';
-				const noResponseBadge = !item.response
-					? '<span class="badge bg-warning text-dark">No response</span>'
-					: "";
-				const metaLine = [
-					item.username && `From ${item.username}`,
-					item.version && `Kiln v${item.version}`,
-					new Date(item.createdAt).toLocaleString(),
-				]
-					.filter(Boolean)
-					.join(" · ");
-
-				return `
-					<div class="card mb-2${!item.response ? " border-warning" : ""}" data-feedback-id="${item.id}">
-						<div class="card-body">
-							<div class="d-flex justify-content-between align-items-start gap-2 mb-1">
-								<div class="d-flex gap-1 flex-wrap">
-									<span class="badge bg-primary">${FEEDBACK_TYPE_LABELS[item.type as keyof typeof FEEDBACK_TYPE_LABELS]}</span>
-									${statusBadge}
-									${noResponseBadge}
-								</div>
-								<div class="d-flex gap-2 flex-shrink-0">
-									<button class="btn btn-outline-secondary btn-sm" data-action="toggle-status" data-id="${item.id}">${item.status === "resolved" ? "Reopen" : "Resolve"}</button>
-									<button class="btn btn-outline-danger btn-sm" data-action="delete" data-id="${item.id}">Delete</button>
-								</div>
-							</div>
-							<div class="text-muted mb-2" style="font-size:0.72rem;">${metaLine}</div>
-							<div class="small mb-2">${item.message.replace(/</g, "&lt;")}</div>
-							${
-								item.response
-									? `<div class="alert border-secondary small py-2 px-2 mb-2"><strong>Your response:</strong> ${item.response.replace(/</g, "&lt;")}</div>`
-									: ""
-							}
-							<div class="d-flex gap-2">
-								<input type="text" class="form-control form-control-sm kadmin-fb-response-input" data-id="${item.id}" placeholder="${item.response ? "Revise response…" : "Write a response…"}" value="${item.response ? item.response.replace(/"/g, "&quot;") : ""}" />
-								<button class="btn btn-primary btn-sm flex-shrink-0" data-action="respond" data-id="${item.id}">Send</button>
-							</div>
-						</div>
-					</div>
-				`;
-			})
-			.join("");
-
-		pagination.innerHTML = `
-			<button class="btn btn-outline-secondary btn-sm" id="kadmin-fb-prev" ${meta.currentPage <= 1 ? "disabled" : ""}>← Prev</button>
-			<span class="text-muted small">Page ${meta.currentPage} of ${meta.totalPages} (${meta.totalCount} total)</span>
-			<button class="btn btn-outline-secondary btn-sm" id="kadmin-fb-next" ${meta.currentPage >= meta.totalPages ? "disabled" : ""}>Next →</button>
-		`;
-		document.getElementById("kadmin-fb-prev")?.addEventListener("click", () => {
-			page = Math.max(1, page - 1);
-			load();
-		});
-		document.getElementById("kadmin-fb-next")?.addEventListener("click", () => {
-			page += 1;
-			load();
-		});
-
-		for (const btn of list.querySelectorAll<HTMLButtonElement>(
-			"[data-action]",
-		)) {
-			btn.addEventListener("click", async () => {
-				const id = btn.dataset.id!;
-				const action = btn.dataset.action as
-					| "toggle-status"
-					| "delete"
-					| "respond";
-				btn.disabled = true;
-
-				if (action === "delete") {
-					const result = await sendMessage("adminDeleteFeedback", {
-						userId,
-						id,
-					});
-					if (result.ok) await load();
-					else btn.disabled = false;
-					return;
-				}
-
-				if (action === "toggle-status") {
-					const item = items.find((i) => i.id === id)!;
-					const result = await sendMessage(
-						item.status === "resolved"
-							? "adminReopenFeedback"
-							: "adminResolveFeedback",
-						{ userId, id },
-					);
-					if (result.ok) await load();
-					else btn.disabled = false;
-					return;
-				}
-
-				if (action === "respond") {
-					const input = list.querySelector<HTMLInputElement>(
-						`.kadmin-fb-response-input[data-id="${id}"]`,
-					)!;
-					const response = input.value.trim();
-					if (!response) {
-						btn.disabled = false;
-						return;
-					}
-					const result = await sendMessage("adminRespondFeedback", {
-						userId,
-						id,
-						response,
-					});
-					if (result.ok) await load();
-					else btn.disabled = false;
-				}
-			});
-		}
-	}
-
-	let searchDebounce: ReturnType<typeof setTimeout> | null = null;
-	searchInput.addEventListener("input", () => {
-		if (searchDebounce) clearTimeout(searchDebounce);
-		searchDebounce = setTimeout(() => {
-			page = 1;
-			load();
-		}, 250);
-	});
-	for (const el of [typeSelect, statusSelect, unansweredCheck]) {
-		el.addEventListener("change", () => {
-			page = 1;
-			load();
-		});
-	}
-
-	load();
-}
 
 function renderInline(text: string): string {
 	return text
@@ -2411,6 +1775,17 @@ function initReviewMigration(userId: number) {
 	const fallbackInput = document.getElementById(
 		"kiln-migrate-fallback",
 	) as HTMLInputElement;
+	void _reviewUpvoteThreshold.getValue().then((stored) => {
+		thresholdInput.value = String(stored);
+	});
+	thresholdInput.addEventListener("change", () => {
+		const value = Math.min(
+			5,
+			Math.max(1, Math.round(Number(thresholdInput.value) || 4)),
+		);
+		thresholdInput.value = String(value);
+		void _reviewUpvoteThreshold.setValue(value);
+	});
 	const statusEl = document.getElementById("kiln-migrate-status")!;
 	const progressWrap = document.getElementById("kiln-migrate-progress-wrap")!;
 	const progressBar = document.getElementById("kiln-migrate-progress")!;
@@ -2432,6 +1807,7 @@ function initReviewMigration(userId: number) {
 			Math.max(1, Math.round(Number(thresholdInput.value) || 4)),
 		);
 		thresholdInput.value = String(threshold);
+		await _reviewUpvoteThreshold.setValue(threshold);
 		const fallback = fallbackInput.value.trim();
 
 		migrateBtn.disabled = true;
@@ -2477,6 +1853,16 @@ function initReviewMigration(userId: number) {
 		for (const review of pending) {
 			const world = escapeHtml(review.placeName ?? `World #${review.placeId}`);
 
+			if (review.anonymous) {
+				skipped++;
+				appendLog(
+					`<span class="text-muted">${world}: skipped (anonymous reviews stay on Kiln)</span>`,
+				);
+				done++;
+				updateProgress();
+				continue;
+			}
+
 			if (review.approvalStatus === "declined") {
 				skipped++;
 				appendLog(
@@ -2517,6 +1903,7 @@ function initReviewMigration(userId: number) {
 			const marked = await sendMessage("markPlaceReviewMigrated", {
 				userId,
 				reviewId: review.id,
+				nativeRatingId: created.data.id ? Number(created.data.id) : null,
 			});
 
 			if (!marked.ok) {
@@ -2568,8 +1955,14 @@ async function initSyncTab() {
 		!isBanned &&
 		sessions.some((s) => s.userId === user.userId && s.state === "verified");
 
+	const addonReleased = getFlag(config.flags, "general.addon.released");
+
 	const linkedFeatures = (data.preferences as SettingData[]).filter(
-		(s) => !s.hide && s.requiresSync,
+		(s) =>
+			!s.hide &&
+			config.flags[`features.${s.id}.hide`] !== true &&
+			s.requiresSync &&
+			(addonReleased || !s.requiresAddon),
 	);
 
 	const featureListHtml = linkedFeatures
@@ -2618,8 +2011,20 @@ async function initSyncTab() {
 		? "Unlocked Features"
 		: "Features Requiring a Linked Account";
 
+	const sectionOpen = (id: string, title: string) => `
+		<div class="card mb-2">
+			<div class="card-header fw-semibold d-flex justify-content-between align-items-center" id="${id}-header" style="cursor:pointer;">
+				<span>${title}</span>
+				<i class="fas fa-chevron-down text-muted" id="${id}-chevron" style="font-size:0.75rem;transition:transform 200ms;transform:rotate(180deg);"></i>
+			</div>
+			<div id="${id}-body" class="card-body p-2">`;
+	const sectionClose = `
+			</div>
+		</div>`;
+
 	container.innerHTML = `
 		${linksDisabledNotice}
+		${sectionOpen("kiln-sync-account", "Linked Account")}
 		<div class="card mb-2">
 			<div class="card-body d-flex align-items-center gap-3">
 				${statusIcon}
@@ -2645,7 +2050,33 @@ async function initSyncTab() {
 			<div id="kiln-sync-sessions-body" style="display:none;">
 				<div class="card-body p-0" id="kiln-sync-sessions-list"></div>
 			</div>
-		</div>
+		</div>`
+				: ""
+		}
+		${sectionClose}
+		${
+			isLinked
+				? `
+		${sectionOpen("kiln-sync-extras", "Extras")}
+		${
+			addonReleased
+				? `
+		<div class="card mt-2">
+			<div class="card-body">
+				<div class="fw-semibold small">Creator Addon</div>
+				<div class="text-muted mb-2" style="font-size:0.75rem;">
+					Download the Kiln addon for the Polytoria creator. Each download is linked to your account with its own key, so install the file as-is and don't share it.
+				</div>
+				${import.meta.env.MODE === "development" ? `<div class="text-warning mb-2" style="font-size:0.72rem;">Dev mode: downloads are built live from apps/creator-addon on your local API.</div>` : ""}
+				<div class="d-flex align-items-center gap-2 flex-wrap">
+					<button id="kiln-addon-download" class="btn btn-primary btn-sm">Download Creator Addon</button>
+					<span id="kiln-addon-status" class="small"></span>
+				</div>
+				<div id="kiln-addon-installs" class="mt-3"></div>
+			</div>
+		</div>`
+				: ""
+		}
 		<div class="card mt-2">
 			<div class="card-body d-flex align-items-center justify-content-between gap-3">
 				<div>
@@ -2659,7 +2090,7 @@ async function initSyncTab() {
 			<div class="card-body">
 				<div class="fw-semibold small">Migrate World Reviews to Polytoria</div>
 				<div class="text-muted mb-2" style="font-size:0.75rem;">
-					Polytoria now has native world reviews (upvote/downvote). This recreates each of your Kiln reviews on Polytoria. For now, all migrated world reviews will still show up in Kiln's review tab until the feature is fully deprecated.
+					Polytoria now has native world reviews (upvote/downvote). This recreates each of your public Kiln reviews on Polytoria, and Kiln keeps adding your star rating to them. Anonymous reviews are never moved. The star threshold below is also used when you post new reviews.
 				</div>
 				<div class="d-flex align-items-center gap-2 flex-wrap">
 					<label class="small mb-0" for="kiln-migrate-threshold">Treat ratings of</label>
@@ -2680,6 +2111,7 @@ async function initSyncTab() {
 				</div>
 			</div>
 		</div>
+		${sectionClose}
 		`
 				: ""
 		}
@@ -2690,6 +2122,20 @@ async function initSyncTab() {
 			<a href="https://kiln.indexx.dev/privacy" target="_blank" class="text-muted">Privacy Policy</a>.
 		</div>
 	`;
+
+	for (const id of ["kiln-sync-account", "kiln-sync-extras"]) {
+		const header = document.getElementById(`${id}-header`);
+		const body = document.getElementById(`${id}-body`);
+		const chevron = document.getElementById(`${id}-chevron`);
+		if (!header || !body || !chevron) continue;
+		header.addEventListener("click", () => {
+			const collapsed = body.style.display === "none";
+			body.style.display = collapsed ? "" : "none";
+			chevron.style.transform = collapsed ? "rotate(180deg)" : "";
+			header.style.borderRadius = collapsed ? "" : "inherit";
+			header.style.borderBottom = collapsed ? "" : "none";
+		});
+	}
 
 	document
 		.getElementById("kiln-export-data-btn")
@@ -2726,6 +2172,111 @@ async function initSyncTab() {
 		});
 
 	if (user && isLinked) initReviewMigration(user.userId);
+	if (user && isLinked && addonReleased) initAddonInstalls(user.userId);
+
+	function initAddonInstalls(userId: number) {
+		const downloadBtn = document.getElementById(
+			"kiln-addon-download",
+		) as HTMLButtonElement;
+		const status = document.getElementById("kiln-addon-status")!;
+		const listEl = document.getElementById("kiln-addon-installs")!;
+
+		const setStatus = (
+			text: string,
+			tone: "muted" | "danger" | "success" = "muted",
+		) => {
+			status.textContent = text;
+			status.className = `small text-${tone}`;
+		};
+
+		async function renderList() {
+			listEl.innerHTML = `<div class="text-muted small">Loading…</div>`;
+			const res = await sendMessage("getKilnAddonInstalls", userId);
+			if (!res.ok) {
+				listEl.innerHTML = `<div class="text-danger small">Failed to load linked editors: ${escapeHtml(res.message)}</div>`;
+				return;
+			}
+
+			const installs = res.data.data;
+			if (installs.length === 0) {
+				listEl.innerHTML = `<div class="text-muted small">No linked editors yet.</div>`;
+				return;
+			}
+
+			listEl.innerHTML = `
+				<div class="text-muted mb-1" style="font-size:0.72rem;">Linked editors</div>
+				${installs
+					.map(
+						(install, i) => `
+					<div class="d-flex align-items-center gap-2 py-2${i < installs.length - 1 ? " border-bottom border-secondary" : ""}">
+						<i class="fas fa-puzzle-piece text-muted" style="font-size:0.85rem;flex-shrink:0;"></i>
+						<div class="flex-grow-1 min-w-0">
+							<div class="small">Installed ${install.createdAt ? new Date(install.createdAt).toLocaleDateString() : "unknown"}</div>
+							<div class="text-muted" style="font-size:0.72rem;">
+								${install.lastUsedAt ? `Last used ${new Date(install.lastUsedAt).toLocaleDateString()}` : "Never used"}
+							</div>
+						</div>
+						<button class="btn btn-outline-danger btn-sm py-0 kiln-addon-revoke" data-install-id="${install.id}" style="font-size:0.75rem;">Revoke</button>
+					</div>
+				`,
+					)
+					.join("")}
+			`;
+
+			for (const btn of listEl.querySelectorAll<HTMLButtonElement>(
+				".kiln-addon-revoke",
+			)) {
+				btn.addEventListener("click", async () => {
+					if (
+						!confirm(
+							"Revoke this editor? The addon installed from this download will stop working immediately.",
+						)
+					)
+						return;
+					btn.disabled = true;
+					btn.textContent = "Revoking…";
+					const r = await sendMessage("revokeKilnAddonInstall", {
+						userId,
+						id: btn.dataset.installId!,
+					});
+					if (r.ok) {
+						await renderList();
+					} else {
+						btn.disabled = false;
+						btn.textContent = "Revoke";
+						setStatus("Failed to revoke.", "danger");
+					}
+				});
+			}
+		}
+
+		downloadBtn.addEventListener("click", async () => {
+			downloadBtn.disabled = true;
+			setStatus("Preparing…");
+			const res = await sendMessage("downloadKilnAddon", userId);
+			downloadBtn.disabled = false;
+			if (!res.ok) {
+				setStatus(res.message, "danger");
+				return;
+			}
+
+			const { content, fileName, version } = res.data.data;
+			const bytes = Uint8Array.from(atob(content), (c) => c.charCodeAt(0));
+			const url = URL.createObjectURL(
+				new Blob([bytes], { type: "application/zip" }),
+			);
+			const link = document.createElement("a");
+			link.href = url;
+			link.download = fileName;
+			link.click();
+			URL.revokeObjectURL(url);
+
+			setStatus(`Downloaded v${version}.`, "success");
+			await renderList();
+		});
+
+		renderList();
+	}
 
 	document
 		.getElementById("kiln-sync-action-btn")

@@ -24,9 +24,13 @@ export const ExtensionConfigSchema = z.object({
 		maxNLFItems: z.number().positive().default(50),
 		maxBlockedTraders: z.number().positive().default(200),
 		maxPublishedThemes: z.number().positive().default(15),
+		maxPublishedAddons: z.number().positive().default(5),
 		maxPinnedAchievements: z.number().positive().default(5),
 		minReviewPlaytimeMinutes: z.number().nonnegative().default(5),
 		maxStarredImages: z.number().positive().default(100),
+		maxProfileThemeSlots: z.number().positive().default(3),
+		maxProfileThemeStickers: z.number().positive().default(30),
+		maxProfileThemeNotes: z.number().positive().default(10),
 	}),
 	users: z.object({
 		generativeAI: z.array(z.number()),
@@ -227,6 +231,31 @@ export const UserTimezoneApi = z.object({
 });
 export type UserTimezoneApi = z.infer<typeof UserTimezoneApi>;
 
+export const UserEditingStatusApi = z.object({
+	data: z.object({ editing: z.boolean() }),
+});
+export type UserEditingStatusApi = z.infer<typeof UserEditingStatusApi>;
+
+export const WorldEditTimeApi = z.object({
+	data: z.array(z.object({ name: z.string(), totalSeconds: z.number() })),
+});
+export type WorldEditTimeApi = z.infer<typeof WorldEditTimeApi>;
+
+export const UserDonationApi = z.object({
+	data: z.object({ url: z.string().nullable() }),
+});
+export type UserDonationApi = z.infer<typeof UserDonationApi>;
+
+export const PlaceAiDisclosuresApi = z.object({
+	data: z.object({
+		assisted: z.boolean(),
+		generated: z.boolean(),
+		icon: z.boolean(),
+		thumbnails: z.number(),
+	}),
+});
+export type PlaceAiDisclosuresApi = z.infer<typeof PlaceAiDisclosuresApi>;
+
 export const LikeStatusApi = z.object({
 	data: z.object({ liked: z.boolean() }),
 });
@@ -272,6 +301,61 @@ export type AdminDeletePlaceReviewApi = z.infer<
 	typeof AdminDeletePlaceReviewApi
 >;
 
+export const PlaceAiReportApi = z.object({
+	data: z.object({ ok: z.boolean() }),
+});
+export type PlaceAiReportApi = z.infer<typeof PlaceAiReportApi>;
+
+export const AdminAiReportsApi = z.object({
+	data: z.array(
+		z.object({
+			id: z.string(),
+			placeId: z.number(),
+			userId: z.number(),
+			kind: z.enum(["missing", "incorrect"]),
+			details: z.string().nullable(),
+			createdAt: z.string(),
+		}),
+	),
+});
+export type AdminAiReportsApi = z.infer<typeof AdminAiReportsApi>;
+
+export const AdminPlaceImage = z.object({ hash: z.string(), url: z.string() });
+
+export const AdminPlaceAiDisclosuresApi = z.object({
+	data: z.object({
+		images: z.object({
+			icon: AdminPlaceImage.nullable(),
+			thumbnails: z.array(AdminPlaceImage),
+		}),
+		disclosures: z.array(
+			z.object({
+				id: z.number(),
+				placeId: z.number(),
+				kind: z.enum(["icon", "thumbnail", "assisted", "generated"]),
+				imageHash: z.string(),
+				active: z.boolean(),
+				createdAt: z.string(),
+			}),
+		),
+	}),
+});
+export type AdminPlaceAiDisclosuresApi = z.infer<
+	typeof AdminPlaceAiDisclosuresApi
+>;
+
+export const AdminAiDisclosedPlacesApi = z.object({
+	data: z.array(z.object({ placeId: z.number(), kinds: z.array(z.string()) })),
+});
+export type AdminAiDisclosedPlacesApi = z.infer<
+	typeof AdminAiDisclosedPlacesApi
+>;
+
+export const AdminAiDisclosureOkApi = z.object({
+	data: z.object({ ok: z.boolean() }),
+});
+export type AdminAiDisclosureOkApi = z.infer<typeof AdminAiDisclosureOkApi>;
+
 export const AdminBanUserApi = z.object({
 	data: z.object({ ok: z.boolean(), banned: z.boolean() }),
 });
@@ -285,6 +369,7 @@ export const AdminBannedUsersApi = z.object({
 			bannedAt: z.string(),
 			reason: z.string().nullable(),
 			version: z.string().nullable(),
+			linked: z.boolean(),
 			linkedAccounts: z
 				.array(
 					z.object({
@@ -307,24 +392,49 @@ export const AdminBannedUsersApi = z.object({
 });
 export type AdminBannedUsersApi = z.infer<typeof AdminBannedUsersApi>;
 
-export const AdminConfigApi = z.object({ data: ExtensionConfigSchema });
-export type AdminConfigApi = z.infer<typeof AdminConfigApi>;
-
-export const AdminConfigListApi = z.object({
-	data: z.array(
-		z.object({
-			version: z.string(),
-			data: ExtensionConfigSchema,
-			updatedAt: z.string().nullable(),
-		}),
-	),
+export const AdminUserRiskApi = z.object({
+	data: z.object({
+		userId: z.number(),
+		username: z.string().nullable(),
+		trusted: z.boolean(),
+		profileChecked: z.boolean(),
+		score: z.number(),
+		verdict: z.enum(["allow", "review", "hold"]),
+		factors: z.array(
+			z.object({
+				factor: z.string(),
+				weight: z.number(),
+				detail: z.string().optional(),
+			}),
+		),
+		thresholds: z.object({ review: z.number(), hold: z.number() }),
+		moderationTier: z.enum(["lenient", "standard", "strict"]),
+		events: z.array(
+			z.object({
+				kind: z.string(),
+				weight: z.number(),
+				detail: z.string().nullable(),
+				createdAt: z.string(),
+			}),
+		),
+	}),
 });
-export type AdminConfigListApi = z.infer<typeof AdminConfigListApi>;
+export type AdminUserRiskApi = z.infer<typeof AdminUserRiskApi>;
 
-export const AdminDeleteConfigApi = z.object({
-	data: z.object({ ok: z.boolean() }),
+export const AdminTrustUserApi = z.object({
+	data: z.object({ ok: z.boolean(), trusted: z.boolean() }),
 });
-export type AdminDeleteConfigApi = z.infer<typeof AdminDeleteConfigApi>;
+export type AdminTrustUserApi = z.infer<typeof AdminTrustUserApi>;
+
+export const AdminAdjustRiskApi = z.object({
+	data: z.object({ ok: z.boolean(), adjustment: z.number() }),
+});
+export type AdminAdjustRiskApi = z.infer<typeof AdminAdjustRiskApi>;
+
+export const AdminClearRiskHitsApi = z.object({
+	data: z.object({ ok: z.boolean(), cleared: z.number() }),
+});
+export type AdminClearRiskHitsApi = z.infer<typeof AdminClearRiskHitsApi>;
 
 export const UnpublishThemeApi = z.object({
 	data: z.object({ ok: z.boolean() }),
@@ -366,6 +476,11 @@ export const PROFILE_AMBIENT_TYPES = [
 	"bubbles",
 	"fireflies",
 	"petals",
+	"bats",
+	"ghosts",
+	"spiders",
+	"leaves",
+	"feathers",
 ] as const;
 
 export const ProfileAmbient = z.object({
@@ -386,8 +501,21 @@ export const ProfileCardStyle = z.object({
 export type ProfileCardStyle = z.infer<typeof ProfileCardStyle>;
 
 export const ProfilePointerEffects = z.object({
-	click: z.enum(["sparkles", "hearts", "ripples", "confetti"]).optional(),
-	trail: z.enum(["sparkles", "dots", "hearts", "glow"]).optional(),
+	click: z
+		.enum([
+			"sparkles",
+			"hearts",
+			"ripples",
+			"confetti",
+			"pumpkins",
+			"bats",
+			"leaves",
+			"acorns",
+		])
+		.optional(),
+	trail: z
+		.enum(["sparkles", "dots", "hearts", "glow", "ghosts", "leaves"])
+		.optional(),
 	color: z.string().optional(),
 });
 export type ProfilePointerEffects = z.infer<typeof ProfilePointerEffects>;
@@ -418,6 +546,7 @@ export type GetPublishedThemeApi = z.infer<typeof GetPublishedThemeApi>;
 const GalleryTheme = z.object({
 	id: z.string(),
 	userId: z.number(),
+	username: z.string().nullable().optional(),
 	name: z.string(),
 	accentColor: z.string(),
 	navbarColor: z.string(),
@@ -426,6 +555,7 @@ const GalleryTheme = z.object({
 	thumbnailUrl: z.string().nullable().optional(),
 	effects: z.array(PublishedThemeEffect).nullable().optional(),
 	hasCustomCss: z.boolean().optional(),
+	inaccessible: z.boolean().optional(),
 });
 export const ThemeGalleryApi = z.object({
 	data: z.array(GalleryTheme),
@@ -442,6 +572,91 @@ export const ReportThemeApi = z.object({
 	data: z.object({ ok: z.boolean() }),
 });
 export type ReportThemeApi = z.infer<typeof ReportThemeApi>;
+
+export const AddonCapability = z.object({
+	id: z.string(),
+	label: z.string(),
+	description: z.string(),
+	risk: z.enum(["low", "medium", "high"]),
+});
+export type AddonCapability = z.infer<typeof AddonCapability>;
+
+export const LibraryAddon = z.object({
+	id: z.string(),
+	identifier: z.string(),
+	userId: z.number(),
+	username: z.string().nullable(),
+	downloads: z.number(),
+	updatedAt: z.string(),
+	name: z.string(),
+	description: z.string(),
+	version: z.string(),
+	changelog: z.string().nullable(),
+	sha256: z.string(),
+	sizeBytes: z.number(),
+	capabilities: z.array(AddonCapability),
+	domains: z.array(z.string()),
+	reviewedAt: z.string().nullable(),
+});
+export type LibraryAddon = z.infer<typeof LibraryAddon>;
+
+export const AddonLibraryApi = z.object({
+	data: z.array(LibraryAddon),
+	meta: z.object({
+		currentPage: z.number(),
+		perPage: z.number(),
+		totalPages: z.number(),
+		totalCount: z.number(),
+		disclaimer: z.string(),
+	}),
+});
+export type AddonLibraryApi = z.infer<typeof AddonLibraryApi>;
+
+export const MyAddonsApi = z.object({
+	data: z.object({
+		items: z.array(
+			z.object({
+				id: z.string(),
+				identifier: z.string(),
+				status: z.enum(["active", "removed", "deleted"]),
+				removalReason: z.string().nullable(),
+				downloads: z.number(),
+				name: z.string(),
+				listed: z.boolean(),
+				liveVersion: z.string().nullable(),
+				latestVersion: z.string().nullable(),
+				latestStatus: z
+					.enum(["pending", "approved", "declined", "superseded"])
+					.nullable(),
+				declineReason: z.string().nullable(),
+				capabilities: z.array(AddonCapability),
+			}),
+		),
+		used: z.number(),
+		limit: z.number(),
+		canPublish: z.boolean(),
+	}),
+});
+export type MyAddonsApi = z.infer<typeof MyAddonsApi>;
+
+export const PublishAddonApi = z.object({
+	data: z.object({
+		id: z.string(),
+		versionId: z.string(),
+		identifier: z.string(),
+		version: z.string(),
+		sha256: z.string(),
+		isUpdate: z.boolean(),
+		capabilities: z.array(AddonCapability),
+		domains: z.array(z.string()),
+	}),
+});
+export type PublishAddonApi = z.infer<typeof PublishAddonApi>;
+
+export const AddonOkApi = z.object({
+	data: z.object({ ok: z.boolean() }),
+});
+export type AddonOkApi = z.infer<typeof AddonOkApi>;
 
 export const ProfileLayout = z.object({
 	order: z.array(z.string()),
@@ -493,6 +708,12 @@ export const ProfileNote = z.object({
 });
 export type ProfileNote = z.infer<typeof ProfileNote>;
 
+export const ProfileVideo = z.object({
+	id: z.string(),
+	videoId: z.string(),
+});
+export type ProfileVideo = z.infer<typeof ProfileVideo>;
+
 export const ProfileAvatarBackdrop = z.discriminatedUnion("type", [
 	z.object({
 		type: z.literal("gradient"),
@@ -529,9 +750,11 @@ const ProfileTheme = z.object({
 	ambient: ProfileAmbient.nullable().optional(),
 	stickers: z.array(ProfileSticker).nullable().optional(),
 	notes: z.array(ProfileNote).nullable().optional(),
+	videos: z.array(ProfileVideo).nullable().optional(),
 	cardStyle: ProfileCardStyle.nullable().optional(),
 	avatarBackdrop: ProfileAvatarBackdrop.nullable().optional(),
 	pointerEffects: ProfilePointerEffects.nullable().optional(),
+	inaccessible: z.boolean().optional(),
 	enabled: z.number(),
 	approvalStatus: z.string(),
 	createdAt: z.string().nullable().optional(),
@@ -542,6 +765,27 @@ const ProfileTheme = z.object({
  *  requester. */
 export const ProfileThemeApi = z.object({ data: ProfileTheme.nullable() });
 export type ProfileThemeApi = z.infer<typeof ProfileThemeApi>;
+
+const ProfileThemeSlot = z.object({
+	slot: z.number(),
+	name: z.string().nullable().optional(),
+	live: z.boolean(),
+	theme: ProfileTheme.omit({
+		userId: true,
+		inaccessible: true,
+		enabled: true,
+		approvalStatus: true,
+		createdAt: true,
+		updatedAt: true,
+	}),
+	updatedAt: z.string().nullable().optional(),
+});
+export type ProfileThemeSlot = z.infer<typeof ProfileThemeSlot>;
+
+export const ProfileThemeSlotsApi = z.object({
+	data: z.array(ProfileThemeSlot),
+});
+export type ProfileThemeSlotsApi = z.infer<typeof ProfileThemeSlotsApi>;
 
 export const ProfileThemeOkApi = z.object({
 	data: z.object({ ok: z.boolean() }),
@@ -677,6 +921,8 @@ const PlaceReview = z.object({
 	rating: z.number().min(1).max(5),
 	body: z.string().nullable(),
 	migrated: z.boolean(),
+	nativeRatingId: z.number().nullable(),
+	public: z.boolean(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
 	replies: z.array(PlaceReviewReply),
@@ -799,6 +1045,83 @@ export const MarkNotificationSeenApi = z.object({
 });
 export type MarkNotificationSeenApi = z.infer<typeof MarkNotificationSeenApi>;
 
+export const MESSAGE_REPORT_REASONS = [
+	"harassment",
+	"hate",
+	"sexual",
+	"scam",
+	"spam",
+	"threat",
+	"other",
+] as const;
+export type MessageReportReason = (typeof MESSAGE_REPORT_REASONS)[number];
+
+export const MAX_DIRECT_MESSAGE_LENGTH = 1000;
+
+const DirectMessage = z.object({
+	id: z.number(),
+	senderId: z.number(),
+	recipientId: z.number(),
+	body: z.string(),
+	imageAssetId: z.number().nullable().default(null),
+	imageUrl: z.string().nullable().default(null),
+	status: z.enum(["approved", "pending", "declined"]),
+	createdAt: z.string(),
+	readAt: z.string().nullable(),
+});
+export type DirectMessage = z.infer<typeof DirectMessage>;
+
+export const MessagingStatusApi = z.object({
+	data: z.object({
+		enabled: z.boolean(),
+		canMessage: z.boolean(),
+		unread: z.number(),
+	}),
+});
+export type MessagingStatusApi = z.infer<typeof MessagingStatusApi>;
+
+export const MessagingSettingsApi = z.object({
+	data: z.object({ enabled: z.boolean() }),
+});
+
+const DirectConversation = z.object({
+	userId: z.number(),
+	username: z.string(),
+	thumbnail: z.string().nullable(),
+	unread: z.number(),
+	blocked: z.boolean(),
+	lastMessage: DirectMessage,
+});
+export type DirectConversation = z.infer<typeof DirectConversation>;
+
+export const DirectConversationsApi = z.object({
+	data: z.array(DirectConversation),
+});
+export type DirectConversationsApi = z.infer<typeof DirectConversationsApi>;
+
+export const DirectMessagesApi = z.object({
+	data: z.object({
+		userId: z.number(),
+		username: z.string(),
+		thumbnail: z.string().nullable(),
+		blocked: z.boolean(),
+		unavailableReason: z.string().nullable(),
+		messages: z.array(DirectMessage),
+		hasMore: z.boolean(),
+	}),
+});
+export type DirectMessagesApi = z.infer<typeof DirectMessagesApi>;
+
+export const SendDirectMessageApi = z.object({ data: DirectMessage });
+export type SendDirectMessageApi = z.infer<typeof SendDirectMessageApi>;
+
+export const ReportDirectMessageApi = z.object({
+	data: z.object({ id: z.string() }),
+});
+export type ReportDirectMessageApi = z.infer<typeof ReportDirectMessageApi>;
+
+export const NullDataApi = z.object({ data: z.null() });
+
 const AuthSession = z.object({
 	id: z.string(),
 	createdAt: z.string().nullable(),
@@ -809,6 +1132,26 @@ const AuthSession = z.object({
 });
 export const AuthSessionsApi = z.object({ data: z.array(AuthSession) });
 export type AuthSessionsApi = z.infer<typeof AuthSessionsApi>;
+
+const AddonInstall = z.object({
+	id: z.string(),
+	createdAt: z.string().nullable(),
+	lastUsedAt: z.coerce.date().nullable(),
+});
+
+export const AddonInstallsApi = z.object({ data: z.array(AddonInstall) });
+export type AddonInstallsApi = z.infer<typeof AddonInstallsApi>;
+
+export const DownloadAddonApi = z.object({
+	data: z.object({
+		id: z.string(),
+		createdAt: z.string().nullable(),
+		version: z.string(),
+		fileName: z.string(),
+		content: z.string(),
+	}),
+});
+export type DownloadAddonApi = z.infer<typeof DownloadAddonApi>;
 
 const ActivitySearchResult = z.object({
 	userId: z.number(),
@@ -823,6 +1166,30 @@ export const ActivitySearchApi = z.object({
 	data: z.array(ActivitySearchResult),
 });
 export type ActivitySearchApi = z.infer<typeof ActivitySearchApi>;
+
+export const ActivityUserApi = z.object({
+	data: ActivitySearchResult.nullable(),
+});
+export type ActivityUserApi = z.infer<typeof ActivityUserApi>;
+
+export const UserProfileApi = z.object({
+	data: z.object({
+		userId: z.number(),
+		polytoria: ActivitySearchResult.nullable().catch(null),
+		kiln: z
+			.object({
+				linkedAt: z.string().nullable(),
+				timezone: z.string().nullable(),
+				donationUrl: z.string().nullable(),
+				editing: z.boolean(),
+				likes: z.number(),
+				pinnedAchievements: z.array(z.number()),
+				publicOutfits: z.array(PublicOutfit),
+			})
+			.nullable(),
+	}),
+});
+export type UserProfileApi = z.infer<typeof UserProfileApi>;
 
 export const AvatarHashesApi = z.object({
 	data: z.record(z.string(), z.string()),
@@ -972,6 +1339,8 @@ export const DataExportApi = z.object({
 				syncedAt: z.string(),
 			}),
 		),
+		addons: z.array(z.record(z.string(), z.unknown())).optional(),
+		addonVersions: z.array(z.record(z.string(), z.unknown())).optional(),
 		themes: z.array(
 			z.object({
 				id: z.string(),

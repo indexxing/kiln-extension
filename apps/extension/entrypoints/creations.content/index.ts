@@ -16,6 +16,7 @@
 
 import { runFeature } from "@/utils/runFeature";
 import { _showKilnDisclosures, preferences } from "@/utils/storage";
+import * as addons from "./addons";
 import * as discovery from "./discovery";
 import * as models from "./models";
 import * as uploads from "./uploads";
@@ -28,6 +29,8 @@ const PENDING_ASSET_APPROVAL_PATHS = [
 	"/create/gamePass",
 	"/create/consumable",
 ];
+
+const AUTO_PRIVATE_PATHS = ["/create/audio", "/create/image", "/create/mesh"];
 
 export default defineContentScript({
 	matches: [
@@ -53,6 +56,16 @@ export default defineContentScript({
 							discovery.audioPreviews(showDisclosures),
 						);
 					}
+
+					if (values.enabled.includes("toolboxPageJump")) {
+						runFeature("toolboxPageJump", () => discovery.toolboxPageJump());
+					}
+
+					if (values.enabled.includes("addonLibrary")) {
+						runFeature("addonLibrary", () =>
+							addons.addonLibrary(user.userId, showDisclosures),
+						);
+					}
 				} else if (window.location.pathname.includes("models")) {
 					if (values.enabled.includes("modelTreeInspector")) {
 						runFeature("modelTreeInspector", () =>
@@ -60,9 +73,24 @@ export default defineContentScript({
 						);
 					}
 				} else {
+					if (
+						values.enabled.includes("addonLibrary") &&
+						window.location.pathname.startsWith("/create/addon")
+					) {
+						runFeature("addonLibrary", () =>
+							addons.addonPublisher(user.userId, showDisclosures),
+						);
+					}
+
 					if (values.enabled.includes("v2WorldLabels")) {
 						runFeature("v2WorldLabels", () =>
 							worlds.v2WorldLabels(showDisclosures),
+						);
+					}
+
+					if (values.enabled.includes("worldEditTime")) {
+						runFeature("worldEditTime", () =>
+							worlds.worldEditTime(user.userId, showDisclosures),
 						);
 					}
 
@@ -82,6 +110,21 @@ export default defineContentScript({
 					) {
 						runFeature("assetApprovedNotifications", () =>
 							uploads.trackPendingAssetApprovals(),
+						);
+					}
+
+					if (
+						values.enabled.includes("autoPrivateAssetsOnUpload") &&
+						AUTO_PRIVATE_PATHS.some((path) =>
+							window.location.pathname.startsWith(path),
+						)
+					) {
+						runFeature("autoPrivateAssetsOnUpload", () =>
+							uploads.addPrivateCheckboxToUploadForm(
+								values.config.autoPrivateAssetsOnUpload?.privateByDefault ??
+									false,
+								showDisclosures,
+							),
 						);
 					}
 				}

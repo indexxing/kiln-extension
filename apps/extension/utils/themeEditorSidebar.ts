@@ -17,6 +17,7 @@
 import type { Extension } from "@kiln/schemas";
 import { POLYTORIA_CDN_URL, resolveDecalUrl } from "@/utils/decal";
 import { escapeHtml } from "@/utils/escapeHtml";
+import { fontPickerHtml, initFontPicker } from "@/utils/fontPicker";
 import { sendMessage } from "@/utils/messaging";
 import { publishedThemeFields } from "@/utils/publishedTheme";
 import { _savedThemes, apiSessions, preferences } from "@/utils/storage";
@@ -26,7 +27,6 @@ import {
 	EFFECT_SLOTS,
 	EFFECT_TYPE_CONFIGS,
 	extractDominantColor,
-	FONTS,
 	isValidHex,
 	lightenHex,
 	parseAssetVolume,
@@ -501,11 +501,7 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			<div class="card-body" id="kiln-te-font-body" style="display:none;">
 				<div>
 					<label class="form-label small text-muted mb-1">Font</label>
-					<select id="kiln-te-font" class="form-select form-select-sm">
-						${Object.entries(FONTS)
-							.map(([key, f]) => `<option value="${key}">${f.name}</option>`)
-							.join("")}
-					</select>
+					${fontPickerHtml("kiln-te-font")}
 				</div>
 			</div>
 		</div>
@@ -943,7 +939,9 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 	const navbarHex = sidebar.querySelector<HTMLInputElement>(
 		"#kiln-te-navbar-hex",
 	)!;
-	const fontSelect = sidebar.querySelector<HTMLSelectElement>("#kiln-te-font")!;
+	const fontSelect = initFontPicker(
+		sidebar.querySelector<HTMLButtonElement>("#kiln-te-font")!,
+	);
 	const cssTextarea = sidebar.querySelector<HTMLTextAreaElement>(
 		"#kiln-te-custom-css",
 	)!;
@@ -1097,7 +1095,10 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		"#kiln-te-json-import-input",
 	)!;
 
-	function closeSidebar() {
+	async function closeSidebar() {
+		clearTimeout(autosaveTimer);
+		await autosaveRunning;
+		if (hasUnsavedChanges()) await persistCustomTheme();
 		const activeId =
 			(values.config.themeCreator as any).activeThemeId ?? "default";
 		if (activeId === "default") applyKilnTheme(null);
@@ -1139,6 +1140,7 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 	}
 
 	function refreshPreview() {
+		scheduleAutosave();
 		if (currentId === "__default__") {
 			applyKilnTheme(null);
 			return;
@@ -2458,6 +2460,120 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 		imageUrlBtn.disabled = false;
 	});
 
+	function buildThemeFields() {
+		return {
+			accentColor: workingAccent,
+			navbarColor: workingNavbar,
+			fontFamily: workingFont !== "default" ? workingFont : undefined,
+			customCss: workingCss || undefined,
+			backgroundImage: workingBg || undefined,
+			backgroundOverlayColor:
+				workingOverlayOpacity > 0 ? workingOverlayColor : undefined,
+			backgroundOverlayOpacity:
+				workingOverlayOpacity > 0 ? workingOverlayOpacity : undefined,
+			effects: workingEffects.length > 0 ? workingEffects : undefined,
+			navbarIconColor: workingIconColor || undefined,
+			cursorUrl: workingCursorSrc || undefined,
+			cursorScale: workingCursorSrc ? workingCursorScale : undefined,
+			colorTokens:
+				Object.keys(workingColorTokens).length > 0
+					? workingColorTokens
+					: undefined,
+			ambient: workingAmbient,
+			cardStyle: workingCardStyle,
+			pointerEffects: workingPointerEffects,
+		};
+	}
+
+	async function persistCustomTheme() {
+		const name = workingName || "My Theme";
+		const current = await _savedThemes.getValue();
+		let themeId: string;
+		if (isNew()) {
+			themeId = crypto.randomUUID();
+			current.push({ id: themeId, name, ...buildThemeFields() });
+		} else {
+			themeId = currentId;
+			const idx = current.findIndex((t) => t.id === themeId);
+			if (idx >= 0)
+				current[idx] = { ...current[idx], name, ...buildThemeFields() };
+		}
+		await _savedThemes.setValue(current);
+		await setActiveThemeId(themeId);
+		applyKilnTheme({
+			accentColor: workingAccent,
+			navbarColor: workingNavbar,
+			fontFamily: workingFont,
+			customCss: workingCss,
+			backgroundImage: workingBg,
+			backgroundOverlayColor: workingOverlayColor,
+			backgroundOverlayOpacity: workingOverlayOpacity,
+			effects: workingEffects,
+			navbarIconColor: workingIconColor || undefined,
+			cursorUrl: workingCursor || undefined,
+			cursorScale: workingCursorScale,
+			colorTokens:
+				Object.keys(workingColorTokens).length > 0
+					? workingColorTokens
+					: undefined,
+			ambient: workingAmbient,
+			cardStyle: workingCardStyle,
+			pointerEffects: workingPointerEffects,
+		});
+
+		savedThemes = await _savedThemes.getValue();
+		if (isNew()) {
+			currentId = themeId;
+			workingName = name;
+			buildSelect();
+			updateNameUI();
+			refreshLeftActions();
+		} else {
+			buildSelect();
+		}
+	}
+
+	let autosaveTimer: ReturnType<typeof setTimeout> | undefined;
+	let autosaveRunning: Promise<void> = Promise.resolve();
+
+	function hasUnsavedChanges() {
+		if (currentId.startsWith("__")) {
+			if (!isNew()) return false;
+			return (
+				workingAccent !== "#3bafff" ||
+				workingNavbar !== "#1a1a1a" ||
+				workingFont !== "default" ||
+				!!workingCss ||
+				!!workingBg ||
+				!!workingCursorSrc ||
+				!!workingIconColor ||
+				workingEffects.length > 0 ||
+				Object.keys(workingColorTokens).length > 0 ||
+				!!workingAmbient ||
+				!!workingCardStyle ||
+				!!workingPointerEffects
+			);
+		}
+		const saved = getCurrentSavedTheme();
+		if (!saved) return false;
+		const next = {
+			...saved,
+			name: workingName || "My Theme",
+			...buildThemeFields(),
+		};
+		return JSON.stringify(next) !== JSON.stringify(saved);
+	}
+
+	function scheduleAutosave() {
+		clearTimeout(autosaveTimer);
+		autosaveTimer = setTimeout(() => {
+			autosaveRunning = autosaveRunning.then(async () => {
+				if (!sidebar.isConnected || !hasUnsavedChanges()) return;
+				await persistCustomTheme();
+			});
+		}, 800);
+	}
+
 	saveBtn.addEventListener("click", async () => {
 		if (currentId === "__default__") {
 			await setActiveThemeId("default");
@@ -2467,98 +2583,7 @@ async function doOpenThemeEditorSidebar(): Promise<void> {
 			await setActiveThemeId(key);
 			applyKilnTheme(THEME_PRESETS[key]);
 		} else {
-			const name = workingName || "My Theme";
-			const current = await _savedThemes.getValue();
-			let themeId: string;
-			if (isNew()) {
-				themeId = crypto.randomUUID();
-				current.push({
-					id: themeId,
-					name,
-					accentColor: workingAccent,
-					navbarColor: workingNavbar,
-					fontFamily: workingFont !== "default" ? workingFont : undefined,
-					customCss: workingCss || undefined,
-					backgroundImage: workingBg || undefined,
-					backgroundOverlayColor:
-						workingOverlayOpacity > 0 ? workingOverlayColor : undefined,
-					backgroundOverlayOpacity:
-						workingOverlayOpacity > 0 ? workingOverlayOpacity : undefined,
-					effects: workingEffects.length > 0 ? workingEffects : undefined,
-					navbarIconColor: workingIconColor || undefined,
-					cursorUrl: workingCursorSrc || undefined,
-					cursorScale: workingCursorSrc ? workingCursorScale : undefined,
-					colorTokens:
-						Object.keys(workingColorTokens).length > 0
-							? workingColorTokens
-							: undefined,
-					ambient: workingAmbient,
-					cardStyle: workingCardStyle,
-					pointerEffects: workingPointerEffects,
-				});
-			} else {
-				themeId = currentId;
-				const idx = current.findIndex((t) => t.id === themeId);
-				if (idx >= 0)
-					current[idx] = {
-						...current[idx],
-						name,
-						accentColor: workingAccent,
-						navbarColor: workingNavbar,
-						fontFamily: workingFont !== "default" ? workingFont : undefined,
-						customCss: workingCss || undefined,
-						backgroundImage: workingBg || undefined,
-						backgroundOverlayColor:
-							workingOverlayOpacity > 0 ? workingOverlayColor : undefined,
-						backgroundOverlayOpacity:
-							workingOverlayOpacity > 0 ? workingOverlayOpacity : undefined,
-						effects: workingEffects.length > 0 ? workingEffects : undefined,
-						navbarIconColor: workingIconColor || undefined,
-						cursorUrl: workingCursorSrc || undefined,
-						cursorScale: workingCursorSrc ? workingCursorScale : undefined,
-						colorTokens:
-							Object.keys(workingColorTokens).length > 0
-								? workingColorTokens
-								: undefined,
-						ambient: workingAmbient,
-						cardStyle: workingCardStyle,
-						pointerEffects: workingPointerEffects,
-					};
-			}
-			await _savedThemes.setValue(current);
-			await setActiveThemeId(themeId);
-			applyKilnTheme({
-				accentColor: workingAccent,
-				navbarColor: workingNavbar,
-				fontFamily: workingFont,
-				customCss: workingCss,
-				backgroundImage: workingBg,
-				backgroundOverlayColor: workingOverlayColor,
-				backgroundOverlayOpacity: workingOverlayOpacity,
-				effects: workingEffects,
-				navbarIconColor: workingIconColor || undefined,
-				cursorUrl: workingCursor || undefined,
-				cursorScale: workingCursorScale,
-				colorTokens:
-					Object.keys(workingColorTokens).length > 0
-						? workingColorTokens
-						: undefined,
-				ambient: workingAmbient,
-				cardStyle: workingCardStyle,
-				pointerEffects: workingPointerEffects,
-			});
-
-			if (isNew()) {
-				savedThemes = await _savedThemes.getValue();
-				currentId = themeId;
-				workingName = name;
-				buildSelect();
-				updateNameUI();
-				refreshLeftActions();
-			} else {
-				savedThemes = await _savedThemes.getValue();
-				buildSelect();
-			}
+			await persistCustomTheme();
 		}
 
 		const origHtml = saveBtn.innerHTML;

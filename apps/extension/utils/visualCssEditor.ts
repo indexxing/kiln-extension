@@ -1001,8 +1001,6 @@ export function createVisualCssEditor(options: {
 					const value = field.format(n);
 					if (hidesProtectedControl(field.prop, value)) {
 						notifyBlocked(PROTECTED_HIDE_MESSAGE);
-						// Put the slider back on the stored/computed value so it
-						// doesn't read as applied when the edit was refused.
 						const stored = getProp(field.prop);
 						const restore =
 							(stored ? field.parse(stored) : null) ??
